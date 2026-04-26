@@ -31,12 +31,23 @@ export default function LoginScreen() {
 
     setLoading(true)
     try {
-      const res = await callEdgeFunction<{ success: boolean; error?: string }>(
+      const res = await callEdgeFunction<{
+        success: boolean
+        error?: string
+        error_code?: 'MULTI_SESSION_PERSISTED' | 'BAD_CREDENTIALS' | 'GIB_TEMPORARY' | 'UNKNOWN'
+      }>(
         'login',
         { username: u, password: p },
       )
 
       if (!res.success) {
+        if (res.error_code === 'MULTI_SESSION_PERSISTED') {
+          Alert.alert(
+            'GİB Oturumu Açık',
+            "GİB tarafında aktif bir oturum görünüyor. e-Arşiv Portal'da 'Güvenli Çıkış' yapıp 2-5 dakika sonra tekrar deneyin.",
+          )
+          return
+        }
         Alert.alert('Giriş Başarısız', res.error ?? 'Bilgilerinizi kontrol edin.')
         return
       }

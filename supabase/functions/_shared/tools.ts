@@ -19,7 +19,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'GİB e-Arşiv sisteminde yeni bir fatura oluşturur. Eksik bilgi varsa önce kullanıcıya sor.',
+      'GİB e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
     input_schema: {
       type: 'object',
       properties: {
@@ -74,8 +74,19 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'confirm_invoice_issue',
+    description:
+      'Hazır bekleyen fatura taslağını onaylayıp resmen keser. Sadece kullanıcı açıkça onay verdiyse çağır.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
     name: 'list_invoices',
-    description: 'GİB e-Arşiv sistemindeki faturaları tarih aralığına göre listeler.',
+    description:
+      'GİB e-Arşiv sistemindeki faturaları listeler. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, dün) aralık belirlenir.',
     input_schema: {
       type: 'object',
       properties: {
@@ -87,8 +98,82 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Bitiş tarihi GG/AA/YYYY formatında',
         },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel müşteri adı/unvan filtresi (ör. Selcan, test firması)',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
       },
-      required: ['start_date', 'end_date'],
+      required: [],
+    },
+  },
+  {
+    name: 'invoice_totals',
+    description:
+      'Onaylı faturalar için toplam satış, toplam KDV ve net tutar özetini getirir. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel müşteri adı/unvan filtresi',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'latest_invoice',
+    description:
+      'Kullanıcının en son faturasını getirir. Gerekirse tarih aralığı verilebilir.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Opsiyonel başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Opsiyonel bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel müşteri adı/unvan filtresi',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+      },
+      required: [],
     },
   },
   {
@@ -116,15 +201,21 @@ export const SYSTEM_PROMPT = `Sen "finla" uygulamasının yapay zeka asistanıs�
 
 Yeteneklerin:
 - Fatura oluşturma (create_invoice)
+- Fatura kesim onayı (confirm_invoice_issue)
 - Fatura listeleme (list_invoices)
+- Toplam satış/KDV özeti (invoice_totals)
+- Son faturayı bulma (latest_invoice)
 - Fatura iptal etme (cancel_invoice)
 - Alıcı bilgisi sorgulama (lookup_recipient)
 
 Kurallar:
 - Türkçe yanıt ver
-- Kısa ve net ol
+- Kısa ve doğal konuşma dili kullan
 - Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al
+- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme.
 - Eksik bilgi varsa soru sor
-- KDV hesaplamalarını kendin yap ve özetle
+- Mali toplamları kendin tahmin etme; mümkünse araç çağrısı sonucu kullan
+- Markdown tablo kullanma; sade cümleler veya kısa maddeler kullan
 - Tarih belirtilmemişse bugünün tarihini kullan
+- "Bu ay", "ayın başından beri", "dün", "geçen hafta" gibi ifadelerde tarih netleştirmesi isteme; doğrudan ilgili aracı çağır
 - Hata durumlarını kullanıcıya Türkçe açıkla`

@@ -1,5 +1,5 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { gibLogin } from '../_shared/gib.ts'
+import { GibAuthError, gibLoginWithTrace } from '../_shared/gib.ts'
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
@@ -16,14 +16,19 @@ Deno.serve(async (req) => {
       )
     }
 
-    await gibLogin(username, password)
+    const loginResult = await gibLoginWithTrace(username, password)
 
-    return Response.json({ success: true }, { headers: corsHeaders })
+    return Response.json(
+      { success: true, trace: loginResult.trace.slice(-5) },
+      { headers: corsHeaders },
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Giriş başarısız.'
     console.error('GIB login error:', message)
+    const errorCode = err instanceof GibAuthError ? err.code : 'UNKNOWN'
+    const trace = err instanceof GibAuthError ? err.trace.slice(-8) : []
     return Response.json(
-      { success: false, error: message },
+      { success: false, error: message, error_code: errorCode, trace },
       { headers: corsHeaders },
     )
   }

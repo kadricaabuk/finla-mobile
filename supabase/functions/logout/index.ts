@@ -7,9 +7,16 @@ Deno.serve(async (req) => {
 
   try {
     const { username } = await req.json()
-    if (username) await gibLogout(username)
+    if (!username) {
+      return Response.json(
+        { success: false, error: 'username zorunludur.' },
+        { headers: corsHeaders },
+      )
+    }
+    await gibLogout(username)
     return Response.json({ success: true }, { headers: corsHeaders })
-  } catch {
-    return Response.json({ success: true }, { headers: corsHeaders })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'GIB oturumu kapatılamadı.'
+    return Response.json({ success: false, error: message }, { headers: corsHeaders })
   }
 })

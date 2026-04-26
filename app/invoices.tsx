@@ -1,7 +1,7 @@
 import { getCredentials } from "@/lib/session";
 import { callEdgeFunction } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -28,6 +28,7 @@ interface GIBInvoice {
 }
 
 type Preset = "bu_ay" | "gecen_ay" | "bu_yil";
+type DateRange = { startDate: string; endDate: string };
 
 const PRESETS: { key: Preset; label: string }[] = [
   { key: "bu_ay", label: "Bu Ay" },
@@ -75,42 +76,93 @@ function statusColor(status?: string): string {
 }
 
 export default function InvoicesScreen() {
+  const params = useLocalSearchParams<{
+    startDate?: string;
+    endDate?: string;
+    customerName?: string;
+    amountGte?: string;
+    amountEq?: string;
+    source?: string;
+  }>();
   const [preset, setPreset] = useState<Preset>("bu_ay");
+  const [customRange, setCustomRange] = useState<DateRange | null>(null);
+  const [chatFilterInfoOpen, setChatFilterInfoOpen] = useState(false);
+  const [chatFilters, setChatFilters] = useState<{
+    customerName?: string;
+    amountGte?: number;
+    amountEq?: number;
+  } | null>(null);
   const [invoices, setInvoices] = useState<GIBInvoice[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchInvoices = useCallback(async (p: Preset) => {
-    const creds = await getCredentials();
-    if (!creds) return;
+  const fetchInvoices = useCallback(
+    async (p: Preset, rangeOverride?: DateRange) => {
+      const creds = await getCredentials();
+      if (!creds) return;
 
-    setLoading(true);
-    setError(null);
+      setLoading(true);
+      setError(null);
 
-    try {
-      const range = getRange(p);
-      const res = await callEdgeFunction<{
-        invoices: GIBInvoice[];
-        error?: string;
-      }>("invoices", {
-        username: creds.username,
-        password: creds.password,
-        ...range,
-      });
-      if (res.error) throw new Error(res.error);
-      console.log(res);
-      setInvoices(res.invoices ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Faturalar yüklenemedi.");
-      setInvoices([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      try {
+        const range = rangeOverride ?? getRange(p);
+        const res = await callEdgeFunction<{
+          invoices: GIBInvoice[];
+          error?: string;
+        }>("invoices", {
+          username: creds.username,
+          password: creds.password,
+          ...range,
+          customerName: chatFilters?.customerName,
+          amountGte: chatFilters?.amountGte,
+          amountEq: chatFilters?.amountEq,
+        });
+        if (res.error) throw new Error(res.error);
+        setInvoices(res.invoices ?? []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Faturalar yüklenemedi.");
+        setInvoices([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [chatFilters],
+  );
 
   useEffect(() => {
-    fetchInvoices(preset);
-  }, [preset, fetchInvoices]);
+    if (
+      typeof params.startDate === "string" &&
+      typeof params.endDate === "string"
+    ) {
+      setCustomRange({ startDate: params.startDate, endDate: params.endDate });
+    }
+    const hasChatFilter =
+      typeof params.customerName === "string" ||
+      typeof params.amountGte === "string" ||
+      typeof params.amountEq === "string";
+    if (hasChatFilter) {
+      setChatFilters({
+        customerName:
+          typeof params.customerName === "string" ? params.customerName : undefined,
+        amountGte:
+          typeof params.amountGte === "string" ? Number(params.amountGte) : undefined,
+        amountEq:
+          typeof params.amountEq === "string" ? Number(params.amountEq) : undefined,
+      });
+    } else {
+      setChatFilters(null);
+    }
+  }, [
+    params.startDate,
+    params.endDate,
+    params.customerName,
+    params.amountGte,
+    params.amountEq,
+  ]);
+
+  useEffect(() => {
+    fetchInvoices(preset, customRange ?? undefined);
+  }, [preset, customRange, fetchInvoices]);
 
   const renderItem = ({ item }: { item: GIBInvoice }) => {
     const total = item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
@@ -150,21 +202,41 @@ export default function InvoicesScreen() {
           <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.title}>Faturalarım</Text>
-        <View style={styles.backBtn} />
+        {customRange ? (
+          <TouchableOpacity
+            style={styles.chatFilterBtn}
+            onPress={() => setChatFilterInfoOpen((v) => !v)}
+          >
+            <Text style={styles.chatFilterBtnText}>Chat filtresi</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.backBtn} />
+        )}
       </View>
 
       <View style={styles.filters}>
         {PRESETS.map((p) => (
           <TouchableOpacity
             key={p.key}
-            style={[styles.chip, preset === p.key && styles.chipActive]}
-            onPress={() => setPreset(p.key)}
+            style={[
+              styles.chip,
+              !customRange && preset === p.key && styles.chipActive,
+              customRange && styles.chipDisabled,
+            ]}
+            onPress={() => {
+              setCustomRange(null);
+              setChatFilters(null);
+              setChatFilterInfoOpen(false);
+              setPreset(p.key);
+            }}
+            disabled={!!customRange}
             activeOpacity={0.7}
           >
             <Text
               style={[
                 styles.chipText,
-                preset === p.key && styles.chipTextActive,
+                !customRange && preset === p.key && styles.chipTextActive,
+                customRange && styles.chipTextDisabled,
               ]}
             >
               {p.label}
@@ -172,6 +244,42 @@ export default function InvoicesScreen() {
           </TouchableOpacity>
         ))}
       </View>
+      {customRange && (
+        <View style={styles.customRangeBox}>
+          <Text style={styles.customRangeText}>
+            Chat filtresi: {customRange.startDate} - {customRange.endDate}
+          </Text>
+          {chatFilterInfoOpen && (
+            <View style={styles.chatFilterDetails}>
+              {chatFilters?.customerName ? (
+                <Text style={styles.chatFilterDetailText}>
+                  Müşteri: {chatFilters.customerName}
+                </Text>
+              ) : null}
+              {typeof chatFilters?.amountGte === "number" ? (
+                <Text style={styles.chatFilterDetailText}>
+                  Tutar {'>='} {chatFilters.amountGte.toLocaleString("tr-TR")} TL
+                </Text>
+              ) : null}
+              {typeof chatFilters?.amountEq === "number" ? (
+                <Text style={styles.chatFilterDetailText}>
+                  Tutar {'~='} {chatFilters.amountEq.toLocaleString("tr-TR")} TL
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                style={styles.resetChatFilterBtn}
+                onPress={() => {
+                  setCustomRange(null);
+                  setChatFilters(null);
+                  setChatFilterInfoOpen(false);
+                }}
+              >
+                <Text style={styles.resetChatFilterBtnText}>Preset filtrelere dön</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
 
       {loading ? (
         <View style={styles.center}>
@@ -183,7 +291,7 @@ export default function InvoicesScreen() {
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity
             style={styles.retryBtn}
-            onPress={() => fetchInvoices(preset)}
+            onPress={() => fetchInvoices(preset, customRange ?? undefined)}
           >
             <Text style={styles.retryText}>Tekrar Dene</Text>
           </TouchableOpacity>
@@ -198,7 +306,7 @@ export default function InvoicesScreen() {
           refreshControl={
             <RefreshControl
               refreshing={loading}
-              onRefresh={() => fetchInvoices(preset)}
+              onRefresh={() => fetchInvoices(preset, customRange ?? undefined)}
               tintColor="#000"
             />
           }
@@ -234,6 +342,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  chatFilterBtn: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    backgroundColor: "#111",
+    justifyContent: "center",
+  },
+  chatFilterBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "600",
+  },
   title: {
     fontSize: 18,
     fontWeight: "600",
@@ -244,6 +364,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     gap: 8,
+  },
+  customRangeBox: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#F5F5F5",
+  },
+  customRangeText: {
+    fontSize: 12,
+    color: "#666",
+    fontWeight: "500",
+  },
+  chatFilterDetails: {
+    marginTop: 8,
+    gap: 4,
+  },
+  chatFilterDetailText: {
+    fontSize: 12,
+    color: "#555",
+  },
+  resetChatFilterBtn: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#E9E9E9",
+  },
+  resetChatFilterBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#333",
   },
   chip: {
     paddingHorizontal: 16,
@@ -264,6 +418,12 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: "#fff",
+  },
+  chipDisabled: {
+    opacity: 0.45,
+  },
+  chipTextDisabled: {
+    color: "#AAA",
   },
   list: {
     paddingHorizontal: 16,

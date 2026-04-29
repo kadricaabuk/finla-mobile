@@ -1,6 +1,7 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
-import { gibListInvoices, mapInvoicesToFacts } from '../_shared/gib.ts'
+import { faturaListInvoices, mapInvoicesToFacts } from '../_shared/gib.ts'
+import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -12,17 +13,17 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse
 
   try {
-    const { username, password, startDate, endDate, customerName, amountGte, amountEq } =
-      await req.json()
+    const username = await getSubjectFromAuthHeader(req)
+    const { startDate, endDate, customerName, amountGte, amountEq } = await req.json()
 
-    if (!username || !password || !startDate || !endDate) {
+    if (!startDate || !endDate) {
       return Response.json(
-        { error: 'username, password, startDate ve endDate zorunludur.' },
+        { error: 'startDate ve endDate zorunludur.' },
         { status: 400, headers: corsHeaders },
       )
     }
 
-    const invoices = await gibListInvoices(username, password, startDate, endDate)
+    const invoices = await faturaListInvoices(username, startDate, endDate)
     const facts = mapInvoicesToFacts(username, invoices as unknown[])
     let filteredInvoices = invoices as unknown[]
 
@@ -81,6 +82,9 @@ Deno.serve(async (req) => {
 
     return Response.json({ invoices: filteredInvoices, synced: facts.length }, { headers: corsHeaders })
   } catch (err) {
+    if (err instanceof SessionAuthError) {
+      return Response.json({ error: err.message }, { status: err.status, headers: corsHeaders })
+    }
     const message = err instanceof Error ? err.message : 'Faturalar getirilemedi.'
     return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }

@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { gibGetInvoiceHtml } from '../_shared/gib.ts'
+import { faturaGetInvoiceHtml } from '../_shared/gib.ts'
+import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -12,10 +13,11 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const { username, password, invoiceUuid } = await req.json()
-    if (!username || !invoiceUuid) {
+    const username = await getSubjectFromAuthHeader(req)
+    const { invoiceUuid } = await req.json()
+    if (!invoiceUuid) {
       return Response.json(
-        { error: 'username ve invoiceUuid zorunludur.' },
+        { error: 'invoiceUuid zorunludur.' },
         { status: 400, headers: corsHeaders },
       )
     }
@@ -58,10 +60,10 @@ Deno.serve(async (req: Request) => {
     let invoice = data
     const needsTotals =
       invoice.gross_total == null || invoice.vat_total == null || invoice.net_total == null
-    if (needsTotals && typeof password === 'string' && password.length > 0) {
+    if (needsTotals) {
       const signed = String(invoice.status || '').toLowerCase().includes('approved')
       try {
-        const html = await gibGetInvoiceHtml(username, password, invoiceUuid, signed)
+        const html = await faturaGetInvoiceHtml(username, invoiceUuid, signed)
         const totals = parseTotalsFromHtml(html)
         invoice = {
           ...invoice,
@@ -86,6 +88,9 @@ Deno.serve(async (req: Request) => {
 
     return Response.json({ invoice }, { headers: corsHeaders })
   } catch (err) {
+    if (err instanceof SessionAuthError) {
+      return Response.json({ error: err.message }, { status: err.status, headers: corsHeaders })
+    }
     const message = err instanceof Error ? err.message : 'Beklenmeyen bir hata oluştu.'
     return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }

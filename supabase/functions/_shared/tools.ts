@@ -4,7 +4,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'lookup_recipient',
     description:
-      'TC Kimlik No veya Vergi Kimlik No ile alıcı bilgilerini GİB sisteminden getirir. Fatura kesmeden önce alıcı bilgilerini doğrulamak için kullan.',
+      'TC Kimlik No veya Vergi Kimlik No ile alıcı bilgilerini fatura.js (GİB e-Arşiv) üzerinden getirir. Fatura kesmeden önce alıcı bilgilerini doğrulamak için kullan.',
     input_schema: {
       type: 'object',
       properties: {
@@ -19,7 +19,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'GİB e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
+      'fatura.js üzerinden e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
     input_schema: {
       type: 'object',
       properties: {
@@ -84,9 +84,39 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'request_invoice_sign_otp',
+    description:
+      'Onay bekleyen taslak fatura için GİB imzalama SMS kodu gönderir. Telefon belirtilmezse kullanıcı profilindeki numarayı kullanır.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phone: {
+          type: 'string',
+          description: 'Opsiyonel telefon numarası (başında 0 veya ülke koduyla olabilir)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'verify_invoice_sign_otp',
+    description:
+      'İmzalama için gelen SMS OTP kodunu doğrular. Başarılı doğrulamadan sonra fatura kesimi yapılabilir.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Kullanıcının SMS ile aldığı doğrulama kodu',
+        },
+      },
+      required: ['code'],
+    },
+  },
+  {
     name: 'list_invoices',
     description:
-      'GİB e-Arşiv sistemindeki faturaları listeler. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, dün) aralık belirlenir.',
+      'fatura.js (GİB e-Arşiv) sistemindeki faturaları listeler. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, dün) aralık belirlenir.',
     input_schema: {
       type: 'object',
       properties: {
@@ -197,11 +227,13 @@ export const TOOLS: Anthropic.Tool[] = [
   },
 ]
 
-export const SYSTEM_PROMPT = `Sen "finla" uygulamasının yapay zeka asistanısın. GİB e-Arşiv sistemi üzerinden Türk e-fatura oluşturma ve yönetme işlemlerinde kullanıcılara yardım ediyorsun.
+export const SYSTEM_PROMPT = `Sen "finla" uygulamasının yapay zeka asistanısın. fatura.js entegrasyonu üzerinden GİB e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.
 
 Yeteneklerin:
 - Fatura oluşturma (create_invoice)
 - Fatura kesim onayı (confirm_invoice_issue)
+- İmzalama SMS gönderimi (request_invoice_sign_otp)
+- İmzalama SMS doğrulaması (verify_invoice_sign_otp)
 - Fatura listeleme (list_invoices)
 - Toplam satış/KDV özeti (invoice_totals)
 - Son faturayı bulma (latest_invoice)
@@ -213,6 +245,7 @@ Kurallar:
 - Kısa ve doğal konuşma dili kullan
 - Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al
 - create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme.
+- confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı.
 - Eksik bilgi varsa soru sor
 - Mali toplamları kendin tahmin etme; mümkünse araç çağrısı sonucu kullan
 - Markdown tablo kullanma; sade cümleler veya kısa maddeler kullan

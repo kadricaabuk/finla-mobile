@@ -12,8 +12,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { callEdgeFunction } from '@/lib/supabase'
-import { saveCredentials } from '@/lib/session'
+import { loginRequest } from '@/lib/supabase'
+import { clearLegacyCredentials, saveTokens } from '@/lib/session'
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('')
@@ -31,14 +31,7 @@ export default function LoginScreen() {
 
     setLoading(true)
     try {
-      const res = await callEdgeFunction<{
-        success: boolean
-        error?: string
-        error_code?: 'MULTI_SESSION_PERSISTED' | 'BAD_CREDENTIALS' | 'GIB_TEMPORARY' | 'UNKNOWN'
-      }>(
-        'login',
-        { username: u, password: p },
-      )
+      const res = await loginRequest(u, p)
 
       if (!res.success) {
         if (res.error_code === 'MULTI_SESSION_PERSISTED') {
@@ -52,7 +45,17 @@ export default function LoginScreen() {
         return
       }
 
-      await saveCredentials({ username: u, password: p })
+      if (!res.accessToken || !res.refreshToken) {
+        Alert.alert('Giriş Başarısız', 'Sunucudan oturum anahtarları alınamadı.')
+        return
+      }
+      const expiresIn = typeof res.expiresIn === 'number' ? res.expiresIn : 900
+      await saveTokens({
+        accessToken: res.accessToken,
+        refreshToken: res.refreshToken,
+        expiresAtMs: Date.now() + expiresIn * 1000,
+      })
+      await clearLegacyCredentials()
       router.replace('/')
     } catch (err) {
       Alert.alert(
@@ -123,7 +126,7 @@ export default function LoginScreen() {
 
         <Text style={styles.note}>
           Bu uygulama GİB e-Arşiv portalındaki bilgilerinizi kullanır.
-          Bilgileriniz yalnızca cihazınızda şifreli olarak saklanır.
+          Oturum anahtarları yalnızca cihazınızda güvenli depoda saklanır.
         </Text>
       </KeyboardAvoidingView>
     </SafeAreaView>

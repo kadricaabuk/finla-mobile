@@ -2,13 +2,17 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { TOOLS, SYSTEM_PROMPT } from '../_shared/tools.ts'
+import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 import {
-  gibCreateInvoicePreview,
-  gibConfirmInvoiceIssue,
-  gibGetInvoiceHtml,
-  gibListInvoices,
-  gibCancelInvoice,
-  gibLookupRecipient,
+  faturaCreateInvoicePreview,
+  faturaConfirmInvoiceIssue,
+  faturaGetInvoiceHtml,
+  faturaListInvoices,
+  faturaCancelInvoice,
+  faturaGetUserData,
+  faturaLookupRecipient,
+  faturaSendSignSMSCode,
+  faturaVerifySignSMSCode,
   mapInvoicesToFacts,
 } from '../_shared/gib.ts'
 
@@ -22,7 +26,7 @@ const supabase = createClient(
 const ISTANBUL_TZ = 'Europe/Istanbul'
 
 interface ChatAction {
-  type: 'open_invoices' | 'open_invoice_detail' | 'open_invoice_preview'
+  type: 'open_invoices' | 'open_invoice_detail' | 'open_invoice_preview' | 'open_sign_otp'
   label: string
   filter?: {
     startDate: string
@@ -46,6 +50,10 @@ interface ChatAction {
     title: string
     html: string
     uuid?: string
+  }
+  sign_otp?: {
+    draftUuid: string
+    phoneMasked: string
   }
 }
 
@@ -77,6 +85,20 @@ interface PendingInvoiceState {
     date?: string
   }
   preview_html?: string
+  signing?: {
+    status?: 'idle' | 'otp_sent' | 'otp_verified'
+    phone?: string
+    phone_masked?: string
+    operation_id?: string
+    otp_requested_at?: string
+    otp_verified_at?: string
+  }
+}
+
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length < 4) return '***'
+  return `*** *** ** ${digits.slice(-2)}`
 }
 
 function istanbulTodayUtc(): Date {
@@ -238,7 +260,6 @@ async function executeTool(
   toolName: string,
   input: Record<string, any>,
   username: string,
-  password: string,
   userMessage: string,
   conversationId: string,
 ): Promise<unknown> {
@@ -249,7 +270,7 @@ async function executeTool(
   }
 
   const ensureFacts = async (startDate: string, endDate: string) => {
-    const invoices = await gibListInvoices(username, password, startDate, endDate)
+    const invoices = await faturaListInvoices(username, startDate, endDate)
     const facts = mapInvoicesToFacts(username, invoices as unknown[])
     if (facts.length === 0) return
     const { error } = await supabase
@@ -296,10 +317,10 @@ async function executeTool(
 
   switch (toolName) {
     case 'lookup_recipient':
-      return gibLookupRecipient(username, password, input.tax_id)
+      return faturaLookupRecipient(username, input.tax_id)
 
     case 'create_invoice': {
-      const preview = await gibCreateInvoicePreview(username, password, {
+      const preview = await faturaCreateInvoicePreview(username, {
         buyerName: input.buyer_name,
         buyerTaxId: input.buyer_tax_id,
         buyerAddress: input.buyer_address,
@@ -333,6 +354,100 @@ async function executeTool(
       }
     }
 
+    case 'request_invoice_sign_otp': {
+      const { data: conv, error: convError } = await supabase
+        .from('conversations')
+        .select('pending_invoice')
+        .eq('id', conversationId)
+        .single()
+      if (convError) throw convError
+
+      const pending = (conv?.pending_invoice as PendingInvoiceState | null) ?? {}
+      const draft = pending?.draft
+      if (!draft?.uuid) throw new Error('İmzalanacak taslak fatura bulunamadı.')
+
+      const phoneCandidate =
+        (typeof input.phone === 'string' && input.phone.trim()) ||
+        pending.signing?.phone ||
+        (await faturaGetUserData(username))?.phoneNumber
+      const phone = typeof phoneCandidate === 'string' ? phoneCandidate.trim() : ''
+      if (!phone) {
+        return {
+          status: 'phone_required',
+          draft_uuid: draft.uuid,
+          phone_masked: 'Numara gerekli',
+        }
+      }
+
+      const operationId = await faturaSendSignSMSCode(username, phone)
+      if (!operationId) throw new Error('SMS doğrulama başlatılamadı. Lütfen tekrar dene.')
+
+      const nextPending: PendingInvoiceState = {
+        ...pending,
+        signing: {
+          status: 'otp_sent',
+          phone,
+          phone_masked: maskPhone(phone),
+          operation_id: operationId,
+          otp_requested_at: new Date().toISOString(),
+          otp_verified_at: undefined,
+        },
+      }
+      await supabase
+        .from('conversations')
+        .update({ pending_invoice: nextPending })
+        .eq('id', conversationId)
+
+      return {
+        status: 'otp_sent',
+        draft_uuid: draft.uuid,
+        phone_masked: nextPending.signing?.phone_masked ?? maskPhone(phone),
+        operation_id: operationId,
+      }
+    }
+
+    case 'verify_invoice_sign_otp': {
+      const { data: conv, error: convError } = await supabase
+        .from('conversations')
+        .select('pending_invoice')
+        .eq('id', conversationId)
+        .single()
+      if (convError) throw convError
+
+      const pending = conv?.pending_invoice as PendingInvoiceState | null
+      const draft = pending?.draft
+      if (!draft?.uuid) throw new Error('Doğrulanacak taslak fatura bulunamadı.')
+      const operationId = pending?.signing?.operation_id
+      if (!operationId) throw new Error('Doğrulama işlemi bulunamadı. Önce SMS kodu iste.')
+      const code =
+        typeof input.code === 'string'
+          ? input.code.trim()
+          : typeof input.sms_code === 'string'
+            ? input.sms_code.trim()
+            : ''
+      if (!code) throw new Error('SMS doğrulama kodu gerekli.')
+
+      await faturaVerifySignSMSCode(username, code, operationId)
+
+      const nextPending: PendingInvoiceState = {
+        ...pending,
+        signing: {
+          ...(pending?.signing ?? {}),
+          status: 'otp_verified',
+          otp_verified_at: new Date().toISOString(),
+        },
+      }
+      await supabase
+        .from('conversations')
+        .update({ pending_invoice: nextPending })
+        .eq('id', conversationId)
+
+      return {
+        status: 'otp_verified',
+        draft_uuid: draft.uuid,
+      }
+    }
+
     case 'confirm_invoice_issue': {
       const { data: conv, error: convError } = await supabase
         .from('conversations')
@@ -345,8 +460,11 @@ async function executeTool(
       if (!draft?.date || !draft?.uuid) {
         throw new Error('Onay bekleyen bir fatura taslağı bulunamadı.')
       }
+      if (pending?.signing?.status !== 'otp_verified') {
+        throw new Error('İmzalama için SMS doğrulama tamamlanmadı.')
+      }
 
-      const issued = await gibConfirmInvoiceIssue(username, password, {
+      const issued = await faturaConfirmInvoiceIssue(username, {
         date: draft.date,
         uuid: draft.uuid,
       })
@@ -423,7 +541,7 @@ async function executeTool(
           typeof filters.amountGte === 'number' ||
           typeof filters.amountEq === 'number'
         if (!hasFilters) {
-          return gibListInvoices(username, password, range.startDate, range.endDate)
+          return faturaListInvoices(username, range.startDate, range.endDate)
         }
 
         await ensureFacts(range.startDate, range.endDate)
@@ -508,7 +626,7 @@ async function executeTool(
     }
 
     case 'cancel_invoice':
-      return gibCancelInvoice(username, password, input.ettn, input.reason || 'İptal')
+      return faturaCancelInvoice(username, input.ettn, input.reason || 'İptal')
 
     default:
       throw new Error(`Bilinmeyen araç: ${toolName}`)
@@ -520,13 +638,14 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const { message, conversationId, username, password, action: requestAction } = await req.json()
+    const username = await getSubjectFromAuthHeader(req)
+    const { message, conversationId, action: requestAction } = await req.json()
 
     const hasMessage = typeof message === 'string' && message.trim().length > 0
     const hasAction = !!requestAction
-    if ((!hasMessage && !hasAction) || !username || !password) {
+    if (!username || (!hasMessage && !hasAction)) {
       return Response.json(
-        { error: 'message, username ve password zorunludur.' },
+        { error: 'message zorunludur.' },
         { headers: corsHeaders },
       )
     }
@@ -555,9 +674,11 @@ Deno.serve(async (req: Request) => {
       /\b(onayliyorum|onaylıyorum|onay|evet onay|devam)\b/.test(normalizedMessage) &&
       !/\b(onaylama|onaysiz|onaysız)\b/.test(normalizedMessage)
     const isConfirmAction = requestAction?.type === 'confirm_pending_invoice'
+    const isRequestOtpAction = requestAction?.type === 'request_sign_otp'
+    const isVerifyOtpAction = requestAction?.type === 'verify_sign_otp'
 
-    // Deterministic fast-path: if user confirms and a pending draft exists, finalize directly.
-    if (isConfirmMessage || isConfirmAction) {
+    // Deterministic fast-path: verify sms -> finalize issue.
+    if (isVerifyOtpAction) {
       const { data: convState, error: pendingErr } = await supabase
         .from('conversations')
         .select('pending_invoice')
@@ -568,7 +689,79 @@ Deno.serve(async (req: Request) => {
       const pending = convState?.pending_invoice as PendingInvoiceState | null
       if (pending?.draft?.date && pending?.draft?.uuid) {
         if (
-          isConfirmAction &&
+          typeof requestAction?.draftUuid === 'string' &&
+          requestAction.draftUuid !== pending.draft.uuid
+        ) {
+          const mismatchMsg = 'Doğrulanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.'
+          await supabase.from('messages').insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: mismatchMsg,
+          })
+          return Response.json(
+            { message: mismatchMsg, conversationId: convId, action: null },
+            { headers: corsHeaders },
+          )
+        }
+        try {
+          await executeTool(
+            'verify_invoice_sign_otp',
+            { code: requestAction?.smsCode },
+            username,
+            message as string,
+            convId,
+          )
+          const result = await executeTool(
+            'confirm_invoice_issue',
+            {},
+            username,
+            message as string,
+            convId,
+          )
+          const payload = result as { uuid?: string; message?: string }
+          const directMessage = payload?.uuid
+            ? `SMS doğrulaması tamamlandı, fatura başarıyla kesildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" veya "indir" diyebilirsin.`
+            : payload?.message ?? 'SMS doğrulaması tamamlandı, fatura kesildi.'
+
+          await supabase.from('messages').insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: directMessage,
+          })
+
+          return Response.json(
+            { message: directMessage, conversationId: convId, action: null },
+            { headers: corsHeaders },
+          )
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'SMS doğrulaması başarısız.'
+          const failText = `SMS doğrulaması başarısız oldu: ${msg}. Kodu kontrol edip tekrar deneyebilirsin.`
+          await supabase.from('messages').insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: failText,
+          })
+          return Response.json(
+            { message: failText, conversationId: convId, action: null },
+            { headers: corsHeaders },
+          )
+        }
+      }
+    }
+
+    // Deterministic fast-path: if user confirms and a pending draft exists, start sms verification.
+    if (isConfirmMessage || isConfirmAction || isRequestOtpAction) {
+      const { data: convState, error: pendingErr } = await supabase
+        .from('conversations')
+        .select('pending_invoice')
+        .eq('id', convId)
+        .single()
+      if (pendingErr) throw pendingErr
+
+      const pending = convState?.pending_invoice as PendingInvoiceState | null
+      if (pending?.draft?.date && pending?.draft?.uuid) {
+        if (
+          (isConfirmAction || isRequestOtpAction) &&
           typeof requestAction?.draftUuid === 'string' &&
           requestAction.draftUuid !== pending.draft.uuid
         ) {
@@ -585,17 +778,17 @@ Deno.serve(async (req: Request) => {
         }
         try {
           const result = await executeTool(
-            'confirm_invoice_issue',
-            {},
+            'request_invoice_sign_otp',
+            { phone: requestAction?.phone },
             username,
-            password,
             message as string,
             convId,
           )
-          const payload = result as { uuid?: string; message?: string }
-          const directMessage = payload?.uuid
-            ? `Onayını aldım, fatura başarıyla kesildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" veya "indir" diyebilirsin.`
-            : payload?.message ?? 'Onayını aldım, fatura kesildi.'
+          const payload = result as { status?: string; draft_uuid?: string; phone_masked?: string }
+          const directMessage =
+            payload?.status === 'phone_required'
+              ? 'İmzalama için telefon numarası gerekli. Numaranı girip SMS kodunu isteyebilirsin.'
+              : `İmzalama için SMS doğrulama bekleniyor.${payload?.phone_masked ? ` Kod ${payload.phone_masked} numarasına gönderildi.` : ''}`
 
           await supabase.from('messages').insert({
             conversation_id: convId,
@@ -604,12 +797,25 @@ Deno.serve(async (req: Request) => {
           })
 
           return Response.json(
-            { message: directMessage, conversationId: convId, action: null },
+            {
+              message: directMessage,
+              conversationId: convId,
+              action: payload?.draft_uuid
+                ? {
+                    type: 'open_sign_otp',
+                    label: 'SMS Doğrulama',
+                    sign_otp: {
+                      draftUuid: payload.draft_uuid,
+                      phoneMasked: payload.phone_masked ?? 'Kayıtlı numara',
+                    },
+                  }
+                : null,
+            },
             { headers: corsHeaders },
           )
         } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Fatura onaylanamadı.'
-          const failText = `Onayını aldım ama fatura kesilirken bir hata oluştu: ${msg}`
+          const msg = err instanceof Error ? err.message : 'SMS doğrulaması başlatılamadı.'
+          const failText = `İmzalama adımı başlatılamadı: ${msg}`
           await supabase.from('messages').insert({
             conversation_id: convId,
             role: 'assistant',
@@ -700,7 +906,6 @@ ${responseContract}`
                 block.name,
                 block.input as Record<string, any>,
                 username,
-                password,
                 message as string,
                 convId,
               )
@@ -793,7 +998,7 @@ ${responseContract}`
         const html =
           typeof last.html === 'string' && last.html.length > 0
             ? last.html
-            : await gibGetInvoiceHtml(username, password, last.uuid, true)
+            : await faturaGetInvoiceHtml(username, last.uuid, true)
         action = {
           type: 'open_invoice_preview',
           label: 'Faturayi PDF Ac',
@@ -850,6 +1055,9 @@ ${responseContract}`
       { headers: corsHeaders },
     )
   } catch (err) {
+    if (err instanceof SessionAuthError) {
+      return Response.json({ error: err.message }, { status: err.status, headers: corsHeaders })
+    }
     console.error(err)
     const message = err instanceof Error ? err.message : 'Beklenmeyen bir hata oluştu.'
     return Response.json({ error: message }, { headers: corsHeaders })

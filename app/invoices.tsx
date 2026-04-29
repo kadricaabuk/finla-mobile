@@ -1,4 +1,4 @@
-import { getCredentials } from "@/lib/session";
+import { getTokens } from "@/lib/session";
 import { callEdgeFunction } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
@@ -98,8 +98,8 @@ export default function InvoicesScreen() {
 
   const fetchInvoices = useCallback(
     async (p: Preset, rangeOverride?: DateRange) => {
-      const creds = await getCredentials();
-      if (!creds) return;
+      const tokens = await getTokens();
+      if (!tokens) return;
 
       setLoading(true);
       setError(null);
@@ -110,8 +110,6 @@ export default function InvoicesScreen() {
           invoices: GIBInvoice[];
           error?: string;
         }>("invoices", {
-          username: creds.username,
-          password: creds.password,
           ...range,
           customerName: chatFilters?.customerName,
           amountGte: chatFilters?.amountGte,

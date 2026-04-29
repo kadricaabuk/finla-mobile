@@ -1,11 +1,12 @@
 import ChatInput from "@/components/chat-input";
 import SideMenu from "@/components/side-menu";
 import {
-  clearCredentials,
-  getCredentials,
-  type GIBCredentials,
+  clearLegacyCredentials,
+  clearTokens,
+  decodeJwtSub,
+  getTokens,
 } from "@/lib/session";
-import { callEdgeFunction } from "@/lib/supabase";
+import { callEdgeFunction, logoutRequest } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
 import { router } from "expo-router";
@@ -20,6 +21,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -31,7 +33,7 @@ interface Message {
   text: string;
   role: "user" | "assistant";
   action?: {
-    type: "open_invoices" | "open_invoice_detail" | "open_invoice_preview";
+    type: "open_invoices" | "open_invoice_detail" | "open_invoice_preview" | "open_sign_otp";
     label: string;
     filter?: {
       startDate: string;
@@ -55,6 +57,10 @@ interface Message {
       title: string;
       html: string;
       uuid?: string;
+    };
+    sign_otp?: {
+      draftUuid: string;
+      phoneMasked: string;
     };
   };
 }
@@ -128,7 +134,7 @@ const markdownStyles = {
 };
 
 export default function ChatScreen() {
-  const [credentials, setCredentials] = useState<GIBCredentials | null>(null);
+  const [sessionLabel, setSessionLabel] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -137,21 +143,26 @@ export default function ChatScreen() {
   const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(null);
   const [previewAction, setPreviewAction] = useState<Message["action"] | null>(null);
   const [confirmingDraftUuid, setConfirmingDraftUuid] = useState<string | null>(null);
+  const [signOtpAction, setSignOtpAction] = useState<Message["action"] | null>(null);
+  const [signOtpCode, setSignOtpCode] = useState("");
+  const [signOtpPhone, setSignOtpPhone] = useState("");
+  const [verifyingSignOtp, setVerifyingSignOtp] = useState(false);
+  const [requestingSignOtp, setRequestingSignOtp] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    getCredentials().then((creds) => {
-      if (!creds) {
+    getTokens().then((tokens) => {
+      if (!tokens) {
         router.replace("/login");
         return;
       }
-      setCredentials(creds);
+      setSessionLabel(decodeJwtSub(tokens.accessToken) ?? "Hesap");
     });
   }, []);
 
   useEffect(() => {
     const loadDetail = async () => {
-      if (!credentials || detailAction?.type !== "open_invoice_detail" || !detailAction.invoice?.invoice_uuid) {
+      if (!sessionLabel || detailAction?.type !== "open_invoice_detail" || !detailAction.invoice?.invoice_uuid) {
         setDetailInvoice(detailAction?.invoice ?? null);
         return;
       }
@@ -159,8 +170,6 @@ export default function ChatScreen() {
         const res = await callEdgeFunction<{
           invoice: InvoiceDetail;
         }>("invoice-detail", {
-          username: credentials.username,
-          password: credentials.password,
           invoiceUuid: detailAction.invoice.invoice_uuid,
         });
         setDetailInvoice(res.invoice ?? detailAction.invoice);
@@ -169,14 +178,15 @@ export default function ChatScreen() {
       }
     };
     loadDetail();
-  }, [credentials, detailAction]);
+  }, [sessionLabel, detailAction]);
 
   const scrollToBottom = () =>
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (!credentials) return;
+      const tokens = await getTokens();
+      if (!tokens) return;
 
       const userMsg: Message = {
         id: Date.now().toString(),
@@ -195,8 +205,6 @@ export default function ChatScreen() {
         }>("chat", {
           message: text,
           conversationId,
-          username: credentials.username,
-          password: credentials.password,
         });
 
         if (!conversationId) setConversationId(res.conversationId);
@@ -208,6 +216,9 @@ export default function ChatScreen() {
           action: res.action,
         };
         setMessages((prev) => [...prev, aiMsg]);
+        if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
+          setSignOtpAction(res.action);
+        }
       } catch (err) {
         const errMsg: Message = {
           id: (Date.now() + 1).toString(),
@@ -220,11 +231,11 @@ export default function ChatScreen() {
         scrollToBottom();
       }
     },
-    [credentials, conversationId],
+    [conversationId],
   );
 
   const handleConfirmFromPreview = useCallback(async (draftUuid?: string) => {
-    if (!credentials || !conversationId || !draftUuid) return;
+    if (!(await getTokens()) || !conversationId || !draftUuid) return;
     if (confirmingDraftUuid === draftUuid) return;
     setConfirmingDraftUuid(draftUuid);
     setLoading(true);
@@ -236,8 +247,6 @@ export default function ChatScreen() {
       }>("chat", {
         message: "confirm_pending_invoice",
         conversationId,
-        username: credentials.username,
-        password: credentials.password,
         action: { type: "confirm_pending_invoice", draftUuid: draftUuid },
       });
       const aiMsg: Message = {
@@ -247,6 +256,9 @@ export default function ChatScreen() {
         action: res.action,
       };
       setMessages((prev) => [...prev, aiMsg]);
+      if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
+        setSignOtpAction(res.action);
+      }
     } catch (err) {
       const errMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -259,7 +271,97 @@ export default function ChatScreen() {
       setConfirmingDraftUuid(null);
       scrollToBottom();
     }
-  }, [credentials, conversationId, confirmingDraftUuid]);
+  }, [conversationId, confirmingDraftUuid]);
+
+  const handleVerifySignOtp = useCallback(async () => {
+    if (!(await getTokens()) || !conversationId || !signOtpAction?.sign_otp?.draftUuid) return;
+    const code = signOtpCode.trim();
+    if (!code || verifyingSignOtp) return;
+    setVerifyingSignOtp(true);
+    setLoading(true);
+    try {
+      const res = await callEdgeFunction<{
+        message: string;
+        conversationId: string;
+        action?: Message["action"];
+      }>("chat", {
+        message: "verify_sign_otp",
+        conversationId,
+        action: {
+          type: "verify_sign_otp",
+          draftUuid: signOtpAction.sign_otp.draftUuid,
+          smsCode: code,
+        },
+      });
+      const aiMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        text: res.message,
+        role: "assistant",
+        action: res.action,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+    } catch (err) {
+      const errMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama sırasında beklenmeyen bir sorun oluştu."}`,
+        role: "assistant",
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setVerifyingSignOtp(false);
+      setLoading(false);
+      setSignOtpAction(null);
+      setSignOtpCode("");
+      setSignOtpPhone("");
+      scrollToBottom();
+    }
+  }, [conversationId, signOtpAction, signOtpCode, verifyingSignOtp]);
+
+  const handleRequestSignOtp = useCallback(async (withPhoneUpdate: boolean) => {
+    if (!(await getTokens()) || !conversationId || !signOtpAction?.sign_otp?.draftUuid) return;
+    if (requestingSignOtp) return;
+    const phone = signOtpPhone.trim();
+    if (withPhoneUpdate && !phone) return;
+    setRequestingSignOtp(true);
+    setLoading(true);
+    try {
+      const res = await callEdgeFunction<{
+        message: string;
+        conversationId: string;
+        action?: Message["action"];
+      }>("chat", {
+        message: "request_sign_otp",
+        conversationId,
+        action: {
+          type: "request_sign_otp",
+          draftUuid: signOtpAction.sign_otp.draftUuid,
+          phone: withPhoneUpdate ? phone : undefined,
+        },
+      });
+      const aiMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        text: res.message,
+        role: "assistant",
+        action: res.action,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+      if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
+        setSignOtpAction(res.action);
+      }
+      if (withPhoneUpdate) setSignOtpPhone("");
+    } catch (err) {
+      const errMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama yeniden başlatılamadı."}`,
+        role: "assistant",
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setRequestingSignOtp(false);
+      setLoading(false);
+      scrollToBottom();
+    }
+  }, [conversationId, requestingSignOtp, signOtpAction, signOtpPhone]);
 
   const handleNewChat = () => {
     setMessages([]);
@@ -269,17 +371,17 @@ export default function ChatScreen() {
 
   const handleLogout = async () => {
     try {
-      if (credentials) {
-        await callEdgeFunction("logout", { username: credentials.username });
-      }
+      const tokens = await getTokens();
+      if (tokens) await logoutRequest(tokens.accessToken);
     } catch {
       // Non-critical — proceed with local logout regardless
     }
-    await clearCredentials();
+    await clearTokens();
+    await clearLegacyCredentials();
     router.replace("/login");
   };
 
-  if (!credentials) return null;
+  if (!sessionLabel) return null;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -419,7 +521,7 @@ export default function ChatScreen() {
         onClose={() => setIsMenuOpen(false)}
         onNewChat={handleNewChat}
         onLogout={handleLogout}
-        username={credentials.username}
+        username={sessionLabel}
       />
       <Modal
         visible={!!detailAction?.invoice}
@@ -498,6 +600,88 @@ export default function ChatScreen() {
             <Pressable
               style={styles.modalSecondaryBtn}
               onPress={() => setPreviewAction(null)}
+            >
+              <Text style={styles.modalSecondaryBtnText}>Kapat</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={!!signOtpAction?.sign_otp?.draftUuid}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (verifyingSignOtp || requestingSignOtp) return;
+          setSignOtpAction(null);
+          setSignOtpCode("");
+          setSignOtpPhone("");
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>SMS Doğrulama</Text>
+            <Text style={styles.modalLine}>İmzalama için SMS doğrulama bekleniyor.</Text>
+            <Text style={styles.modalLine}>
+              Kod gönderilen numara: {signOtpAction?.sign_otp?.phoneMasked || "Kayıtlı numara"}
+            </Text>
+            <TextInput
+              style={styles.otpInput}
+              value={signOtpPhone}
+              onChangeText={setSignOtpPhone}
+              keyboardType="phone-pad"
+              placeholder="Numara değiştir (opsiyonel)"
+              placeholderTextColor="#ABABAB"
+              editable={!verifyingSignOtp && !requestingSignOtp}
+            />
+            <TextInput
+              style={styles.otpInput}
+              value={signOtpCode}
+              onChangeText={setSignOtpCode}
+              keyboardType="number-pad"
+              placeholder="SMS kodu"
+              placeholderTextColor="#ABABAB"
+              editable={!verifyingSignOtp && !requestingSignOtp}
+              returnKeyType="done"
+              onSubmitEditing={handleVerifySignOtp}
+            />
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[styles.modalSecondaryBtn, requestingSignOtp && styles.actionConfirmButtonDisabled]}
+                onPress={() => handleRequestSignOtp(false)}
+                disabled={requestingSignOtp || verifyingSignOtp}
+              >
+                <Text style={styles.modalSecondaryBtnText}>
+                  {requestingSignOtp ? "Gönderiliyor..." : "Kodu Yeniden Gönder"}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalSecondaryBtn, requestingSignOtp && styles.actionConfirmButtonDisabled]}
+                onPress={() => handleRequestSignOtp(true)}
+                disabled={requestingSignOtp || verifyingSignOtp || !signOtpPhone.trim()}
+              >
+                <Text style={styles.modalSecondaryBtnText}>Numarayı Güncelle ve Gönder</Text>
+              </Pressable>
+            </View>
+            <Pressable
+              style={[
+                styles.modalCloseBtn,
+                (verifyingSignOtp || requestingSignOtp) && styles.actionConfirmButtonDisabled,
+              ]}
+              onPress={handleVerifySignOtp}
+              disabled={verifyingSignOtp || requestingSignOtp || !signOtpCode.trim()}
+            >
+              <Text style={styles.modalCloseBtnText}>
+                {verifyingSignOtp ? "Doğrulanıyor..." : "Kodu Doğrula"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.modalSecondaryBtn}
+              onPress={() => {
+                if (verifyingSignOtp || requestingSignOtp) return;
+                setSignOtpAction(null);
+                setSignOtpCode("");
+                setSignOtpPhone("");
+              }}
             >
               <Text style={styles.modalSecondaryBtnText}>Kapat</Text>
             </Pressable>
@@ -654,5 +838,16 @@ const styles = StyleSheet.create({
     color: "#333",
     fontSize: 13,
     fontWeight: "600",
+  },
+  otpInput: {
+    height: 46,
+    borderWidth: 1.2,
+    borderColor: "#DCDCDC",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    color: "#000",
+    backgroundColor: "#FAFAFA",
+    marginTop: 8,
   },
 });

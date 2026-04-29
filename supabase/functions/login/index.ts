@@ -1,5 +1,6 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { GibAuthError, gibLoginWithTrace } from '../_shared/gib.ts'
+import { GibAuthError, faturaLoginWithTrace } from '../_shared/gib.ts'
+import { issueAuthTokens } from '../_shared/session-auth.ts'
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
@@ -16,10 +17,17 @@ Deno.serve(async (req) => {
       )
     }
 
-    const loginResult = await gibLoginWithTrace(username, password)
+    const loginResult = await faturaLoginWithTrace(username, password)
+    const tokens = await issueAuthTokens(username)
 
     return Response.json(
-      { success: true, trace: loginResult.trace.slice(-5) },
+      {
+        success: true,
+        trace: loginResult.trace.slice(-5),
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+      },
       { headers: corsHeaders },
     )
   } catch (err) {

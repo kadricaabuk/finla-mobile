@@ -6,7 +6,7 @@ import {
   decodeJwtSub,
   getTokens,
 } from "@/lib/session";
-import { callEdgeFunction, logoutRequest } from "@/lib/supabase";
+import { callApi, logoutRequest } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
 import { router } from "expo-router";
@@ -33,7 +33,11 @@ interface Message {
   text: string;
   role: "user" | "assistant";
   action?: {
-    type: "open_invoices" | "open_invoice_detail" | "open_invoice_preview" | "open_sign_otp";
+    type:
+      | "open_invoices"
+      | "open_invoice_detail"
+      | "open_invoice_preview"
+      | "open_sign_otp";
     label: string;
     filter?: {
       startDate: string;
@@ -139,11 +143,21 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [detailAction, setDetailAction] = useState<Message["action"] | null>(null);
-  const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(null);
-  const [previewAction, setPreviewAction] = useState<Message["action"] | null>(null);
-  const [confirmingDraftUuid, setConfirmingDraftUuid] = useState<string | null>(null);
-  const [signOtpAction, setSignOtpAction] = useState<Message["action"] | null>(null);
+  const [detailAction, setDetailAction] = useState<Message["action"] | null>(
+    null,
+  );
+  const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(
+    null,
+  );
+  const [previewAction, setPreviewAction] = useState<Message["action"] | null>(
+    null,
+  );
+  const [confirmingDraftUuid, setConfirmingDraftUuid] = useState<string | null>(
+    null,
+  );
+  const [signOtpAction, setSignOtpAction] = useState<Message["action"] | null>(
+    null,
+  );
   const [signOtpCode, setSignOtpCode] = useState("");
   const [signOtpPhone, setSignOtpPhone] = useState("");
   const [verifyingSignOtp, setVerifyingSignOtp] = useState(false);
@@ -162,12 +176,16 @@ export default function ChatScreen() {
 
   useEffect(() => {
     const loadDetail = async () => {
-      if (!sessionLabel || detailAction?.type !== "open_invoice_detail" || !detailAction.invoice?.invoice_uuid) {
+      if (
+        !sessionLabel ||
+        detailAction?.type !== "open_invoice_detail" ||
+        !detailAction.invoice?.invoice_uuid
+      ) {
         setDetailInvoice(detailAction?.invoice ?? null);
         return;
       }
       try {
-        const res = await callEdgeFunction<{
+        const res = await callApi<{
           invoice: InvoiceDetail;
         }>("invoice-detail", {
           invoiceUuid: detailAction.invoice.invoice_uuid,
@@ -198,7 +216,7 @@ export default function ChatScreen() {
       scrollToBottom();
 
       try {
-        const res = await callEdgeFunction<{
+        const res = await callApi<{
           message: string;
           conversationId: string;
           action?: Message["action"];
@@ -216,7 +234,10 @@ export default function ChatScreen() {
           action: res.action,
         };
         setMessages((prev) => [...prev, aiMsg]);
-        if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
+        if (
+          res.action?.type === "open_sign_otp" &&
+          res.action.sign_otp?.draftUuid
+        ) {
           setSignOtpAction(res.action);
         }
       } catch (err) {
@@ -234,53 +255,64 @@ export default function ChatScreen() {
     [conversationId],
   );
 
-  const handleConfirmFromPreview = useCallback(async (draftUuid?: string) => {
-    if (!(await getTokens()) || !conversationId || !draftUuid) return;
-    if (confirmingDraftUuid === draftUuid) return;
-    setConfirmingDraftUuid(draftUuid);
-    setLoading(true);
-    try {
-      const res = await callEdgeFunction<{
-        message: string;
-        conversationId: string;
-        action?: Message["action"];
-      }>("chat", {
-        message: "confirm_pending_invoice",
-        conversationId,
-        action: { type: "confirm_pending_invoice", draftUuid: draftUuid },
-      });
-      const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        text: res.message,
-        role: "assistant",
-        action: res.action,
-      };
-      setMessages((prev) => [...prev, aiMsg]);
-      if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
-        setSignOtpAction(res.action);
+  const handleConfirmFromPreview = useCallback(
+    async (draftUuid?: string) => {
+      if (!(await getTokens()) || !conversationId || !draftUuid) return;
+      if (confirmingDraftUuid === draftUuid) return;
+      setConfirmingDraftUuid(draftUuid);
+      setLoading(true);
+      try {
+        const res = await callApi<{
+          message: string;
+          conversationId: string;
+          action?: Message["action"];
+        }>("chat", {
+          message: "confirm_pending_invoice",
+          conversationId,
+          action: { type: "confirm_pending_invoice", draftUuid: draftUuid },
+        });
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: res.message,
+          role: "assistant",
+          action: res.action,
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        if (
+          res.action?.type === "open_sign_otp" &&
+          res.action.sign_otp?.draftUuid
+        ) {
+          setSignOtpAction(res.action);
+        }
+      } catch (err) {
+        const errMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `Hata: ${err instanceof Error ? err.message : "Onay sırasında beklenmeyen bir sorun oluştu."}`,
+          role: "assistant",
+        };
+        setMessages((prev) => [...prev, errMsg]);
+      } finally {
+        setLoading(false);
+        setConfirmingDraftUuid(null);
+        scrollToBottom();
       }
-    } catch (err) {
-      const errMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        text: `Hata: ${err instanceof Error ? err.message : "Onay sırasında beklenmeyen bir sorun oluştu."}`,
-        role: "assistant",
-      };
-      setMessages((prev) => [...prev, errMsg]);
-    } finally {
-      setLoading(false);
-      setConfirmingDraftUuid(null);
-      scrollToBottom();
-    }
-  }, [conversationId, confirmingDraftUuid]);
+    },
+    [conversationId, confirmingDraftUuid],
+  );
 
   const handleVerifySignOtp = useCallback(async () => {
-    if (!(await getTokens()) || !conversationId || !signOtpAction?.sign_otp?.draftUuid) return;
+    if (
+      !(await getTokens()) ||
+      !conversationId ||
+      !signOtpAction?.sign_otp?.draftUuid
+    )
+      return;
     const code = signOtpCode.trim();
     if (!code || verifyingSignOtp) return;
     setVerifyingSignOtp(true);
     setLoading(true);
     try {
-      const res = await callEdgeFunction<{
+      const res = await callApi<{
         message: string;
         conversationId: string;
         action?: Message["action"];
@@ -317,51 +349,62 @@ export default function ChatScreen() {
     }
   }, [conversationId, signOtpAction, signOtpCode, verifyingSignOtp]);
 
-  const handleRequestSignOtp = useCallback(async (withPhoneUpdate: boolean) => {
-    if (!(await getTokens()) || !conversationId || !signOtpAction?.sign_otp?.draftUuid) return;
-    if (requestingSignOtp) return;
-    const phone = signOtpPhone.trim();
-    if (withPhoneUpdate && !phone) return;
-    setRequestingSignOtp(true);
-    setLoading(true);
-    try {
-      const res = await callEdgeFunction<{
-        message: string;
-        conversationId: string;
-        action?: Message["action"];
-      }>("chat", {
-        message: "request_sign_otp",
-        conversationId,
-        action: {
-          type: "request_sign_otp",
-          draftUuid: signOtpAction.sign_otp.draftUuid,
-          phone: withPhoneUpdate ? phone : undefined,
-        },
-      });
-      const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        text: res.message,
-        role: "assistant",
-        action: res.action,
-      };
-      setMessages((prev) => [...prev, aiMsg]);
-      if (res.action?.type === "open_sign_otp" && res.action.sign_otp?.draftUuid) {
-        setSignOtpAction(res.action);
+  const handleRequestSignOtp = useCallback(
+    async (withPhoneUpdate: boolean) => {
+      if (
+        !(await getTokens()) ||
+        !conversationId ||
+        !signOtpAction?.sign_otp?.draftUuid
+      )
+        return;
+      if (requestingSignOtp) return;
+      const phone = signOtpPhone.trim();
+      if (withPhoneUpdate && !phone) return;
+      setRequestingSignOtp(true);
+      setLoading(true);
+      try {
+        const res = await callApi<{
+          message: string;
+          conversationId: string;
+          action?: Message["action"];
+        }>("chat", {
+          message: "request_sign_otp",
+          conversationId,
+          action: {
+            type: "request_sign_otp",
+            draftUuid: signOtpAction.sign_otp.draftUuid,
+            phone: withPhoneUpdate ? phone : undefined,
+          },
+        });
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: res.message,
+          role: "assistant",
+          action: res.action,
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        if (
+          res.action?.type === "open_sign_otp" &&
+          res.action.sign_otp?.draftUuid
+        ) {
+          setSignOtpAction(res.action);
+        }
+        if (withPhoneUpdate) setSignOtpPhone("");
+      } catch (err) {
+        const errMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama yeniden başlatılamadı."}`,
+          role: "assistant",
+        };
+        setMessages((prev) => [...prev, errMsg]);
+      } finally {
+        setRequestingSignOtp(false);
+        setLoading(false);
+        scrollToBottom();
       }
-      if (withPhoneUpdate) setSignOtpPhone("");
-    } catch (err) {
-      const errMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama yeniden başlatılamadı."}`,
-        role: "assistant",
-      };
-      setMessages((prev) => [...prev, errMsg]);
-    } finally {
-      setRequestingSignOtp(false);
-      setLoading(false);
-      scrollToBottom();
-    }
-  }, [conversationId, requestingSignOtp, signOtpAction, signOtpPhone]);
+    },
+    [conversationId, requestingSignOtp, signOtpAction, signOtpPhone],
+  );
 
   const handleNewChat = () => {
     setMessages([]);
@@ -490,8 +533,12 @@ export default function ChatScreen() {
                           styles.actionConfirmButtonDisabled,
                       ]}
                       activeOpacity={0.8}
-                      disabled={confirmingDraftUuid === msg.action?.preview?.uuid}
-                      onPress={() => handleConfirmFromPreview(msg.action?.preview?.uuid)}
+                      disabled={
+                        confirmingDraftUuid === msg.action?.preview?.uuid
+                      }
+                      onPress={() =>
+                        handleConfirmFromPreview(msg.action?.preview?.uuid)
+                      }
                     >
                       <Text style={styles.actionConfirmButtonText}>
                         {confirmingDraftUuid === msg.action?.preview?.uuid
@@ -532,7 +579,9 @@ export default function ChatScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Fatura Detayı</Text>
-            <Text style={styles.modalLine}>Müşteri: {detailInvoice?.customer_name || "—"}</Text>
+            <Text style={styles.modalLine}>
+              Müşteri: {detailInvoice?.customer_name || "—"}
+            </Text>
             <Text style={styles.modalLine}>
               Tarih: {detailInvoice?.issue_date || "—"}
             </Text>
@@ -557,7 +606,10 @@ export default function ChatScreen() {
             <Text style={styles.modalLine}>
               ETTN: {detailInvoice?.invoice_uuid || "—"}
             </Text>
-            <Pressable style={styles.modalCloseBtn} onPress={() => setDetailAction(null)}>
+            <Pressable
+              style={styles.modalCloseBtn}
+              onPress={() => setDetailAction(null)}
+            >
               <Text style={styles.modalCloseBtnText}>Kapat</Text>
             </Pressable>
           </View>
@@ -620,9 +672,12 @@ export default function ChatScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>SMS Doğrulama</Text>
-            <Text style={styles.modalLine}>İmzalama için SMS doğrulama bekleniyor.</Text>
             <Text style={styles.modalLine}>
-              Kod gönderilen numara: {signOtpAction?.sign_otp?.phoneMasked || "Kayıtlı numara"}
+              İmzalama için SMS doğrulama bekleniyor.
+            </Text>
+            <Text style={styles.modalLine}>
+              Kod gönderilen numara:{" "}
+              {signOtpAction?.sign_otp?.phoneMasked || "Kayıtlı numara"}
             </Text>
             <TextInput
               style={styles.otpInput}
@@ -646,29 +701,44 @@ export default function ChatScreen() {
             />
             <View style={styles.actionRow}>
               <Pressable
-                style={[styles.modalSecondaryBtn, requestingSignOtp && styles.actionConfirmButtonDisabled]}
+                style={[
+                  styles.modalSecondaryBtn,
+                  requestingSignOtp && styles.actionConfirmButtonDisabled,
+                ]}
                 onPress={() => handleRequestSignOtp(false)}
                 disabled={requestingSignOtp || verifyingSignOtp}
               >
                 <Text style={styles.modalSecondaryBtnText}>
-                  {requestingSignOtp ? "Gönderiliyor..." : "Kodu Yeniden Gönder"}
+                  {requestingSignOtp
+                    ? "Gönderiliyor..."
+                    : "Kodu Yeniden Gönder"}
                 </Text>
               </Pressable>
               <Pressable
-                style={[styles.modalSecondaryBtn, requestingSignOtp && styles.actionConfirmButtonDisabled]}
+                style={[
+                  styles.modalSecondaryBtn,
+                  requestingSignOtp && styles.actionConfirmButtonDisabled,
+                ]}
                 onPress={() => handleRequestSignOtp(true)}
-                disabled={requestingSignOtp || verifyingSignOtp || !signOtpPhone.trim()}
+                disabled={
+                  requestingSignOtp || verifyingSignOtp || !signOtpPhone.trim()
+                }
               >
-                <Text style={styles.modalSecondaryBtnText}>Numarayı Güncelle ve Gönder</Text>
+                <Text style={styles.modalSecondaryBtnText}>
+                  Numarayı Güncelle ve Gönder
+                </Text>
               </Pressable>
             </View>
             <Pressable
               style={[
                 styles.modalCloseBtn,
-                (verifyingSignOtp || requestingSignOtp) && styles.actionConfirmButtonDisabled,
+                (verifyingSignOtp || requestingSignOtp) &&
+                  styles.actionConfirmButtonDisabled,
               ]}
               onPress={handleVerifySignOtp}
-              disabled={verifyingSignOtp || requestingSignOtp || !signOtpCode.trim()}
+              disabled={
+                verifyingSignOtp || requestingSignOtp || !signOtpCode.trim()
+              }
             >
               <Text style={styles.modalCloseBtnText}>
                 {verifyingSignOtp ? "Doğrulanıyor..." : "Kodu Doğrula"}

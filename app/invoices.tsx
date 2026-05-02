@@ -1,5 +1,5 @@
 import { getTokens } from "@/lib/session";
-import { callEdgeFunction } from "@/lib/supabase";
+import { callApi } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -29,6 +29,10 @@ interface GIBInvoice {
 
 type Preset = "bu_ay" | "gecen_ay" | "bu_yil";
 type DateRange = { startDate: string; endDate: string };
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+type CacheEntry = { fetchedAt: number; data: GIBInvoice[] };
+const syncCache = new Map<string, CacheEntry>();
 
 const PRESETS: { key: Preset; label: string }[] = [
   { key: "bu_ay", label: "Bu Ay" },
@@ -94,19 +98,36 @@ export default function InvoicesScreen() {
   } | null>(null);
   const [invoices, setInvoices] = useState<GIBInvoice[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchInvoices = useCallback(
-    async (p: Preset, rangeOverride?: DateRange) => {
+    async (p: Preset, rangeOverride?: DateRange, isRefresh = false) => {
       const tokens = await getTokens();
       if (!tokens) return;
 
-      setLoading(true);
+      const range = rangeOverride ?? getRange(p);
+      const cacheKey = `${range.startDate}|${range.endDate}`;
+
+      // In-memory cache hit: no network call, no loading state
+      if (!isRefresh && !chatFilters) {
+        const cached = syncCache.get(cacheKey);
+        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+          setInvoices(cached.data);
+          setError(null);
+          return;
+        }
+      }
+
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
 
       try {
-        const range = rangeOverride ?? getRange(p);
-        const res = await callEdgeFunction<{
+        const res = await callApi<{
           invoices: GIBInvoice[];
           error?: string;
         }>("invoices", {
@@ -116,12 +137,15 @@ export default function InvoicesScreen() {
           amountEq: chatFilters?.amountEq,
         });
         if (res.error) throw new Error(res.error);
-        setInvoices(res.invoices ?? []);
+        const data = res.invoices ?? [];
+        setInvoices(data);
+        if (!chatFilters) syncCache.set(cacheKey, { fetchedAt: Date.now(), data });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Faturalar yüklenemedi.");
         setInvoices([]);
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
     },
     [chatFilters],
@@ -141,11 +165,17 @@ export default function InvoicesScreen() {
     if (hasChatFilter) {
       setChatFilters({
         customerName:
-          typeof params.customerName === "string" ? params.customerName : undefined,
+          typeof params.customerName === "string"
+            ? params.customerName
+            : undefined,
         amountGte:
-          typeof params.amountGte === "string" ? Number(params.amountGte) : undefined,
+          typeof params.amountGte === "string"
+            ? Number(params.amountGte)
+            : undefined,
         amountEq:
-          typeof params.amountEq === "string" ? Number(params.amountEq) : undefined,
+          typeof params.amountEq === "string"
+            ? Number(params.amountEq)
+            : undefined,
       });
     } else {
       setChatFilters(null);
@@ -256,12 +286,13 @@ export default function InvoicesScreen() {
               ) : null}
               {typeof chatFilters?.amountGte === "number" ? (
                 <Text style={styles.chatFilterDetailText}>
-                  Tutar {'>='} {chatFilters.amountGte.toLocaleString("tr-TR")} TL
+                  Tutar {">="} {chatFilters.amountGte.toLocaleString("tr-TR")}{" "}
+                  TL
                 </Text>
               ) : null}
               {typeof chatFilters?.amountEq === "number" ? (
                 <Text style={styles.chatFilterDetailText}>
-                  Tutar {'~='} {chatFilters.amountEq.toLocaleString("tr-TR")} TL
+                  Tutar {"~="} {chatFilters.amountEq.toLocaleString("tr-TR")} TL
                 </Text>
               ) : null}
               <TouchableOpacity
@@ -272,7 +303,9 @@ export default function InvoicesScreen() {
                   setChatFilterInfoOpen(false);
                 }}
               >
-                <Text style={styles.resetChatFilterBtnText}>Preset filtrelere dön</Text>
+                <Text style={styles.resetChatFilterBtnText}>
+                  Preset filtrelere dön
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -303,8 +336,10 @@ export default function InvoicesScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={loading}
-              onRefresh={() => fetchInvoices(preset, customRange ?? undefined)}
+              refreshing={refreshing}
+              onRefresh={() =>
+                fetchInvoices(preset, customRange ?? undefined, true)
+              }
               tintColor="#000"
             />
           }

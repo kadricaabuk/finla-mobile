@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fatura": {
+      "command": "node",
+      "args": ["../fatura-mcp/dist/index.js"]
+    }
+  }
+}

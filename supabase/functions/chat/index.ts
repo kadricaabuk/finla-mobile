@@ -3,6 +3,7 @@ import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { TOOLS, SYSTEM_PROMPT } from '../_shared/tools.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+import { normalizeTurkish } from '../_shared/turkish.ts'
 import {
   faturaCreateInvoicePreview,
   faturaConfirmInvoiceIssue,
@@ -15,6 +16,12 @@ import {
   faturaVerifySignSMSCode,
   mapInvoicesToFacts,
 } from '../_shared/gib.ts'
+import type {
+  ChatAction,
+  InvoiceSearchFilters,
+  InvoiceDetailPayload,
+  PendingInvoiceState,
+} from './types.ts'
 
 const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! })
 
@@ -24,76 +31,6 @@ const supabase = createClient(
 )
 
 const ISTANBUL_TZ = 'Europe/Istanbul'
-
-interface ChatAction {
-  type: 'open_invoices' | 'open_invoice_detail' | 'open_invoice_preview' | 'open_sign_otp'
-  label: string
-  filter?: {
-    startDate: string
-    endDate: string
-    customerName?: string
-    amountGte?: number
-    amountEq?: number
-  }
-  invoice?: {
-    invoice_uuid: string
-    issue_date: string | null
-    status: string
-    currency: string
-    gross_total: number | null
-    vat_total: number | null
-    net_total: number | null
-    customer_tax_id: string | null
-    customer_name: string | null
-  }
-  preview?: {
-    title: string
-    html: string
-    uuid?: string
-  }
-  sign_otp?: {
-    draftUuid: string
-    phoneMasked: string
-  }
-}
-
-interface InvoiceSearchFilters {
-  customerName?: string
-  amountGte?: number
-  amountEq?: number
-}
-
-type InvoiceDetailPayload = {
-  invoice_uuid: string
-  issue_date: string | null
-  status: string
-  currency: string
-  gross_total: number | null
-  vat_total: number | null
-  net_total: number | null
-  customer_tax_id: string | null
-  customer_name: string | null
-}
-
-interface PendingInvoiceState {
-  draft?: { date?: string; uuid?: string }
-  request?: {
-    buyer_name?: string
-    buyer_tax_id?: string
-    items?: { quantity?: number; unit_price?: number; vat_rate?: number }[]
-    currency?: string
-    date?: string
-  }
-  preview_html?: string
-  signing?: {
-    status?: 'idle' | 'otp_sent' | 'otp_verified'
-    phone?: string
-    phone_masked?: string
-    operation_id?: string
-    otp_requested_at?: string
-    otp_verified_at?: string
-  }
-}
 
 function maskPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '')
@@ -166,7 +103,7 @@ function resolveDateRangeFromText(text: string): { startDate: string; endDate: s
   }
 
   if (lower.includes('geçen hafta') || lower.includes('gecen hafta')) {
-    const currentWeekday = (today.getUTCDay() + 6) % 7 // Mon=0
+    const currentWeekday = (today.getUTCDay() + 6) % 7
     const startOfThisWeek = new Date(today)
     startOfThisWeek.setUTCDate(today.getUTCDate() - currentWeekday)
     const startOfLastWeek = new Date(startOfThisWeek)
@@ -185,7 +122,7 @@ function resolveDateRangeFromText(text: string): { startDate: string; endDate: s
 }
 
 function resolveDateRange(
-  input: Record<string, any>,
+  input: Record<string, unknown>,
   userMessage: string,
   fallback: 'month' | 'none' = 'month',
 ): { startDate: string; endDate: string } | null {
@@ -207,17 +144,6 @@ function shouldOfferInvoicesAction(userMessage: string, usedTools: Set<string>):
     (lower.includes('fatura') || lower.includes('liste')) &&
     (lower.includes('göster') || lower.includes('goster') || lower.includes('listele'))
   )
-}
-
-function normalizeTurkish(value: string): string {
-  return value
-    .toLocaleLowerCase('tr-TR')
-    .replace(/ı/g, 'i')
-    .replace(/ğ/g, 'g')
-    .replace(/ş/g, 's')
-    .replace(/ö/g, 'o')
-    .replace(/ü/g, 'u')
-    .replace(/ç/g, 'c')
 }
 
 function parseAmount(value: string): number | null {
@@ -244,7 +170,7 @@ function parseFiltersFromText(text: string): InvoiceSearchFilters {
 
   const customerMatch =
     text.match(/([A-Za-zÇĞİÖŞÜçğıöşü\s]+?)\s+(beye|bey|hanıma|hanima|hanim|bayan|beye)\b/i) ??
-    text.match(/([A-Za-zÇĞİÖŞÜçğıöşü\s]+?)['’]?(?:ya|ye)\s+kesti/i) ??
+    text.match(/([A-Za-zÇĞİÖŞÜçğıöşü\s]+?)['']?(?:ya|ye)\s+kesti/i) ??
     text.match(/([A-Za-zÇĞİÖŞÜçğıöşü\s]+?)\s+(?:adına|adina)/i)
 
   if (customerMatch?.[1]) {
@@ -258,7 +184,7 @@ function parseFiltersFromText(text: string): InvoiceSearchFilters {
 
 async function executeTool(
   toolName: string,
-  input: Record<string, any>,
+  input: Record<string, unknown>,
   username: string,
   userMessage: string,
   conversationId: string,
@@ -290,7 +216,7 @@ async function executeTool(
     typeof input.amount_eq === 'number'
       ? input.amount_eq
       : typeof input.amount_eq === 'string'
-        ? parseAmount(input.amount_eq)
+        ? parseAmount(input.amount_eq as string)
         : null
   const filters: InvoiceSearchFilters = {
     customerName:
@@ -317,22 +243,29 @@ async function executeTool(
 
   switch (toolName) {
     case 'lookup_recipient':
-      return faturaLookupRecipient(username, input.tax_id)
+      return faturaLookupRecipient(username, input.tax_id as string)
 
     case 'create_invoice': {
+      const items = input.items as {
+        name: string
+        quantity: number
+        unit: string
+        unit_price: number
+        vat_rate: number
+      }[]
       const preview = await faturaCreateInvoicePreview(username, {
-        buyerName: input.buyer_name,
-        buyerTaxId: input.buyer_tax_id,
-        buyerAddress: input.buyer_address,
-        items: input.items.map((i: any) => ({
+        buyerName: input.buyer_name as string,
+        buyerTaxId: input.buyer_tax_id as string | undefined,
+        buyerAddress: input.buyer_address as string | undefined,
+        items: items.map(i => ({
           name: i.name,
           quantity: i.quantity,
           unit: i.unit,
           unitPrice: i.unit_price,
           vatRate: i.vat_rate,
         })),
-        date: input.date,
-        currency: input.currency,
+        date: input.date as string | undefined,
+        currency: input.currency as string | undefined,
       })
 
       await supabase
@@ -423,7 +356,7 @@ async function executeTool(
         typeof input.code === 'string'
           ? input.code.trim()
           : typeof input.sms_code === 'string'
-            ? input.sms_code.trim()
+            ? (input.sms_code as string).trim()
             : ''
       if (!code) throw new Error('SMS doğrulama kodu gerekli.')
 
@@ -442,10 +375,7 @@ async function executeTool(
         .update({ pending_invoice: nextPending })
         .eq('id', conversationId)
 
-      return {
-        status: 'otp_verified',
-        draft_uuid: draft.uuid,
-      }
+      return { status: 'otp_verified', draft_uuid: draft.uuid }
     }
 
     case 'confirm_invoice_issue': {
@@ -476,7 +406,9 @@ async function executeTool(
       const vatTotal = items.reduce(
         (sum, item) =>
           sum +
-          ((Number(item.quantity ?? 0) * Number(item.unit_price ?? 0) * Number(item.vat_rate ?? 0)) /
+          ((Number(item.quantity ?? 0) *
+            Number(item.unit_price ?? 0) *
+            Number(item.vat_rate ?? 0)) /
             100 || 0),
         0,
       )
@@ -502,7 +434,6 @@ async function executeTool(
         })
         .eq('id', conversationId)
 
-      // Keep invoice detail source-of-truth in invoice_facts (session-independent).
       await supabase.from('invoice_facts').upsert(
         {
           gib_username: username,
@@ -525,39 +456,34 @@ async function executeTool(
         { onConflict: 'gib_username,invoice_uuid' },
       )
 
-      return {
-        status: 'issued',
-        uuid: issued.uuid,
-        message: 'Fatura başarıyla kesildi.',
-      }
+      return { status: 'issued', uuid: issued.uuid, message: 'Fatura başarıyla kesildi.' }
     }
 
-    case 'list_invoices':
-      {
-        const range = resolveDateRange(input, userMessage, 'month')
-        if (!range) throw new Error('Tarih aralığı belirlenemedi.')
-        const hasFilters =
-          !!filters.customerName ||
-          typeof filters.amountGte === 'number' ||
-          typeof filters.amountEq === 'number'
-        if (!hasFilters) {
-          return faturaListInvoices(username, range.startDate, range.endDate)
-        }
-
-        await ensureFacts(range.startDate, range.endDate)
-        let query = supabase
-          .from('invoice_facts')
-          .select('raw_payload')
-          .eq('gib_username', username)
-          .gte('issue_date', toIsoDate(range.startDate))
-          .lte('issue_date', toIsoDate(range.endDate))
-          .order('issue_date', { ascending: false })
-          .limit(100)
-        query = applyFactFilters(query as any) as any
-        const { data, error } = await query
-        if (error) throw error
-        return (data ?? []).map((row: { raw_payload: unknown }) => row.raw_payload)
+    case 'list_invoices': {
+      const range = resolveDateRange(input, userMessage, 'month')
+      if (!range) throw new Error('Tarih aralığı belirlenemedi.')
+      const hasFilters =
+        !!filters.customerName ||
+        typeof filters.amountGte === 'number' ||
+        typeof filters.amountEq === 'number'
+      if (!hasFilters) {
+        return faturaListInvoices(username, range.startDate, range.endDate)
       }
+
+      await ensureFacts(range.startDate, range.endDate)
+      let query = supabase
+        .from('invoice_facts')
+        .select('raw_payload')
+        .eq('gib_username', username)
+        .gte('issue_date', toIsoDate(range.startDate))
+        .lte('issue_date', toIsoDate(range.endDate))
+        .order('issue_date', { ascending: false })
+        .limit(100)
+      query = applyFactFilters(query as ReturnType<typeof supabase.from>) as typeof query
+      const { data, error } = await query
+      if (error) throw error
+      return (data ?? []).map((row: { raw_payload: unknown }) => row.raw_payload)
+    }
 
     case 'invoice_totals': {
       const range = resolveDateRange(input, userMessage, 'month')
@@ -570,12 +496,19 @@ async function executeTool(
         .eq('status', 'approved')
         .gte('issue_date', toIsoDate(range.startDate))
         .lte('issue_date', toIsoDate(range.endDate))
-      query = applyFactFilters(query as any) as any
+      query = applyFactFilters(query as ReturnType<typeof supabase.from>) as typeof query
       const { data, error } = await query
       if (error) throw error
-      const totals = (data ?? []).reduce(
+      const totals = (
+        data ?? []
+      ).reduce(
         (
-          acc: { count_total: number; sum_gross_total: number; sum_vat_total: number; sum_net_total: number },
+          acc: {
+            count_total: number
+            sum_gross_total: number
+            sum_vat_total: number
+            sum_net_total: number
+          },
           row: { gross_total: number | null; vat_total: number | null; net_total: number | null },
         ) => {
           acc.count_total += 1
@@ -586,11 +519,7 @@ async function executeTool(
         },
         { count_total: 0, sum_gross_total: 0, sum_vat_total: 0, sum_net_total: 0 },
       )
-      return {
-        start_date: range.startDate,
-        end_date: range.endDate,
-        totals,
-      }
+      return { start_date: range.startDate, end_date: range.endDate, totals }
     }
 
     case 'latest_invoice': {
@@ -616,7 +545,7 @@ async function executeTool(
           .gte('issue_date', toIsoDate(range.startDate))
           .lte('issue_date', toIsoDate(range.endDate))
       }
-      query = applyFactFilters(query as any) as any
+      query = applyFactFilters(query as ReturnType<typeof supabase.from>) as typeof query
       const { data, error } = await query
       if (error) throw error
       return {
@@ -626,7 +555,7 @@ async function executeTool(
     }
 
     case 'cancel_invoice':
-      return faturaCancelInvoice(username, input.ettn, input.reason || 'İptal')
+      return faturaCancelInvoice(username, input.ettn as string, (input.reason as string) || 'İptal')
 
     default:
       throw new Error(`Bilinmeyen araç: ${toolName}`)
@@ -644,10 +573,7 @@ Deno.serve(async (req: Request) => {
     const hasMessage = typeof message === 'string' && message.trim().length > 0
     const hasAction = !!requestAction
     if (!username || (!hasMessage && !hasAction)) {
-      return Response.json(
-        { error: 'message zorunludur.' },
-        { headers: corsHeaders },
-      )
+      return Response.json({ error: 'message zorunludur.' }, { headers: corsHeaders })
     }
 
     // Ensure conversation exists
@@ -677,7 +603,7 @@ Deno.serve(async (req: Request) => {
     const isRequestOtpAction = requestAction?.type === 'request_sign_otp'
     const isVerifyOtpAction = requestAction?.type === 'verify_sign_otp'
 
-    // Deterministic fast-path: verify sms -> finalize issue.
+    // Deterministic fast-path: verify sms -> finalize issue
     if (isVerifyOtpAction) {
       const { data: convState, error: pendingErr } = await supabase
         .from('conversations')
@@ -692,7 +618,8 @@ Deno.serve(async (req: Request) => {
           typeof requestAction?.draftUuid === 'string' &&
           requestAction.draftUuid !== pending.draft.uuid
         ) {
-          const mismatchMsg = 'Doğrulanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.'
+          const mismatchMsg =
+            'Doğrulanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.'
           await supabase.from('messages').insert({
             conversation_id: convId,
             role: 'assistant',
@@ -721,7 +648,7 @@ Deno.serve(async (req: Request) => {
           const payload = result as { uuid?: string; message?: string }
           const directMessage = payload?.uuid
             ? `SMS doğrulaması tamamlandı, fatura başarıyla kesildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" veya "indir" diyebilirsin.`
-            : payload?.message ?? 'SMS doğrulaması tamamlandı, fatura kesildi.'
+            : (payload?.message ?? 'SMS doğrulaması tamamlandı, fatura kesildi.')
 
           await supabase.from('messages').insert({
             conversation_id: convId,
@@ -749,7 +676,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Deterministic fast-path: if user confirms and a pending draft exists, start sms verification.
+    // Deterministic fast-path: if user confirms and a pending draft exists, start sms verification
     if (isConfirmMessage || isConfirmAction || isRequestOtpAction) {
       const { data: convState, error: pendingErr } = await supabase
         .from('conversations')
@@ -765,7 +692,8 @@ Deno.serve(async (req: Request) => {
           typeof requestAction?.draftUuid === 'string' &&
           requestAction.draftUuid !== pending.draft.uuid
         ) {
-          const mismatchMsg = 'Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.'
+          const mismatchMsg =
+            'Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.'
           await supabase.from('messages').insert({
             conversation_id: convId,
             role: 'assistant',
@@ -784,7 +712,11 @@ Deno.serve(async (req: Request) => {
             message as string,
             convId,
           )
-          const payload = result as { status?: string; draft_uuid?: string; phone_masked?: string }
+          const payload = result as {
+            status?: string
+            draft_uuid?: string
+            phone_masked?: string
+          }
           const directMessage =
             payload?.status === 'phone_required'
               ? 'İmzalama için telefon numarası gerekli. Numaranı girip SMS kodunu isteyebilirsin.'
@@ -837,10 +769,12 @@ Deno.serve(async (req: Request) => {
       .order('created_at', { ascending: true })
       .limit(20)
 
-    const claudeMessages: Anthropic.MessageParam[] = (history ?? []).map((m: { role: string; content: string }) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }))
+    const claudeMessages: Anthropic.MessageParam[] = (history ?? []).map(
+      (m: { role: string; content: string }) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }),
+    )
 
     // Agentic tool-use loop
     let assistantText = ''
@@ -875,13 +809,12 @@ ${responseContract}`
         ],
         tools: TOOLS.map((t, i) =>
           i === TOOLS.length - 1
-            ? { ...t, cache_control: { type: 'ephemeral' } as any }
+            ? { ...t, cache_control: { type: 'ephemeral' } as Anthropic.CacheControlEphemeral }
             : t,
         ),
         messages: claudeMessages,
       })
 
-      // Collect text from this turn
       const textParts = response.content
         .filter((b: Anthropic.ContentBlock) => b.type === 'text')
         .map((b: Anthropic.ContentBlock) => (b as Anthropic.TextBlock).text)
@@ -894,17 +827,15 @@ ${responseContract}`
           (b: Anthropic.ContentBlock) => b.type === 'tool_use',
         ) as Anthropic.ToolUseBlock[]
 
-        // Push assistant turn (with tool use)
         claudeMessages.push({ role: 'assistant', content: response.content })
 
-        // Execute all tools (in parallel when possible)
         const toolResults = await Promise.all(
           toolUseBlocks.map(async block => {
             let content: string
             try {
               const result = await executeTool(
                 block.name,
-                block.input as Record<string, any>,
+                block.input as Record<string, unknown>,
                 username,
                 message as string,
                 convId,
@@ -927,11 +858,7 @@ ${responseContract}`
                 error: err instanceof Error ? err.message : 'İşlem başarısız.',
               })
             }
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: block.id,
-              content,
-            }
+            return { type: 'tool_result' as const, tool_use_id: block.id, content }
           }),
         )
 
@@ -939,10 +866,9 @@ ${responseContract}`
         continue
       }
 
-      break // max_tokens or unexpected stop
+      break
     }
 
-    // Save assistant response
     if (assistantText && usedFinanceTool) {
       assistantText = assistantText
         .replace(/\n{3,}/g, '\n\n')
@@ -964,20 +890,18 @@ ${responseContract}`
       .eq('id', convId)
       .single()
     const pending = convState?.pending_invoice as PendingInvoiceState | null
-    const last = convState?.last_invoice as
-      | {
-          uuid?: string
-          html?: string
-          issue_date?: string
-          status?: string
-          currency?: string
-          gross_total?: number
-          vat_total?: number
-          net_total?: number
-          customer_tax_id?: string
-          customer_name?: string
-        }
-      | null
+    const last = convState?.last_invoice as {
+      uuid?: string
+      html?: string
+      issue_date?: string
+      status?: string
+      currency?: string
+      gross_total?: number
+      vat_total?: number
+      net_total?: number
+      customer_tax_id?: string
+      customer_name?: string
+    } | null
 
     let action: ChatAction | null = null
     const wantsPreviewOrDownload =
@@ -1002,11 +926,7 @@ ${responseContract}`
         action = {
           type: 'open_invoice_preview',
           label: 'Faturayi PDF Ac',
-          preview: {
-            title: 'Kesilmiş Fatura',
-            html,
-            uuid: last.uuid,
-          },
+          preview: { title: 'Kesilmiş Fatura', html, uuid: last.uuid },
         }
       }
     } else if (latestInvoiceActionPayload !== null) {
@@ -1028,11 +948,7 @@ ${responseContract}`
           customer_name: detail.customer_name ?? last.customer_name ?? null,
         }
       }
-      action = {
-        type: 'open_invoice_detail',
-        label: 'Detayi Gor',
-        invoice: detail,
-      }
+      action = { type: 'open_invoice_detail', label: 'Detayi Gor', invoice: detail }
     } else if (shouldOfferInvoicesAction(message as string, usedToolNames)) {
       const parsedRange = resolveDateRange({}, message as string, 'month')
       const parsedFilters = parseFiltersFromText(message as string)

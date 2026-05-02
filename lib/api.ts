@@ -1,3 +1,4 @@
+import { invalidateInvoiceCaches } from '@/lib/invoices-cache'
 import {
   clearTokens,
   getTokens,
@@ -38,22 +39,92 @@ function publicHeaders(): Record<string, string> {
   }
 }
 
+function responseLooksLikeHtml(text: string): boolean {
+  const t = text.trimStart()
+  if (!t.startsWith('<')) return false
+  return /<\/?(html|head|body|!doctype)/i.test(t.slice(0, 400))
+}
+
+function friendlyHttpFailureMessage(status: number, nonJsonBody: boolean): string {
+  if (nonJsonBody && (status === 404 || status === 406)) {
+    return 'Servis adresi bulunamadı. Güncelleme yayınlanıyorsa bir süre sonra tekrar deneyin.'
+  }
+  if (nonJsonBody || status >= 500 || status === 502 || status === 503 || status === 522 || status === 524) {
+    return 'Şu anda sunucuya bağlanılamıyor veya servis bakımda. Biraz sonra tekrar deneyin.'
+  }
+  return status === 401 || status === 403
+    ? 'Oturum süresi doldu veya erişim reddedildi. Çıkış yapıp tekrar giriş yapmayı deneyin.'
+    : `İstek başarısız oldu (${status}). Tekrar deneyin.`
+}
+
+/** JSON parse/HTML proxy hatalarını kullanıcı metnine çevirir (UI için). */
+export function userFacingApiError(err: unknown): string {
+  const msg =
+    typeof err === 'string' ? err : err instanceof Error ? err.message : String(err)
+  const m = msg.toLowerCase()
+  if (
+    m.includes('unexpected token') ||
+    m.includes('is not valid json') ||
+    m.includes('<!doctype') ||
+    (m.includes('<html') && m.includes('json'))
+  ) {
+    return 'Sunucu beklenen veri yerine hata sayfası döndü. Bağlantınızı kontrol edin; sorun devam ederse bir süre sonra tekrar deneyin.'
+  }
+  if (m.includes('network request failed') || m.includes('failed to fetch') || m.includes('econnrefused')) {
+    return 'Ağ bağlantısı kurulamadı. İnternetinizi kontrol edin.'
+  }
+  return typeof err === 'string' ? err : err instanceof Error ? err.message : 'Beklenmeyen bir sorun oluştu.'
+}
+
 async function parseJsonOrThrow(res: Response): Promise<unknown> {
   const text = await res.text()
+  const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
+
   let body: unknown = null
-  try {
-    body = text ? JSON.parse(text) : null
-  } catch {
-    body = { raw: text }
+  let parsed = false
+  if (text.trim().length === 0) {
+    parsed = true
+    body = null
+  } else {
+    try {
+      body = JSON.parse(text)
+      parsed = true
+    } catch {
+      parsed = false
+      body = null
+    }
   }
+
+  const looksHtml =
+    !parsed ||
+    responseLooksLikeHtml(text) ||
+    contentType.includes('text/html')
+
   if (!res.ok) {
+    if (looksHtml || !parsed || typeof body !== 'object' || body === null) {
+      throw new Error(friendlyHttpFailureMessage(res.status, true))
+    }
     const obj = body as Record<string, unknown>
-    const msg =
-      (typeof obj?.error === 'string' && obj.error) ||
-      (typeof obj?.message === 'string' && obj.message) ||
-      `HTTP ${res.status}`
-    throw new Error(msg)
+    const serverErr = typeof obj.error === 'string' ? obj.error : ''
+    const serverMsg = typeof obj.message === 'string' ? obj.message : ''
+    let detail = serverErr || serverMsg
+    if (detail.trimStart().startsWith('<') || /<html[\s>/]/i.test(detail)) {
+      detail = ''
+    }
+    if (/unexpected token[<']|not valid json/i.test(detail)) {
+      throw new Error(friendlyHttpFailureMessage(res.status, true))
+    }
+    if (detail) throw new Error(detail)
+    throw new Error(friendlyHttpFailureMessage(res.status, looksHtml))
   }
+
+  // 200 ama gövde JSON değil (yanlış URL, SPA index, proxy vb.)
+  if (!parsed || looksHtml) {
+    throw new Error(
+      'Sunucu beklenenden farklı yanıt verdi (JSON yerine sayfa görünümü geldi). Bağlantınızı kontrol edin veya daha sonra yeniden deneyin.',
+    )
+  }
+
   return body
 }
 
@@ -98,6 +169,8 @@ async function refreshTokensLocked(): Promise<StoredTokens | null> {
   try {
     return await refreshPromise
   } catch {
+    const prev = await getTokens()
+    await invalidateInvoiceCaches(prev?.accessToken ?? null)
     await clearTokens()
     return null
   }

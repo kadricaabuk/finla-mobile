@@ -146,6 +146,37 @@ function shouldOfferInvoicesAction(userMessage: string, usedTools: Set<string>):
   )
 }
 
+function classifyGibOperationError(err: unknown, toolName: string): { code: string; message: string } {
+  const raw = err instanceof Error ? err.message : String(err)
+  const lower = raw.toLocaleLowerCase('tr-TR')
+
+  if (toolName === 'lookup_recipient' || toolName === 'create_invoice') {
+    if (
+      lower.includes('vkn') ||
+      lower.includes('tckn') ||
+      (lower.includes('vergi') && (lower.includes('geçersiz') || lower.includes('hatalı') || lower.includes('bulunamadı')))
+    ) {
+      return { code: 'INVALID_TAX_ID', message: 'VKN veya TCKN geçersiz ya da sistemde kayıtlı değil.' }
+    }
+  }
+  if (lower.includes('tarih') && (lower.includes('geçersiz') || lower.includes('hatalı') || lower.includes('ileri'))) {
+    return { code: 'INVALID_DATE', message: 'Fatura tarihi geçersiz. Bugünün tarihi veya geçmiş bir tarih kullan.' }
+  }
+  if (
+    lower.includes('timeout') ||
+    lower.includes('econnrefused') ||
+    lower.includes('network') ||
+    lower.includes('servis kullanılamıyor') ||
+    lower.includes('bağlantı hatası')
+  ) {
+    return { code: 'GIB_UNAVAILABLE', message: 'GİB sistemine şu an ulaşılamıyor. Birkaç dakika sonra tekrar dene.' }
+  }
+  if (lower.includes('oturum') && (lower.includes('geçersiz') || lower.includes('sona'))) {
+    return { code: 'SESSION_EXPIRED', message: 'GİB oturumu sona erdi. Lütfen uygulamayı yeniden başlat veya tekrar giriş yap.' }
+  }
+  return { code: 'GIB_ERROR', message: raw }
+}
+
 function parseAmount(value: string): number | null {
   const normalized = value.replace(/\./g, '').replace(',', '.').trim()
   const parsed = Number(normalized)
@@ -781,6 +812,7 @@ Deno.serve(async (req: Request) => {
     let usedFinanceTool = false
     const usedToolNames = new Set<string>()
     let latestInvoiceActionPayload: InvoiceDetailPayload | null = null
+    let lastListInvoicesInput: Record<string, unknown> | null = null
     const responseContract = `Yanit stili:
 - Konusma dili kullan; rapor/excel dili kullanma.
 - Zorunlu sabit basliklar ("Istek", "Sonuc", "Tarih Araligi", "Sonraki Adim") kullanma.
@@ -788,7 +820,19 @@ Deno.serve(async (req: Request) => {
 - Tutar/KDV gibi sayisal degerleri sadece arac sonucundan kullan; tahmin etme.
 - Markdown tablo kullanma; gerekiyorsa kisa madde listesi kullan.
 - Kullanici "bu ay", "ayin basindan beri", "dun", "gecen hafta" derse tarih sormadan ilgili araci cagir.
-- Cevabi kisa tut (genelde 2-5 cumle).`
+- Cevabi kisa tut (genelde 2-5 cumle).
+
+Fatura arama/filtreleme:
+- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").
+- Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.
+
+Hata yonetimi (arac sonucunda "error_code" varsa):
+- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.
+- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.
+- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.
+- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.
+- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.
+- Hata sonrasi ne yapilabilecegini mutlaka belirt; "tekrar deneyin" yerine somut adim oner.`
     const dynamicSystemPrompt = `${SYSTEM_PROMPT}
 
 Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
@@ -851,12 +895,14 @@ ${responseContract}`
               ) {
                 latestInvoiceActionPayload = (result as { invoice: InvoiceDetailPayload }).invoice
               }
+              if (block.name === 'list_invoices') {
+                lastListInvoicesInput = block.input as Record<string, unknown>
+              }
               usedToolNames.add(block.name)
               content = JSON.stringify(result)
             } catch (err) {
-              content = JSON.stringify({
-                error: err instanceof Error ? err.message : 'İşlem başarısız.',
-              })
+              const classified = classifyGibOperationError(err, block.name)
+              content = JSON.stringify({ error: classified.message, error_code: classified.code })
             }
             return { type: 'tool_result' as const, tool_use_id: block.id, content }
           }),
@@ -884,6 +930,29 @@ ${responseContract}`
       })
     }
 
+    if (
+      usedToolNames.has('latest_invoice') &&
+      latestInvoiceActionPayload?.invoice_uuid
+    ) {
+      const inv = latestInvoiceActionPayload
+      await supabase
+        .from('conversations')
+        .update({
+          last_invoice: {
+            uuid: inv.invoice_uuid,
+            issue_date: inv.issue_date,
+            status: inv.status,
+            currency: inv.currency,
+            gross_total: inv.gross_total,
+            vat_total: inv.vat_total,
+            net_total: inv.net_total,
+            customer_tax_id: inv.customer_tax_id,
+            customer_name: inv.customer_name,
+          },
+        })
+        .eq('id', convId)
+    }
+
     const { data: convState } = await supabase
       .from('conversations')
       .select('pending_invoice,last_invoice')
@@ -906,27 +975,64 @@ ${responseContract}`
     let action: ChatAction | null = null
     const wantsPreviewOrDownload =
       /\bfaturayi?\s*(g[oö]r|g[oö]ster|ac)\b/i.test(message as string) ||
-      /\bindir|pdf\b/i.test(message as string)
+      /\bindir|\bpdf\b|önizle|onizle|g[oö]r[uü]nt[uü]le|tam\s*fatura\b/i.test(
+        message as string,
+      )
     if (wantsPreviewOrDownload || usedToolNames.has('create_invoice')) {
-      if (pending?.draft?.uuid && pending.preview_html) {
-        action = {
-          type: 'open_invoice_preview',
-          label: 'Onizleme PDF',
-          preview: {
-            title: 'Taslak Fatura Önizleme',
-            html: pending.preview_html,
-            uuid: pending.draft.uuid,
-          },
+      if (pending?.draft?.uuid) {
+        try {
+          const html =
+            typeof pending.preview_html === 'string' && pending.preview_html.length > 0
+              ? pending.preview_html
+              : await faturaGetInvoiceHtml(username, pending.draft.uuid, false)
+          action = {
+            type: 'open_invoice_preview',
+            label: 'Onizleme PDF',
+            preview: {
+              title: 'Taslak Fatura Önizleme',
+              html,
+              uuid: pending.draft.uuid,
+            },
+          }
+        } catch (err) {
+          console.error('pending draft preview html failed', err)
         }
       } else if (last?.uuid) {
-        const html =
-          typeof last.html === 'string' && last.html.length > 0
-            ? last.html
-            : await faturaGetInvoiceHtml(username, last.uuid, true)
-        action = {
-          type: 'open_invoice_preview',
-          label: 'Faturayi PDF Ac',
-          preview: { title: 'Kesilmiş Fatura', html, uuid: last.uuid },
+        try {
+          const statusLower = typeof last.status === 'string' ? last.status.toLowerCase() : ''
+          const useSignedHtml = statusLower.includes('approved') || statusLower.includes('onay')
+          const html =
+            typeof last.html === 'string' && last.html.length > 0
+              ? last.html
+              : await faturaGetInvoiceHtml(username, last.uuid, useSignedHtml)
+          action = {
+            type: 'open_invoice_preview',
+            label: 'Faturayi PDF Ac',
+            preview: {
+              title: useSignedHtml ? 'Kesilmiş Fatura' : 'Taslak / Önizleme',
+              html,
+              uuid: last.uuid,
+            },
+          }
+        } catch (err) {
+          console.error('last_invoice preview html failed', err)
+        }
+      } else if (latestInvoiceActionPayload?.invoice_uuid) {
+        try {
+          const inv = latestInvoiceActionPayload
+          const issued = inv.status === 'approved'
+          const html = await faturaGetInvoiceHtml(username, inv.invoice_uuid, issued)
+          action = {
+            type: 'open_invoice_preview',
+            label: issued ? 'Faturayi Gor' : 'Taslagi Gor',
+            preview: {
+              title: issued ? 'Kesilmiş Fatura' : 'Taslak Fatura Önizleme',
+              html,
+              uuid: inv.invoice_uuid,
+            },
+          }
+        } catch (err) {
+          console.error('latest_invoice preview html failed', err)
         }
       }
     } else if (latestInvoiceActionPayload !== null) {
@@ -950,17 +1056,34 @@ ${responseContract}`
       }
       action = { type: 'open_invoice_detail', label: 'Detayi Gor', invoice: detail }
     } else if (shouldOfferInvoicesAction(message as string, usedToolNames)) {
-      const parsedRange = resolveDateRange({}, message as string, 'month')
-      const parsedFilters = parseFiltersFromText(message as string)
+      const listInput: Record<string, unknown> = lastListInvoicesInput ?? {}
+      const parsedRange = resolveDateRange(listInput, message as string, 'month')
+      const msgFilters = parseFiltersFromText(message as string)
+      const toolAmountGte =
+        typeof listInput.amount_gte === 'number'
+          ? listInput.amount_gte
+          : typeof listInput.amount_gte === 'string'
+            ? parseAmount(listInput.amount_gte as string)
+            : null
+      const toolAmountEq =
+        typeof listInput.amount_eq === 'number'
+          ? listInput.amount_eq
+          : typeof listInput.amount_eq === 'string'
+            ? parseAmount(listInput.amount_eq as string)
+            : null
+      const toolCustomerName =
+        typeof listInput.customer_name === 'string' && listInput.customer_name.trim()
+          ? listInput.customer_name.trim()
+          : undefined
       if (parsedRange) {
         action = {
           type: 'open_invoices',
           label: 'Faturalari Gor',
           filter: {
             ...parsedRange,
-            customerName: parsedFilters.customerName,
-            amountGte: parsedFilters.amountGte,
-            amountEq: parsedFilters.amountEq,
+            customerName: toolCustomerName ?? msgFilters.customerName,
+            amountGte: toolAmountGte ?? msgFilters.amountGte,
+            amountEq: toolAmountEq ?? msgFilters.amountEq,
           },
         }
       }

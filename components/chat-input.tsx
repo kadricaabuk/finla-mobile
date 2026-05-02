@@ -1,12 +1,9 @@
-import { useState } from 'react';
-import {
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAnimatedChatInputPadding } from "@/hooks/use-keyboard";
+import { Ionicons } from "@expo/vector-icons";
+import { useState } from "react";
+import { StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
+import Animated from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface ChatInputProps {
   onSend: (text: string) => void;
@@ -14,23 +11,32 @@ interface ChatInputProps {
   onVoice?: () => void;
 }
 
-export default function ChatInput({ onSend, onAttach, onVoice }: ChatInputProps) {
-  const [text, setText] = useState('');
+export default function ChatInput({
+  onSend,
+  onAttach,
+  onVoice,
+}: ChatInputProps) {
+  const [text, setText] = useState("");
   const insets = useSafeAreaInsets();
+  const animatedContainerStyle = useAnimatedChatInputPadding(insets.bottom);
 
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
     onSend(trimmed);
-    setText('');
+    setText("");
   };
 
   const hasText = text.trim().length > 0;
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 8 }]}>
+    <Animated.View style={[styles.container, animatedContainerStyle]}>
       <View style={styles.row}>
-        <TouchableOpacity style={styles.circleBtn} onPress={onAttach} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.circleBtn}
+          onPress={onAttach}
+          activeOpacity={0.7}
+        >
           <Ionicons name="add" size={22} color="#000" />
         </TouchableOpacity>
 
@@ -44,19 +50,17 @@ export default function ChatInput({ onSend, onAttach, onVoice }: ChatInputProps)
           returnKeyType="default"
         />
 
-        <TouchableOpacity
-          style={[styles.circleBtn, styles.actionBtn]}
-          onPress={hasText ? handleSend : onVoice}
-          activeOpacity={0.8}
-        >
-          {hasText ? (
+        {hasText && (
+          <TouchableOpacity
+            style={[styles.circleBtn, styles.actionBtn]}
+            onPress={hasText ? handleSend : onVoice}
+            activeOpacity={0.8}
+          >
             <Ionicons name="arrow-up" size={20} color="#fff" />
-          ) : (
-            <MaterialCommunityIcons name="waveform" size={22} color="#fff" />
-          )}
-        </TouchableOpacity>
+          </TouchableOpacity>
+        )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -64,11 +68,11 @@ const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 12,
     paddingTop: 8,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   circleBtn: {
@@ -76,23 +80,23 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: '#E0E0E0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
+    borderColor: "#E0E0E0",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
   },
   actionBtn: {
-    backgroundColor: '#000',
-    borderColor: '#000',
+    backgroundColor: "#000",
+    borderColor: "#000",
   },
   input: {
     flex: 1,
-    backgroundColor: '#F2F2F2',
+    backgroundColor: "#F2F2F2",
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 11,
     fontSize: 16,
-    color: '#000',
+    color: "#000",
     maxHeight: 120,
   },
 });

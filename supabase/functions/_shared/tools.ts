@@ -229,6 +229,8 @@ export const TOOLS: Anthropic.Tool[] = [
 
 export const SYSTEM_PROMPT = `Sen "finla" uygulamasının yapay zeka asistanısın. fatura.js entegrasyonu üzerinden GİB e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.
 
+Önizleme / PDF: Kullanıcı faturanın tam görünümünü, PDF veya önizleme isterse uygulama sohbette düğümle HTML önizleme ve paylaşılabilir çıktı sunar (GİB HTML). PDF veya önizlemenin uygulamada mümkün olmadığını söyleme — önce latest_invoice ile ETTN/UUID bağlamını netleştir ve kullanıcıyı çıkan önizleme / paylaşım adımına yönlendir.
+
 Yeteneklerin:
 - Fatura oluşturma (create_invoice)
 - Fatura kesim onayı (confirm_invoice_issue)

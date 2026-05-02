@@ -1,25 +1,56 @@
-import { useEffect, useRef } from 'react'
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import { useEffect, useRef } from "react";
 import {
+  ActivityIndicator,
   Animated,
+  Keyboard,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
-} from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Ionicons } from '@expo/vector-icons'
-import { router } from 'expo-router'
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const MENU_WIDTH = 280
+const MENU_WIDTH = 280;
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+}
 
 interface SideMenuProps {
-  isOpen: boolean
-  onClose: () => void
-  onNewChat: () => void
-  onLogout: () => void
-  username: string
+  isOpen: boolean;
+  onClose: () => void;
+  onNewChat: () => void;
+  onLogout: () => void;
+  onOpenConversation?: (id: string) => void | Promise<void>;
+  username: string;
+  conversations?: ConversationSummary[];
+  conversationsLoading?: boolean;
+  conversationsRefreshing?: boolean;
+  onRefreshConversations?: () => void | Promise<void>;
+  openingConversationId?: string | null;
+  activeConversationId?: string | null;
+  /** Faturalarım ekranındayken liste satırı yalnızca menüyü kapatır. */
+  activeScreen?: "chat" | "invoices";
+}
+
+function formatConvDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("tr-TR", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return "";
+  }
 }
 
 export default function SideMenu({
@@ -27,11 +58,23 @@ export default function SideMenu({
   onClose,
   onNewChat,
   onLogout,
+  onOpenConversation,
   username,
+  conversations = [],
+  conversationsLoading = false,
+  conversationsRefreshing = false,
+  onRefreshConversations,
+  openingConversationId = null,
+  activeConversationId = null,
+  activeScreen = "chat",
 }: SideMenuProps) {
-  const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current
-  const backdropOpacity = useRef(new Animated.Value(0)).current
-  const insets = useSafeAreaInsets()
+  const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    isOpen && Keyboard.dismiss();
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -47,7 +90,7 @@ export default function SideMenu({
           duration: 220,
           useNativeDriver: true,
         }),
-      ]).start()
+      ]).start();
     } else {
       Animated.parallel([
         Animated.timing(translateX, {
@@ -60,18 +103,19 @@ export default function SideMenu({
           duration: 220,
           useNativeDriver: true,
         }),
-      ]).start()
+      ]).start();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, translateX, backdropOpacity])
+  }, [isOpen, translateX, backdropOpacity]);
 
   return (
     <View
       style={StyleSheet.absoluteFillObject}
-      pointerEvents={isOpen ? 'auto' : 'none'}
+      pointerEvents={isOpen ? "auto" : "none"}
     >
       <TouchableWithoutFeedback onPress={onClose}>
-        <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]} />
+        <Animated.View
+          style={[styles.backdrop, { opacity: backdropOpacity }]}
+        />
       </TouchableWithoutFeedback>
 
       <Animated.View
@@ -82,46 +126,107 @@ export default function SideMenu({
       >
         <View style={styles.panelHeader}>
           <Text style={styles.logo}>finla</Text>
-          <TouchableOpacity style={styles.iconBtn} onPress={onClose}>
-            <Ionicons name="create-outline" size={22} color="#000" />
-          </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={styles.newChatBtn}
-          onPress={onNewChat}
-          activeOpacity={0.7}
+        <ScrollView
+          style={styles.menuScroll}
+          contentContainerStyle={[
+            styles.menuScrollInner,
+            { paddingBottom: insets.bottom + 96 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            onRefreshConversations ? (
+              <RefreshControl
+                refreshing={conversationsRefreshing}
+                onRefresh={() => void Promise.resolve(onRefreshConversations())}
+                tintColor="#000"
+                colors={["#000"]}
+              />
+            ) : undefined
+          }
         >
-          <View style={styles.newChatLeft}>
-            <Ionicons name="chatbubble-outline" size={18} color="#000" />
-            <Text style={styles.newChatLabel}>Yeni Sohbet</Text>
-          </View>
-          <Ionicons name="add" size={20} color="#555" />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.newChatBtn,
+              activeScreen === "chat" && styles.navBtnCurrent,
+            ]}
+            onPress={onNewChat}
+            activeOpacity={0.7}
+          >
+            <View style={styles.newChatLeft}>
+              <Ionicons name="create-outline" size={18} color="#000" />
+              <Text style={styles.newChatLabel}>Yeni Sohbet</Text>
+            </View>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.navBtn}
-          onPress={() => { onClose(); router.push('/invoices') }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="document-text-outline" size={18} color="#000" />
-          <Text style={styles.navBtnLabel}>Faturalarım</Text>
-          <Ionicons name="chevron-forward" size={16} color="#ABABAB" style={styles.navChevron} />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.navBtn,
+              activeScreen === "invoices" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "invoices") {
+                onClose();
+                return;
+              }
+              onClose();
+              router.push("/invoices");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="document-text-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Faturalarım</Text>
+          </TouchableOpacity>
 
-        <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-          <Text style={styles.sectionLabel}>Hakkında</Text>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoText}>
-              Finla, GİB e-Arşiv portalı üzerinden fatura oluşturmanıza ve yönetmenize yardımcı olur.
-            </Text>
-            <Text style={[styles.infoText, { marginTop: 8 }]}>
-              {'Örnek komutlar:\n'}
-              {'• "Ahmet Bey\'e 5000 TL danışmanlık faturası"\n'}
-              {'• "Bu ayki faturaları listele"\n'}
-              {'• "Son faturayı iptal et"'}
-            </Text>
-          </View>
+          {onOpenConversation ? (
+            <View style={styles.convSection}>
+              <Text style={styles.sectionLabel}>Sohbetler</Text>
+              {conversationsLoading ? (
+                <View style={styles.convLoading}>
+                  <ActivityIndicator size="small" color="#888" />
+                  <Text style={styles.convLoadingText}>Yükleniyor…</Text>
+                </View>
+              ) : conversations.length === 0 ? (
+                <Text style={styles.convEmpty}>Kayıtlı sohbet yok</Text>
+              ) : (
+                conversations.map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[
+                      styles.convRow,
+                      activeConversationId === c.id && styles.convRowActive,
+                    ]}
+                    activeOpacity={0.65}
+                    disabled={!!openingConversationId}
+                    onPress={() =>
+                      void Promise.resolve(onOpenConversation(c.id))
+                    }
+                  >
+                    <Ionicons
+                      name="chatbox-ellipses-outline"
+                      size={17}
+                      color="#555"
+                    />
+                    <View style={styles.convRowTextWrap}>
+                      <Text style={styles.convTitle} numberOfLines={1}>
+                        {c.title.trim() ? c.title : "Sohbet"}
+                      </Text>
+                      <Text style={styles.convMeta} numberOfLines={1}>
+                        {formatConvDate(c.created_at)}
+                      </Text>
+                    </View>
+                    {openingConversationId === c.id ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Ionicons name="chevron-forward" size={15} color="#CCC" />
+                    )}
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          ) : null}
         </ScrollView>
 
         <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
@@ -144,60 +249,60 @@ export default function SideMenu({
         </View>
       </Animated.View>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#000',
+    backgroundColor: "#000",
   },
   panel: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
     width: MENU_WIDTH,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
+    flexDirection: "column",
+    backgroundColor: "#fff",
+    shadowColor: "#000",
     shadowOffset: { width: 4, height: 0 },
     shadowOpacity: 0.12,
     shadowRadius: 16,
     elevation: 20,
   },
   panelHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
   logo: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: "600",
     letterSpacing: -0.5,
-    color: '#000',
+    color: "#000",
   },
   iconBtn: {
     width: 36,
     height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   newChatBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginHorizontal: 10,
     marginBottom: 4,
     paddingHorizontal: 12,
     paddingVertical: 11,
     borderRadius: 10,
-    backgroundColor: '#F5F5F5',
   },
   navBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginHorizontal: 10,
     marginBottom: 8,
     paddingHorizontal: 12,
@@ -205,24 +310,87 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 8,
   },
+  navBtnCurrent: {
+    backgroundColor: "#F2F2F2",
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    opacity: 0.92,
+  },
   navBtnLabel: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '500',
-    color: '#000',
+    fontWeight: "500",
+    color: "#000",
   },
   navChevron: {
-    marginLeft: 'auto',
+    marginLeft: "auto",
   },
   newChatLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   newChatLabel: {
     fontSize: 15,
-    fontWeight: '500',
-    color: '#000',
+    fontWeight: "500",
+    color: "#000",
+  },
+  menuScroll: {
+    flex: 1,
+  },
+  menuScrollInner: {
+    paddingTop: 4,
+  },
+  convSection: {
+    marginTop: 8,
+    paddingHorizontal: 10,
+  },
+  convLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 12,
+  },
+  convLoadingText: {
+    fontSize: 13,
+    color: "#888",
+  },
+  convEmpty: {
+    fontSize: 13,
+    color: "#ABABAB",
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    fontStyle: "italic",
+  },
+  convRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#FAFAFA",
+  },
+  convRowActive: {
+    backgroundColor: "#EEEEEE",
+    borderWidth: 1,
+    borderColor: "#D0D0D0",
+  },
+  convRowTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  convTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#111",
+  },
+  convMeta: {
+    fontSize: 11,
+    color: "#AAA",
+    marginTop: 2,
   },
   list: {
     flex: 1,
@@ -230,66 +398,70 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#ABABAB',
+    fontWeight: "600",
+    color: "#ABABAB",
     letterSpacing: 0.4,
     paddingHorizontal: 8,
     paddingTop: 12,
     paddingBottom: 8,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
   },
   infoCard: {
-    backgroundColor: '#F8F8F8',
+    backgroundColor: "#F8F8F8",
     borderRadius: 10,
     padding: 12,
     marginHorizontal: 2,
   },
   infoText: {
     fontSize: 13,
-    color: '#555',
+    color: "#555",
     lineHeight: 19,
   },
   footer: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#E8E8E8',
+    borderTopColor: "#E8E8E8",
     paddingHorizontal: 16,
     paddingTop: 12,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   profileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 10,
   },
   avatar: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
   },
   avatarInitial: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   profileInfo: {
     flex: 1,
   },
   profileName: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#000',
+    fontWeight: "600",
+    color: "#000",
   },
   profileSub: {
     fontSize: 11,
-    color: '#ABABAB',
+    color: "#ABABAB",
     marginTop: 1,
   },
   logoutBtn: {
     width: 32,
     height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
-})
+});

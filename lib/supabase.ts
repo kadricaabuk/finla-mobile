@@ -7,5 +7,6 @@ export {
   callEdgeFunction,
   loginRequest,
   logoutRequest,
+  userFacingApiError,
   type LoginResponse,
 } from './api'

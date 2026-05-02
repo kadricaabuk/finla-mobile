@@ -63,7 +63,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: rows, error: msgErr } = await supabase
         .from('messages')
-        .select('id,role,content,created_at')
+        .select('id,role,content,created_at,action_snapshot')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
 

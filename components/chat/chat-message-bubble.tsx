@@ -80,7 +80,7 @@ export function ChatMessageBubble({
         )}
       {msg.role === "assistant" &&
         msg.action?.type === "open_invoice_preview" &&
-        msg.action.preview?.html && (
+        (msg.action.preview?.html || msg.action.preview?.uuid) && (
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={styles.actionButton}

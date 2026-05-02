@@ -15,8 +15,10 @@ export interface ChatMessageAction {
   invoice?: InvoiceDetailPayload;
   preview?: {
     title: string;
-    html: string;
+    html?: string;
     uuid?: string;
+    /** true = kesilmiş fatura HTML (signed); false = taslak önizleme */
+    issued?: boolean;
   };
   sign_otp?: {
     draftUuid: string;

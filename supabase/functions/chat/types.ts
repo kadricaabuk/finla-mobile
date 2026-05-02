@@ -9,7 +9,7 @@ export interface ChatAction {
     amountEq?: number
   }
   invoice?: InvoiceDetailPayload
-  preview?: { title: string; html: string; uuid?: string }
+  preview?: { title: string; html?: string; uuid?: string; issued?: boolean }
   sign_otp?: { draftUuid: string; phoneMasked: string }
 }
 

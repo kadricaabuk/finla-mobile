@@ -7,12 +7,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface ChatInputProps {
   onSend: (text: string) => void;
+  disabled?: boolean;
   onAttach?: () => void;
   onVoice?: () => void;
 }
 
 export default function ChatInput({
   onSend,
+  disabled = false,
   onAttach,
   onVoice,
 }: ChatInputProps) {
@@ -21,6 +23,7 @@ export default function ChatInput({
   const animatedContainerStyle = useAnimatedChatInputPadding(insets.bottom);
 
   const handleSend = () => {
+    if (disabled) return;
     const trimmed = text.trim();
     if (!trimmed) return;
     onSend(trimmed);
@@ -32,29 +35,39 @@ export default function ChatInput({
   return (
     <Animated.View style={[styles.container, animatedContainerStyle]}>
       <View style={styles.row}>
-        <TouchableOpacity
-          style={styles.circleBtn}
-          onPress={onAttach}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="add" size={22} color="#000" />
-        </TouchableOpacity>
+        {onAttach ? (
+          <TouchableOpacity
+            style={styles.circleBtn}
+            onPress={onAttach}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="add" size={22} color="#000" />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.circleBtnGhost} pointerEvents="none" />
+        )}
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, disabled && styles.inputDisabled]}
           value={text}
           onChangeText={setText}
           placeholder="Finla'ya sor"
           placeholderTextColor="#ABABAB"
           multiline
+          editable={!disabled}
           returnKeyType="default"
         />
 
         {hasText && (
           <TouchableOpacity
-            style={[styles.circleBtn, styles.actionBtn]}
-            onPress={hasText ? handleSend : onVoice}
+            style={[
+              styles.circleBtn,
+              styles.actionBtn,
+              disabled && styles.actionBtnDisabled,
+            ]}
+            onPress={handleSend}
             activeOpacity={0.8}
+            disabled={disabled}
           >
             <Ionicons name="arrow-up" size={20} color="#fff" />
           </TouchableOpacity>
@@ -85,9 +98,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#fff",
   },
+  circleBtnGhost: {
+    width: 44,
+    height: 44,
+  },
   actionBtn: {
     backgroundColor: "#000",
     borderColor: "#000",
+  },
+  actionBtnDisabled: {
+    opacity: 0.45,
   },
   input: {
     flex: 1,
@@ -98,5 +118,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#000",
     maxHeight: 120,
+  },
+  inputDisabled: {
+    opacity: 0.65,
   },
 });

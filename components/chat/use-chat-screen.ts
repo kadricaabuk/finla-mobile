@@ -11,6 +11,19 @@ import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, type ScrollView } from "react-native";
 
+function newChatMessageId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function parseStoredChatAction(raw: unknown): ChatMessage["action"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.type !== "string") return undefined;
+  return raw as ChatMessage["action"];
+}
+
 export function useChatScreen() {
   const {
     sessionLabel,
@@ -47,6 +60,7 @@ export function useChatScreen() {
     string | null
   >(null);
   const scrollRef = useRef<ScrollView>(null);
+  const sendingRef = useRef(false);
 
   useScrollToEndOnKeyboard(scrollRef);
 
@@ -90,7 +104,12 @@ export function useChatScreen() {
   const hydrateConversationById = useCallback(
     async (id: string) => {
       const res = await callApi<{
-        messages: { id: string; role: "user" | "assistant"; content: string }[];
+        messages: {
+          id: string;
+          role: "user" | "assistant";
+          content: string;
+          action_snapshot?: unknown;
+        }[];
       }>("conversations", { action: "messages", conversationId: id });
       const rows = res.messages ?? [];
       setConversationId(id);
@@ -100,6 +119,10 @@ export function useChatScreen() {
           id: m.id,
           text: m.content,
           role: m.role,
+          action:
+            m.role === "assistant"
+              ? parseStoredChatAction(m.action_snapshot)
+              : undefined,
         })),
       );
     },
@@ -149,25 +172,29 @@ export function useChatScreen() {
 
   const handleSend = useCallback(
     async (text: string) => {
-      const tokens = await getTokens();
-      if (!tokens) return;
-
-      const userMsg: ChatMessage = {
-        id: Date.now().toString(),
-        text,
-        role: "user",
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      setLoading(true);
-      scrollToBottom();
+      const trimmed = text.trim();
+      if (!trimmed || sendingRef.current) return;
+      sendingRef.current = true;
 
       try {
+        const tokens = await getTokens();
+        if (!tokens) return;
+
+        const userMsg: ChatMessage = {
+          id: newChatMessageId(),
+          text: trimmed,
+          role: "user",
+        };
+        setMessages((prev) => [...prev, userMsg]);
+        setLoading(true);
+        scrollToBottom();
+
         const res = await callApi<{
           message: string;
           conversationId: string;
           action?: ChatMessageAction;
         }>("chat", {
-          message: text,
+          message: trimmed,
           conversationId,
         });
 
@@ -175,7 +202,7 @@ export function useChatScreen() {
         if (!conversationId) setConversationId(res.conversationId);
 
         const aiMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
+          id: newChatMessageId(),
           text: res.message,
           role: "assistant",
           action: res.action,
@@ -191,12 +218,13 @@ export function useChatScreen() {
           void refreshConversationList("none");
       } catch (err) {
         const errMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          text: `Hata: ${err instanceof Error ? err.message : "Beklenmeyen bir sorun oluştu."}`,
+          id: newChatMessageId(),
+          text: userFacingApiError(err),
           role: "assistant",
         };
         setMessages((prev) => [...prev, errMsg]);
       } finally {
+        sendingRef.current = false;
         setLoading(false);
         scrollToBottom();
       }
@@ -221,7 +249,7 @@ export function useChatScreen() {
           action: { type: "confirm_pending_invoice", draftUuid },
         });
         const aiMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
+          id: newChatMessageId(),
           text: res.message,
           role: "assistant",
           action: res.action,
@@ -235,8 +263,8 @@ export function useChatScreen() {
         }
       } catch (err) {
         const errMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          text: `Hata: ${err instanceof Error ? err.message : "Onay sırasında beklenmeyen bir sorun oluştu."}`,
+          id: newChatMessageId(),
+          text: userFacingApiError(err),
           role: "assistant",
         };
         setMessages((prev) => [...prev, errMsg]);
@@ -275,7 +303,7 @@ export function useChatScreen() {
         },
       });
       const aiMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: newChatMessageId(),
         text: res.message,
         role: "assistant",
         action: res.action,
@@ -283,8 +311,8 @@ export function useChatScreen() {
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
       const errMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama sırasında beklenmeyen bir sorun oluştu."}`,
+        id: newChatMessageId(),
+        text: userFacingApiError(err),
         role: "assistant",
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -326,7 +354,7 @@ export function useChatScreen() {
           },
         });
         const aiMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
+          id: newChatMessageId(),
           text: res.message,
           role: "assistant",
           action: res.action,
@@ -341,8 +369,8 @@ export function useChatScreen() {
         if (withPhoneUpdate) setSignOtpPhone("");
       } catch (err) {
         const errMsg: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          text: `Hata: ${err instanceof Error ? err.message : "SMS doğrulama yeniden başlatılamadı."}`,
+          id: newChatMessageId(),
+          text: userFacingApiError(err),
           role: "assistant",
         };
         setMessages((prev) => [...prev, errMsg]);

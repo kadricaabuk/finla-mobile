@@ -1,13 +1,13 @@
+import ChatInput from "@/components/chat-input";
 import { ChatMessageBubble } from "@/components/chat/chat-message-bubble";
 import { InvoiceDetailModal } from "@/components/chat/invoice-detail-modal";
 import { InvoicePreviewModal } from "@/components/chat/invoice-preview-modal";
 import { SignOtpModal } from "@/components/chat/sign-otp-modal";
 import { useChatScreen } from "@/components/chat/use-chat-screen";
-import ChatInput from "@/components/chat-input";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
-import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
+import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import { useMemo } from "react";
 import {
   ActivityIndicator,
@@ -97,7 +97,9 @@ export default function ChatScreen() {
               msg={msg}
               confirmingDraftUuid={confirmingDraftUuid ?? undefined}
               onOpenInvoiceDetail={(action) => setDetailAction(action ?? null)}
-              onOpenInvoicePreview={(action) => setPreviewAction(action ?? null)}
+              onOpenInvoicePreview={(action) =>
+                setPreviewAction(action ?? null)
+              }
               onConfirmPreview={handleConfirmFromPreview}
             />
           ))}
@@ -111,7 +113,7 @@ export default function ChatScreen() {
           )}
         </ScrollView>
 
-        <ChatInput onSend={handleSend} />
+        <ChatInput disabled={loading} onSend={handleSend} />
       </Animated.View>
 
       <InvoiceDetailModal
@@ -120,7 +122,10 @@ export default function ChatScreen() {
         onClose={() => setDetailAction(null)}
       />
 
-      <InvoicePreviewModal action={previewAction} onClose={() => setPreviewAction(null)} />
+      <InvoicePreviewModal
+        action={previewAction}
+        onClose={() => setPreviewAction(null)}
+      />
 
       <SignOtpModal
         action={signOtpAction}

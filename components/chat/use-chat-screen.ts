@@ -1,7 +1,7 @@
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useScrollToEndOnKeyboard } from "@/hooks/use-scroll-to-end-on-keyboard";
 import { getTokens } from "@/lib/session";
-import { callApi, userFacingApiError } from "@/lib/supabase";
+import { callApi, streamChat, userFacingApiError } from "@/lib/supabase";
 import type {
   ChatMessage,
   ChatMessageAction,
@@ -24,12 +24,36 @@ function parseStoredChatAction(raw: unknown): ChatMessage["action"] {
   return raw as ChatMessage["action"];
 }
 
+function toolStatusText(rawName: string): string {
+  const first = rawName.split(",")[0]?.trim();
+  const toolName = first && first.length > 0 ? first : rawName.trim();
+  switch (toolName) {
+    case "list_invoices":
+      return "Faturalar kontrol ediliyor…";
+    case "latest_invoice":
+      return "Son fatura aranıyor…";
+    case "invoice_totals":
+      return "Toplamlar hesaplanıyor…";
+    case "lookup_recipient":
+      return "Alıcı bilgileri doğrulanıyor…";
+    case "create_invoice":
+      return "Taslak fatura hazırlanıyor…";
+    case "cancel_invoice":
+      return "Fatura iptali işleniyor…";
+    case "request_invoice_sign_otp":
+      return "SMS doğrulama başlatılıyor…";
+    case "verify_invoice_sign_otp":
+      return "SMS kodu doğrulanıyor…";
+    case "confirm_invoice_issue":
+      return "Fatura kesiliyor…";
+    default:
+      return "İşleniyor…";
+  }
+}
+
 export function useChatScreen() {
-  const {
-    sessionLabel,
-    refreshConversationList,
-    closeMenu,
-  } = useMainAppShell();
+  const { sessionLabel, refreshConversationList, closeMenu } =
+    useMainAppShell();
   const routeParams = useLocalSearchParams<{
     loadConversationId?: string;
     loadKey?: string;
@@ -38,6 +62,12 @@ export function useChatScreen() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
+  /** Stream sırasındaki geçici asistan mesajı (soluk balon + üstte sabit durum çubuğu). */
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(
+    null,
+  );
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [detailAction, setDetailAction] = useState<ChatMessageAction | null>(
     null,
@@ -45,13 +75,15 @@ export function useChatScreen() {
   const [detailInvoice, setDetailInvoice] = useState<InvoiceDetail | null>(
     null,
   );
-  const [previewAction, setPreviewAction] =
-    useState<ChatMessageAction | null>(null);
+  const [previewAction, setPreviewAction] = useState<ChatMessageAction | null>(
+    null,
+  );
   const [confirmingDraftUuid, setConfirmingDraftUuid] = useState<string | null>(
     null,
   );
-  const [signOtpAction, setSignOtpAction] =
-    useState<ChatMessageAction | null>(null);
+  const [signOtpAction, setSignOtpAction] = useState<ChatMessageAction | null>(
+    null,
+  );
   const [signOtpCode, setSignOtpCode] = useState("");
   const [signOtpPhone, setSignOtpPhone] = useState("");
   const [verifyingSignOtp, setVerifyingSignOtp] = useState(false);
@@ -61,6 +93,11 @@ export function useChatScreen() {
   >(null);
   const scrollRef = useRef<ScrollView>(null);
   const sendingRef = useRef(false);
+  const deltaQueueRef = useRef<string[]>([]);
+  const deltaDrainTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deltaDrainedWaitersRef = useRef<(() => void)[]>([]);
+  const streamedAssistantTextRef = useRef("");
+  const receivedDeltaRef = useRef(false);
 
   useScrollToEndOnKeyboard(scrollRef);
 
@@ -101,6 +138,46 @@ export function useChatScreen() {
     setConfirmingDraftUuid(null);
   }, []);
 
+  const stopDeltaDrain = useCallback(() => {
+    if (deltaDrainTimerRef.current) {
+      clearInterval(deltaDrainTimerRef.current);
+      deltaDrainTimerRef.current = null;
+    }
+    deltaQueueRef.current = [];
+    deltaDrainedWaitersRef.current.splice(0).forEach((resolve) => resolve());
+  }, []);
+
+  const waitUntilDeltaQueueEmpty = useCallback(async () => {
+    if (deltaQueueRef.current.length === 0) return;
+    await new Promise<void>((resolve) => {
+      deltaDrainedWaitersRef.current.push(resolve);
+    });
+  }, []);
+
+  const startDeltaDrain = useCallback((assistId: string) => {
+    if (deltaDrainTimerRef.current) return;
+    deltaDrainTimerRef.current = setInterval(() => {
+      const queue = deltaQueueRef.current;
+      if (queue.length === 0) return;
+      const current = queue[0] ?? "";
+      const chunk = current.slice(0, 6);
+      const rest = current.slice(6);
+      if (rest.length > 0) queue[0] = rest;
+      else queue.shift();
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistId ? { ...m, text: (m.text ?? "") + chunk } : m,
+        ),
+      );
+      scrollToBottom();
+
+      if (queue.length === 0) {
+        deltaDrainedWaitersRef.current.splice(0).forEach((resolve) => resolve());
+      }
+    }, 28);
+  }, []);
+
   const hydrateConversationById = useCallback(
     async (id: string) => {
       const res = await callApi<{
@@ -134,13 +211,9 @@ export function useChatScreen() {
       ? routeParams.loadConversationId
       : undefined;
   const loadKey =
-    typeof routeParams.loadKey === "string"
-      ? routeParams.loadKey
-      : undefined;
+    typeof routeParams.loadKey === "string" ? routeParams.loadKey : undefined;
   const resetKey =
-    typeof routeParams.resetKey === "string"
-      ? routeParams.resetKey
-      : undefined;
+    typeof routeParams.resetKey === "string" ? routeParams.resetKey : undefined;
 
   useEffect(() => {
     if (!sessionLabel || !loadConversationId || !loadKey) return;
@@ -174,11 +247,11 @@ export function useChatScreen() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || sendingRef.current) return;
-      sendingRef.current = true;
 
       try {
         const tokens = await getTokens();
         if (!tokens) return;
+        sendingRef.current = true;
 
         const userMsg: ChatMessage = {
           id: newChatMessageId(),
@@ -186,50 +259,105 @@ export function useChatScreen() {
           role: "user",
         };
         setMessages((prev) => [...prev, userMsg]);
-        setLoading(true);
+        setStreaming(true);
+        setStreamingStatus("Finla düşünüyor…");
         scrollToBottom();
 
-        const res = await callApi<{
-          message: string;
-          conversationId: string;
-          action?: ChatMessageAction;
-        }>("chat", {
-          message: trimmed,
-          conversationId,
-        });
+        const assistId = newChatMessageId();
+        setStreamingMessageId(assistId);
+        streamedAssistantTextRef.current = "";
+        receivedDeltaRef.current = false;
+        deltaQueueRef.current = [];
+        startDeltaDrain(assistId);
+        setMessages((prev) => [
+          ...prev,
+          { id: assistId, text: "", role: "assistant" },
+        ]);
 
         const isNewThread = conversationId === null;
-        if (!conversationId) setConversationId(res.conversationId);
+        try {
+          const res = await streamChat(
+            { message: trimmed, conversationId },
+            {
+              onMeta: (nid) => {
+                setConversationId((prev) => prev ?? nid);
+              },
+              onDelta: (t) => {
+                setStreamingStatus("Yanıt yazılıyor…");
+                receivedDeltaRef.current = true;
+                streamedAssistantTextRef.current += t;
+                deltaQueueRef.current.push(t);
+              },
+              onTool: (phase, name) => {
+                if (phase === "start") {
+                  setStreamingStatus(toolStatusText(name));
+                } else {
+                  setStreamingStatus("Yanıt hazırlanıyor…");
+                }
+              },
+            },
+          );
 
-        const aiMsg: ChatMessage = {
-          id: newChatMessageId(),
-          text: res.message,
-          role: "assistant",
-          action: res.action,
-        };
-        setMessages((prev) => [...prev, aiMsg]);
-        if (
-          res.action?.type === "open_sign_otp" &&
-          res.action.sign_otp?.draftUuid
-        ) {
-          setSignOtpAction(res.action);
+          setConversationId((prev) => prev ?? res.conversationId);
+
+          if (!receivedDeltaRef.current && res.message) {
+            setStreamingStatus("Yanıt yazılıyor…");
+            streamedAssistantTextRef.current = res.message;
+            deltaQueueRef.current.push(res.message);
+          }
+          await waitUntilDeltaQueueEmpty();
+
+          const finalText =
+            streamedAssistantTextRef.current.trim().length > 0
+              ? streamedAssistantTextRef.current
+              : res.message;
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistId
+                ? {
+                    ...m,
+                    text: finalText,
+                    action: res.action,
+                  }
+                : m,
+            ),
+          );
+
+          if (
+            res.action?.type === "open_sign_otp" &&
+            res.action.sign_otp?.draftUuid
+          ) {
+            setSignOtpAction(res.action);
+          }
+          if (isNewThread && res.conversationId)
+            void refreshConversationList("none");
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev.filter((m) => m.id !== assistId),
+            {
+              id: newChatMessageId(),
+              text: userFacingApiError(err),
+              role: "assistant",
+            },
+          ]);
         }
-        if (isNewThread && res.conversationId)
-          void refreshConversationList("none");
-      } catch (err) {
-        const errMsg: ChatMessage = {
-          id: newChatMessageId(),
-          text: userFacingApiError(err),
-          role: "assistant",
-        };
-        setMessages((prev) => [...prev, errMsg]);
       } finally {
+        stopDeltaDrain();
         sendingRef.current = false;
-        setLoading(false);
+        setStreaming(false);
+        setStreamingStatus(null);
+        setStreamingMessageId(null);
         scrollToBottom();
       }
     },
-    [conversationId, refreshConversationList],
+    [
+      conversationId,
+      refreshConversationList,
+      startDeltaDrain,
+      stopDeltaDrain,
+      waitUntilDeltaQueueEmpty,
+    ],
   );
 
   const handleConfirmFromPreview = useCallback(
@@ -417,6 +545,9 @@ export function useChatScreen() {
     scrollRef,
     messages,
     loading,
+    streaming,
+    streamingStatus,
+    streamingMessageId,
     conversationId,
     detailAction,
     detailInvoice,

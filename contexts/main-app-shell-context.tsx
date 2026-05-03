@@ -3,10 +3,12 @@ import SideMenu from "@/components/side-menu";
 import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
+import { getUserProfile, type UserProfile } from "@/lib/supabase";
 import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -54,6 +56,24 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuRegistration, setMenuRegistration] =
     useState<ShellMenuRegistration | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  const fetchUserProfile = useCallback(async () => {
+    try {
+      const res = await getUserProfile();
+      setUserProfile(res.profile);
+    } catch {
+      setUserProfile(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!bootstrapped || !sessionLabel) {
+      setUserProfile(null);
+      return;
+    }
+    void fetchUserProfile();
+  }, [bootstrapped, fetchUserProfile, sessionLabel]);
 
   const registerSideMenu = useCallback(
     (owner: string, bindings: MainShellSideMenuBindings) => {
@@ -78,8 +98,12 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   );
 
   const onPullRefreshConversations = useCallback(
-    () => refreshConversationList("pull"),
-    [refreshConversationList],
+    () =>
+      Promise.all([
+        refreshConversationList("pull"),
+        fetchUserProfile(),
+      ]).then(() => undefined),
+    [fetchUserProfile, refreshConversationList],
   );
 
   const ctx = useMemo<MainAppShellContextValue>(
@@ -133,6 +157,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
         openingConversationId={bindings.openingConversationId}
         activeConversationId={bindings.activeConversationId}
         activeScreen={bindings.activeScreen}
+        userProfile={userProfile}
       />
     </MainAppShellContext.Provider>
   );

@@ -8,6 +8,8 @@ import Markdown from "react-native-markdown-display";
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
   confirmingDraftUuid: string | undefined;
+  /** Stream bitene kadar soluk balon + içerik (üstte sabit durum satırı kullanılır). */
+  streamPending?: boolean;
   onOpenInvoiceDetail: (action: ChatMessage["action"]) => void;
   onOpenInvoicePreview: (action: ChatMessage["action"]) => void;
   onConfirmPreview: (draftUuid: string | undefined) => void;
@@ -16,25 +18,40 @@ interface ChatMessageBubbleProps {
 export function ChatMessageBubble({
   msg,
   confirmingDraftUuid,
+  streamPending,
   onOpenInvoiceDetail,
   onOpenInvoicePreview,
   onConfirmPreview,
 }: ChatMessageBubbleProps) {
+  const pending = Boolean(streamPending && msg.role === "assistant");
+  if (msg.role === "assistant" && pending && msg.text.trim().length === 0) {
+    return null;
+  }
+
+  const bubbleStyles = [
+    styles.bubble,
+    msg.role === "user"
+      ? styles.userBubble
+      : pending
+        ? styles.aiBubblePending
+        : styles.aiBubble,
+  ];
+  const markdownWrap = pending ? styles.markdownPendingWrap : undefined;
+
   return (
-    <View
-      style={[
-        styles.bubble,
-        msg.role === "user" ? styles.userBubble : styles.aiBubble,
-      ]}
-    >
+    <View style={bubbleStyles}>
       {msg.role === "user" ? (
         <Text style={[styles.bubbleText, styles.userText]}>{msg.text}</Text>
       ) : hasMarkdownTable(msg.text) ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+          <View style={markdownWrap}>
+            <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+          </View>
         </ScrollView>
       ) : (
-        <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+        <View style={markdownWrap}>
+          <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+        </View>
       )}
       {msg.role === "assistant" && msg.action?.type === "open_invoices" && (
         <TouchableOpacity
@@ -127,6 +144,15 @@ const styles = StyleSheet.create({
   aiBubble: {
     alignSelf: "flex-start",
     backgroundColor: "#F2F2F2",
+  },
+  aiBubblePending: {
+    alignSelf: "flex-start",
+    backgroundColor: "#EAEAEA",
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+  },
+  markdownPendingWrap: {
+    opacity: 0.58,
   },
   bubbleText: {
     fontSize: 15,

@@ -5,8 +5,14 @@
 export {
   callApi,
   callEdgeFunction,
+  CHAT_STREAM_ACCEPT_HEADER,
   loginRequest,
   logoutRequest,
+  getUserProfile,
+  streamChat,
   userFacingApiError,
   type LoginResponse,
+  type UserProfile,
+  type UserProfileResponse,
+  type StreamChatHandlers,
 } from './api'

@@ -2,6 +2,16 @@ import type Anthropic from 'npm:@anthropic-ai/sdk'
 
 export const TOOLS: Anthropic.Tool[] = [
   {
+    name: 'get_user_profile',
+    description:
+      'Giriş yapan kullanıcının GİB profil bilgilerini (ünvan, ad-soyad, vergi bilgileri, iletişim/adres) getirir.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
     name: 'lookup_recipient',
     description:
       'TC Kimlik No veya Vergi Kimlik No ile alıcı bilgilerini fatura.js (GİB e-Arşiv) üzerinden getirir. Fatura kesmeden önce alıcı bilgilerini doğrulamak için kullan.',
@@ -241,10 +251,12 @@ Yeteneklerin:
 - Son faturayı bulma (latest_invoice)
 - Fatura iptal etme (cancel_invoice)
 - Alıcı bilgisi sorgulama (lookup_recipient)
+- Kullanıcı profil bilgisi (get_user_profile)
 
 Kurallar:
 - Türkçe yanıt ver
 - Kısa ve doğal konuşma dili kullan
+- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.
 - Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al
 - create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme.
 - confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı.

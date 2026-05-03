@@ -19,6 +19,11 @@ import {
 } from "../_shared/session-auth.ts";
 import { SYSTEM_PROMPT, TOOLS } from "../_shared/tools.ts";
 import { normalizeTurkish } from "../_shared/turkish.ts";
+import {
+  clientWantsNdjsonStream,
+  encodeNdjsonEvent,
+  NDJSON_CONTENT_TYPE,
+} from "./ndjson-stream.ts";
 import type {
   ChatAction,
   InvoiceDetailPayload,
@@ -174,6 +179,40 @@ function shouldOfferInvoicesAction(
       lower.includes("goster") ||
       lower.includes("listele"))
   );
+}
+
+function isUserProfileIntent(userMessage: string): boolean {
+  const lower = userMessage.toLocaleLowerCase("tr-TR");
+  return (
+    lower.includes("profilim") ||
+    lower.includes("firma bilgilerim") ||
+    lower.includes("kullanıcı bilgilerim") ||
+    lower.includes("kullanici bilgilerim") ||
+    lower.includes("bilgilerimi getir")
+  );
+}
+
+function summarizeUserProfile(profile: {
+  taxIDOrTRID?: string;
+  title?: string;
+  name?: string;
+  surname?: string;
+  taxOffice?: string;
+  email?: string;
+  phoneNumber?: string;
+}): string {
+  const displayName =
+    profile.title?.trim() ||
+    [profile.name, profile.surname].filter(Boolean).join(" ").trim() ||
+    "Kayıtlı kullanıcı";
+  const rows = [
+    `- Ünvan/Ad: ${displayName}`,
+    profile.taxIDOrTRID ? `- VKN/TCKN: ${profile.taxIDOrTRID}` : null,
+    profile.taxOffice ? `- Vergi dairesi: ${profile.taxOffice}` : null,
+    profile.phoneNumber ? `- Telefon: ${maskPhone(profile.phoneNumber)}` : null,
+    profile.email ? `- E-posta: ${profile.email}` : null,
+  ].filter(Boolean);
+  return `GİB profil bilgilerin:\n${rows.join("\n")}`;
 }
 
 function classifyGibOperationError(
@@ -379,6 +418,9 @@ async function executeTool(
   };
 
   switch (toolName) {
+    case "get_user_profile":
+      return faturaGetUserData(username);
+
     case "lookup_recipient":
       return faturaLookupRecipient(username, input.tax_id as string);
 
@@ -732,13 +774,461 @@ async function executeTool(
   }
 }
 
+const MAX_AGENT_ROUNDS = 28;
+
+/** Same contract string as embedded in assistant loop (YAML-like rules for Claude output). */
+const RESPONSE_CONTRACT_AGENT = `Yanit stili:
+- Konusma dili kullan; rapor/excel dili kullanma.
+- Zorunlu sabit basliklar ("Istek", "Sonuc", "Tarih Araligi", "Sonraki Adim") kullanma.
+- Gerekirse tarihi cumle icinde dogalca belirt.
+- Tutar/KDV gibi sayisal degerleri sadece arac sonucundan kullan; tahmin etme.
+- Markdown tablo kullanma; gerekiyorsa kisa madde listesi kullan.
+- Kullanici "bu ay", "ayin basindan beri", "dun", "gecen hafta" derse tarih sormadan ilgili araci cagir.
+- Cevabi kisa tut (genelde 2-5 cumle).
+
+Fatura arama/filtreleme:
+- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").
+- Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.
+- Kullanici "profilim", "firma bilgilerim", "kullanici bilgilerim", "bilgilerimi getir" derse mutlaka get_user_profile aracini cagir.
+
+Hata yonetimi (arac sonucunda "error_code" varsa):
+- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.
+- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.
+- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.
+- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.
+- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.
+- Hata sonrasi ne yapilabilecegini mutlaka belirt; "tekrar deneyin" yerine somut adim oner.`;
+
+function buildDynamicSystemPromptForAgent(): string {
+  return `${SYSTEM_PROMPT}
+
+Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
+Saat dilimi: ${ISTANBUL_TZ}
+${RESPONSE_CONTRACT_AGENT}`;
+}
+
+type AgentLoopAccumulator = {
+  assistantText: string;
+  usedFinanceTool: boolean;
+  usedToolNames: Set<string>;
+  latestInvoiceActionPayload: InvoiceDetailPayload | null;
+  lastListInvoicesInput: Record<string, unknown> | null;
+};
+
+async function runAnthropicToolLoop(
+  claudeMessages: Anthropic.MessageParam[],
+  username: string,
+  userMsg: string,
+  convId: string,
+  dynamicSystemPrompt: string,
+  ndjsonWriter: WritableStreamDefaultWriter<Uint8Array> | null,
+): Promise<AgentLoopAccumulator> {
+  let assistantText = "";
+  let usedFinanceTool = false;
+  const usedToolNames = new Set<string>();
+  let latestInvoiceActionPayload: InvoiceDetailPayload | null = null;
+  let lastListInvoicesInput: Record<string, unknown> | null = null;
+
+  const anthropicRoundParams =
+    (): Anthropic.MessageCreateParamsNonStreaming => ({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1536,
+      system: [
+        {
+          type: "text",
+          text: dynamicSystemPrompt,
+          // @ts-ignore - cache_control for prompt caching
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: TOOLS.map((t, i) =>
+        i === TOOLS.length - 1
+          ? {
+            ...t,
+            cache_control: {
+              type: "ephemeral",
+            } as Anthropic.CacheControlEphemeral,
+          }
+          : t,
+      ),
+      messages: claudeMessages,
+    });
+
+  for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    const params = anthropicRoundParams();
+    const roundPieces: string[] = [];
+    let response: Anthropic.Message;
+
+    if (ndjsonWriter) {
+      const stream = anthropic.messages.stream(params);
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_delta" &&
+          event.delta.type === "text_delta"
+        ) {
+          roundPieces.push(event.delta.text);
+        }
+      }
+      response = await stream.finalMessage();
+    } else {
+      response = await anthropic.messages.create(params);
+    }
+
+    const textParts = response.content
+      .filter((b: Anthropic.ContentBlock) => b.type === "text")
+      .map((b: Anthropic.ContentBlock) => (b as Anthropic.TextBlock).text);
+    if (textParts.length) assistantText = textParts.join("");
+
+    if (response.stop_reason === "end_turn") {
+      if (ndjsonWriter && roundPieces.length > 0) {
+        const full = roundPieces.join("");
+        const step = 96;
+        for (let i = 0; i < full.length; i += step) {
+          await ndjsonWriter.write(
+            encodeNdjsonEvent({
+              type: "delta",
+              text: full.slice(i, i + step),
+            }),
+          );
+        }
+      }
+      break;
+    }
+
+    if (response.stop_reason === "tool_use") {
+      const toolUseBlocks = response.content.filter(
+        (b: Anthropic.ContentBlock) => b.type === "tool_use",
+      ) as Anthropic.ToolUseBlock[];
+
+      if (ndjsonWriter && toolUseBlocks.length > 0) {
+        const label = toolUseBlocks.map((b) => b.name).join(",");
+        await ndjsonWriter.write(
+          encodeNdjsonEvent({ type: "tool", phase: "start", name: label }),
+        );
+      }
+
+      claudeMessages.push({ role: "assistant", content: response.content });
+
+      const toolResults = await Promise.all(
+        toolUseBlocks.map(async (block) => {
+          let content: string;
+          try {
+            const result = await executeTool(
+              block.name,
+              block.input as Record<string, unknown>,
+              username,
+              userMsg,
+              convId,
+            );
+            if (
+              block.name === "invoice_totals" ||
+              block.name === "latest_invoice"
+            ) {
+              usedFinanceTool = true;
+            }
+            if (
+              block.name === "latest_invoice" &&
+              result &&
+              typeof result === "object" &&
+              (result as { invoice?: InvoiceDetailPayload }).invoice
+            ) {
+              latestInvoiceActionPayload = (
+                result as { invoice: InvoiceDetailPayload }
+              ).invoice;
+            }
+            if (block.name === "list_invoices") {
+              lastListInvoicesInput = block.input as Record<string, unknown>;
+            }
+            usedToolNames.add(block.name);
+            content = JSON.stringify(result);
+          } catch (err) {
+            const classified = classifyGibOperationError(err, block.name);
+            content = JSON.stringify({
+              error: classified.message,
+              error_code: classified.code,
+            });
+          }
+          return {
+            type: "tool_result" as const,
+            tool_use_id: block.id,
+            content,
+          };
+        }),
+      );
+
+      claudeMessages.push({ role: "user", content: toolResults });
+
+      if (ndjsonWriter && toolUseBlocks.length > 0) {
+        const label = toolUseBlocks.map((b) => b.name).join(",");
+        await ndjsonWriter.write(
+          encodeNdjsonEvent({ type: "tool", phase: "end", name: label }),
+        );
+      }
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    assistantText,
+    usedFinanceTool,
+    usedToolNames,
+    latestInvoiceActionPayload,
+    lastListInvoicesInput,
+  };
+}
+
+async function finalizeAgentAssistant(opts: {
+  convId: string;
+  username: string;
+  userMessage: string;
+  assistantText: string;
+  usedFinanceTool: boolean;
+  usedToolNames: Set<string>;
+  latestInvoiceActionPayload: InvoiceDetailPayload | null;
+  lastListInvoicesInput: Record<string, unknown> | null;
+}): Promise<{ finalAssistant: string; action: ChatAction | null }> {
+  const {
+    convId,
+    username,
+    userMessage,
+    assistantText,
+    usedFinanceTool,
+    usedToolNames,
+    latestInvoiceActionPayload,
+    lastListInvoicesInput,
+  } = opts;
+
+  let trimmedAssistant = assistantText;
+  if (
+    !usedToolNames.has("get_user_profile") &&
+    isUserProfileIntent(userMessage)
+  ) {
+    try {
+      const profile = await faturaGetUserData(username);
+      trimmedAssistant = summarizeUserProfile(profile);
+      usedToolNames.add("get_user_profile");
+    } catch {
+      // Allow the normal model answer when profile fetch fails.
+    }
+  }
+
+  if (trimmedAssistant && usedFinanceTool) {
+    trimmedAssistant = trimmedAssistant
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/\*\*(İstek|Sonuç|Tarih Aralığı|Sonraki Adım):\*\*/g, "")
+      .trim();
+  }
+
+  const latestInvSnap =
+    latestInvoiceActionPayload as InvoiceDetailPayload | null;
+  if (usedToolNames.has("latest_invoice") && latestInvSnap?.invoice_uuid) {
+    await supabase
+      .from("conversations")
+      .update({
+        last_invoice: {
+          uuid: latestInvSnap.invoice_uuid,
+          issue_date: latestInvSnap.issue_date,
+          status: latestInvSnap.status,
+          currency: latestInvSnap.currency,
+          gross_total: latestInvSnap.gross_total,
+          vat_total: latestInvSnap.vat_total,
+          net_total: latestInvSnap.net_total,
+          customer_tax_id: latestInvSnap.customer_tax_id,
+          customer_name: latestInvSnap.customer_name,
+        },
+      })
+      .eq("id", convId);
+  }
+
+  const { data: convState } = await supabase
+    .from("conversations")
+    .select("pending_invoice,last_invoice")
+    .eq("id", convId)
+    .single();
+  const pending = convState?.pending_invoice as PendingInvoiceState | null;
+  const last = convState?.last_invoice as {
+    uuid?: string;
+    html?: string;
+    issue_date?: string;
+    status?: string;
+    currency?: string;
+    gross_total?: number;
+    vat_total?: number;
+    net_total?: number;
+    customer_tax_id?: string;
+    customer_name?: string;
+  } | null;
+
+  let action: ChatAction | null = null;
+  const msgNorm = normalizeTurkish(String(userMessage ?? ""));
+  const wantsPreviewOrDownload =
+    /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
+    /\b(onizle|pdf|indir|goster|goruntule|tam\s*fatura|paylas)\b/i.test(
+      msgNorm,
+    );
+  if (wantsPreviewOrDownload || usedToolNames.has("create_invoice")) {
+    if (pending?.draft?.uuid) {
+      try {
+        const html =
+          typeof pending.preview_html === "string" &&
+            pending.preview_html.length > 0
+            ? pending.preview_html
+            : await faturaGetInvoiceHtml(username, pending.draft.uuid, false);
+        action = {
+          type: "open_invoice_preview",
+          label: "Onizleme PDF",
+          preview: {
+            title: "Taslak Fatura Önizleme",
+            html,
+            uuid: pending.draft.uuid,
+            issued: false,
+          },
+        };
+      } catch (err) {
+        console.error("pending draft preview html failed", err);
+      }
+    } else if (last?.uuid) {
+      try {
+        const statusLower =
+          typeof last.status === "string" ? last.status.toLowerCase() : "";
+        const useSignedHtml =
+          statusLower.includes("approved") || statusLower.includes("onay");
+        const html =
+          typeof last.html === "string" && last.html.length > 0
+            ? last.html
+            : await faturaGetInvoiceHtml(username, last.uuid, useSignedHtml);
+        action = {
+          type: "open_invoice_preview",
+          label: "Faturayi PDF Ac",
+          preview: {
+            title: useSignedHtml ? "Kesilmiş Fatura" : "Taslak / Önizleme",
+            html,
+            uuid: last.uuid,
+            issued: useSignedHtml,
+          },
+        };
+      } catch (err) {
+        console.error("last_invoice preview html failed", err);
+      }
+    } else if (latestInvSnap?.invoice_uuid) {
+      try {
+        const inv = latestInvSnap;
+        const issued = inv.status === "approved";
+        const html = await faturaGetInvoiceHtml(
+          username,
+          inv.invoice_uuid,
+          issued,
+        );
+        action = {
+          type: "open_invoice_preview",
+          label: issued ? "Faturayi Gor" : "Taslagi Gor",
+          preview: {
+            title: issued ? "Kesilmiş Fatura" : "Taslak Fatura Önizleme",
+            html,
+            uuid: inv.invoice_uuid,
+            issued,
+          },
+        };
+      } catch (err) {
+        console.error("latest_invoice preview html failed", err);
+      }
+    }
+  } else if (latestInvSnap?.invoice_uuid) {
+    let detail: InvoiceDetailPayload = latestInvSnap;
+    if (
+      last?.uuid &&
+      detail.invoice_uuid === last.uuid &&
+      (detail.gross_total === null || detail.vat_total === null)
+    ) {
+      detail = {
+        ...detail,
+        issue_date: detail.issue_date ?? last.issue_date ?? null,
+        status: detail.status || last.status || "approved",
+        currency: detail.currency || last.currency || "TRY",
+        gross_total: detail.gross_total ?? last.gross_total ?? null,
+        vat_total: detail.vat_total ?? last.vat_total ?? null,
+        net_total: detail.net_total ?? last.net_total ?? null,
+        customer_tax_id:
+          detail.customer_tax_id ?? last.customer_tax_id ?? null,
+        customer_name: detail.customer_name ?? last.customer_name ?? null,
+      };
+    }
+    action = {
+      type: "open_invoice_detail",
+      label: "Detayi Gor",
+      invoice: detail,
+    };
+  } else if (shouldOfferInvoicesAction(userMessage, usedToolNames)) {
+    const listInput: Record<string, unknown> = lastListInvoicesInput ?? {};
+    const parsedRange = resolveDateRange(
+      listInput,
+      userMessage,
+      "month",
+    );
+    const msgFilters = parseFiltersFromText(userMessage);
+    const toolAmountGte =
+      typeof listInput.amount_gte === "number"
+        ? listInput.amount_gte
+        : typeof listInput.amount_gte === "string"
+          ? parseAmount(listInput.amount_gte as string)
+          : null;
+    const toolAmountEq =
+      typeof listInput.amount_eq === "number"
+        ? listInput.amount_eq
+        : typeof listInput.amount_eq === "string"
+          ? parseAmount(listInput.amount_eq as string)
+          : null;
+    const toolCustomerName =
+      typeof listInput.customer_name === "string" &&
+        listInput.customer_name.trim()
+        ? listInput.customer_name.trim()
+        : undefined;
+    if (parsedRange) {
+      action = {
+        type: "open_invoices",
+        label: "Faturalari Gor",
+        filter: {
+          ...parsedRange,
+          customerName: toolCustomerName ?? msgFilters.customerName,
+          amountGte: toolAmountGte ?? msgFilters.amountGte,
+          amountEq: toolAmountEq ?? msgFilters.amountEq,
+        },
+      };
+    }
+  }
+
+  let finalAssistant = (trimmedAssistant || "").trim();
+  if (!finalAssistant) {
+    finalAssistant =
+      assistantFallbackForAction(action) ||
+      (usedToolNames.size > 0
+        ? "İşlem tamam."
+        : "Şu an yanıt oluşturamadım — ne yapmak istediğini tek cümleyle yazar mısın?");
+  }
+
+  return { finalAssistant, action };
+}
+
 Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
   try {
     const username = await getSubjectFromAuthHeader(req);
-    const { message, conversationId, action: requestAction } = await req.json();
+    const body = await req.json() as {
+      message?: string;
+      conversationId?: string | null;
+      action?: {
+        type?: string;
+        draftUuid?: string;
+        smsCode?: string;
+        phone?: string;
+      };
+      stream?: boolean;
+    };
+    const { message, conversationId, action: requestAction } = body;
 
     const hasMessage = typeof message === "string" && message.trim().length > 0;
     const hasAction = !!requestAction;
@@ -754,16 +1244,28 @@ Deno.serve(async (req: Request) => {
     if (!convId) {
       const { data: conv, error } = await supabase
         .from("conversations")
-        .insert({ gib_username: username, title: message.slice(0, 60) })
+        .insert({
+          gib_username: username,
+          title: String(message ?? "").slice(0, 60),
+        })
         .select("id")
         .single();
       if (error) throw error;
       convId = conv.id;
     }
 
+    if (typeof convId !== "string") {
+      return Response.json(
+        { error: "conversation id gerekli." },
+        { headers: corsHeaders },
+      );
+    }
+
+    const cid = convId;
+
     // Save user message
     await supabase.from("messages").insert({
-      conversation_id: convId,
+      conversation_id: cid,
       role: "user",
       content: hasMessage ? message : "[action]",
     });
@@ -784,7 +1286,7 @@ Deno.serve(async (req: Request) => {
       const { data: convState, error: pendingErr } = await supabase
         .from("conversations")
         .select("pending_invoice")
-        .eq("id", convId)
+        .eq("id", cid)
         .single();
       if (pendingErr) throw pendingErr;
 
@@ -797,12 +1299,12 @@ Deno.serve(async (req: Request) => {
           const mismatchMsg =
             "Doğrulanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: mismatchMsg,
           });
           return Response.json(
-            { message: mismatchMsg, conversationId: convId, action: null },
+            { message: mismatchMsg, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         }
@@ -811,15 +1313,15 @@ Deno.serve(async (req: Request) => {
             "verify_invoice_sign_otp",
             { code: requestAction?.smsCode },
             username,
-            message as string,
-            convId,
+            message ?? "",
+            cid,
           );
           const result = await executeTool(
             "confirm_invoice_issue",
             {},
             username,
-            message as string,
-            convId,
+            message ?? "",
+            cid,
           );
           const payload = result as { uuid?: string; message?: string };
           const directMessage = payload?.uuid
@@ -828,13 +1330,13 @@ Deno.serve(async (req: Request) => {
               "SMS doğrulaması tamamlandı, fatura kesildi.");
 
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: directMessage,
           });
 
           return Response.json(
-            { message: directMessage, conversationId: convId, action: null },
+            { message: directMessage, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         } catch (err) {
@@ -842,12 +1344,12 @@ Deno.serve(async (req: Request) => {
             err instanceof Error ? err.message : "SMS doğrulaması başarısız.";
           const failText = `SMS doğrulaması başarısız oldu: ${msg}. Kodu kontrol edip tekrar deneyebilirsin.`;
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: failText,
           });
           return Response.json(
-            { message: failText, conversationId: convId, action: null },
+            { message: failText, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         }
@@ -859,7 +1361,7 @@ Deno.serve(async (req: Request) => {
       const { data: convState, error: pendingErr } = await supabase
         .from("conversations")
         .select("pending_invoice")
-        .eq("id", convId)
+        .eq("id", cid)
         .single();
       if (pendingErr) throw pendingErr;
 
@@ -873,12 +1375,12 @@ Deno.serve(async (req: Request) => {
           const mismatchMsg =
             "Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: mismatchMsg,
           });
           return Response.json(
-            { message: mismatchMsg, conversationId: convId, action: null },
+            { message: mismatchMsg, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         }
@@ -887,8 +1389,8 @@ Deno.serve(async (req: Request) => {
             "request_invoice_sign_otp",
             { phone: requestAction?.phone },
             username,
-            message as string,
-            convId,
+            message ?? "",
+            cid,
           );
           const payload = result as {
             status?: string;
@@ -901,7 +1403,7 @@ Deno.serve(async (req: Request) => {
               : `İmzalama için SMS doğrulama bekleniyor.${payload?.phone_masked ? ` Kod ${payload.phone_masked} numarasına gönderildi.` : ""}`;
 
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: directMessage,
           });
@@ -909,7 +1411,7 @@ Deno.serve(async (req: Request) => {
           return Response.json(
             {
               message: directMessage,
-              conversationId: convId,
+              conversationId: cid,
               action: payload?.draft_uuid
                 ? {
                     type: "open_sign_otp",
@@ -930,12 +1432,12 @@ Deno.serve(async (req: Request) => {
               : "SMS doğrulaması başlatılamadı.";
           const failText = `İmzalama adımı başlatılamadı: ${msg}`;
           await supabase.from("messages").insert({
-            conversation_id: convId,
+            conversation_id: cid,
             role: "assistant",
             content: failText,
           });
           return Response.json(
-            { message: failText, conversationId: convId, action: null },
+            { message: failText, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         }
@@ -946,7 +1448,7 @@ Deno.serve(async (req: Request) => {
     const { data: history } = await supabase
       .from("messages")
       .select("role, content")
-      .eq("conversation_id", convId)
+      .eq("conversation_id", cid)
       .order("created_at", { ascending: true })
       .limit(20);
 
@@ -957,336 +1459,132 @@ Deno.serve(async (req: Request) => {
       }),
     );
 
-    // Agentic tool-use loop
-    let assistantText = "";
-    let usedFinanceTool = false;
-    const usedToolNames = new Set<string>();
-    let latestInvoiceActionPayload: InvoiceDetailPayload | null = null;
-    let lastListInvoicesInput: Record<string, unknown> | null = null;
-    const responseContract = `Yanit stili:
-- Konusma dili kullan; rapor/excel dili kullanma.
-- Zorunlu sabit basliklar ("Istek", "Sonuc", "Tarih Araligi", "Sonraki Adim") kullanma.
-- Gerekirse tarihi cumle icinde dogalca belirt.
-- Tutar/KDV gibi sayisal degerleri sadece arac sonucundan kullan; tahmin etme.
-- Markdown tablo kullanma; gerekiyorsa kisa madde listesi kullan.
-- Kullanici "bu ay", "ayin basindan beri", "dun", "gecen hafta" derse tarih sormadan ilgili araci cagir.
-- Cevabi kisa tut (genelde 2-5 cumle).
+    const stableUserMsg = typeof message === "string" ? message : "";
 
-Fatura arama/filtreleme:
-- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").
-- Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.
+    const dynamicSystemPrompt = buildDynamicSystemPromptForAgent();
 
-Hata yonetimi (arac sonucunda "error_code" varsa):
-- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.
-- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.
-- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.
-- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.
-- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.
-- Hata sonrasi ne yapilabilecegini mutlaka belirt; "tekrar deneyin" yerine somut adim oner.`;
-    const dynamicSystemPrompt = `${SYSTEM_PROMPT}
+    const wantsNdjson =
+      clientWantsNdjsonStream(req, body) &&
+      typeof message === "string" &&
+      message.trim().length > 0;
 
-Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
-Saat dilimi: ${ISTANBUL_TZ}
-${responseContract}`;
-
-    while (true) {
-      const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1536,
-        system: [
-          {
-            type: "text",
-            text: dynamicSystemPrompt,
-            // @ts-ignore - cache_control for prompt caching
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        tools: TOOLS.map((t, i) =>
-          i === TOOLS.length - 1
-            ? {
-                ...t,
-                cache_control: {
-                  type: "ephemeral",
-                } as Anthropic.CacheControlEphemeral,
-              }
-            : t,
-        ),
-        messages: claudeMessages,
+    async function runAgentFinalizeAndPersist(
+      msgs: Anthropic.MessageParam[],
+    ): Promise<{ finalAssistant: string; action: ChatAction | null }> {
+      const acc = await runAnthropicToolLoop(
+        msgs,
+        username,
+        stableUserMsg,
+        cid,
+        dynamicSystemPrompt,
+        null,
+      );
+      const fin = await finalizeAgentAssistant({
+        convId: cid,
+        username,
+        userMessage: stableUserMsg,
+        assistantText: acc.assistantText,
+        usedFinanceTool: acc.usedFinanceTool,
+        usedToolNames: acc.usedToolNames,
+        latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
+        lastListInvoicesInput: acc.lastListInvoicesInput,
       });
+      await supabase.from("messages").insert({
+        conversation_id: cid,
+        role: "assistant",
+        content: fin.finalAssistant,
+        action_snapshot: persistableAction(fin.action),
+      });
+      return fin;
+    }
 
-      const textParts = response.content
-        .filter((b: Anthropic.ContentBlock) => b.type === "text")
-        .map((b: Anthropic.ContentBlock) => (b as Anthropic.TextBlock).text);
-      if (textParts.length) assistantText = textParts.join("");
+    if (!wantsNdjson) {
+      const fin = await runAgentFinalizeAndPersist(claudeMessages);
+      return Response.json(
+        {
+          message: fin.finalAssistant,
+          conversationId: cid,
+          action: fin.action,
+        },
+        { headers: corsHeaders },
+      );
+    }
 
-      if (response.stop_reason === "end_turn") break;
+    const { readable, writable } = new TransformStream<
+      Uint8Array,
+      Uint8Array
+    >();
+    const ndWriter = writable.getWriter();
 
-      if (response.stop_reason === "tool_use") {
-        const toolUseBlocks = response.content.filter(
-          (b: Anthropic.ContentBlock) => b.type === "tool_use",
-        ) as Anthropic.ToolUseBlock[];
-
-        claudeMessages.push({ role: "assistant", content: response.content });
-
-        const toolResults = await Promise.all(
-          toolUseBlocks.map(async (block) => {
-            let content: string;
-            try {
-              const result = await executeTool(
-                block.name,
-                block.input as Record<string, unknown>,
-                username,
-                message as string,
-                convId,
-              );
-              if (
-                block.name === "invoice_totals" ||
-                block.name === "latest_invoice"
-              ) {
-                usedFinanceTool = true;
-              }
-              if (
-                block.name === "latest_invoice" &&
-                result &&
-                typeof result === "object" &&
-                (result as { invoice?: InvoiceDetailPayload }).invoice
-              ) {
-                latestInvoiceActionPayload = (
-                  result as { invoice: InvoiceDetailPayload }
-                ).invoice;
-              }
-              if (block.name === "list_invoices") {
-                lastListInvoicesInput = block.input as Record<string, unknown>;
-              }
-              usedToolNames.add(block.name);
-              content = JSON.stringify(result);
-            } catch (err) {
-              const classified = classifyGibOperationError(err, block.name);
-              content = JSON.stringify({
-                error: classified.message,
-                error_code: classified.code,
-              });
-            }
-            return {
-              type: "tool_result" as const,
-              tool_use_id: block.id,
-              content,
-            };
-          }),
+    void (async () => {
+      try {
+        await ndWriter.write(
+          encodeNdjsonEvent({ type: "meta", conversationId: cid }),
         );
 
-        claudeMessages.push({ role: "user", content: toolResults });
-        continue;
-      }
+        const msgs = [...claudeMessages];
+        const acc = await runAnthropicToolLoop(
+          msgs,
+          username,
+          stableUserMsg,
+          cid,
+          dynamicSystemPrompt,
+          ndWriter,
+        );
 
-      break;
-    }
+        const fin = await finalizeAgentAssistant({
+          convId: cid,
+          username,
+          userMessage: stableUserMsg,
+          assistantText: acc.assistantText,
+          usedFinanceTool: acc.usedFinanceTool,
+          usedToolNames: acc.usedToolNames,
+          latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
+          lastListInvoicesInput: acc.lastListInvoicesInput,
+        });
 
-    if (assistantText && usedFinanceTool) {
-      assistantText = assistantText
-        .replace(/\n{3,}/g, "\n\n")
-        .replace(/\*\*(İstek|Sonuç|Tarih Aralığı|Sonraki Adım):\*\*/g, "")
-        .trim();
-    }
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: fin.finalAssistant,
+          action_snapshot: persistableAction(fin.action),
+        });
 
-    const latestInvSnap =
-      latestInvoiceActionPayload as InvoiceDetailPayload | null;
-    if (usedToolNames.has("latest_invoice") && latestInvSnap?.invoice_uuid) {
-      await supabase
-        .from("conversations")
-        .update({
-          last_invoice: {
-            uuid: latestInvSnap.invoice_uuid,
-            issue_date: latestInvSnap.issue_date,
-            status: latestInvSnap.status,
-            currency: latestInvSnap.currency,
-            gross_total: latestInvSnap.gross_total,
-            vat_total: latestInvSnap.vat_total,
-            net_total: latestInvSnap.net_total,
-            customer_tax_id: latestInvSnap.customer_tax_id,
-            customer_name: latestInvSnap.customer_name,
-          },
-        })
-        .eq("id", convId);
-    }
-
-    const { data: convState } = await supabase
-      .from("conversations")
-      .select("pending_invoice,last_invoice")
-      .eq("id", convId)
-      .single();
-    const pending = convState?.pending_invoice as PendingInvoiceState | null;
-    const last = convState?.last_invoice as {
-      uuid?: string;
-      html?: string;
-      issue_date?: string;
-      status?: string;
-      currency?: string;
-      gross_total?: number;
-      vat_total?: number;
-      net_total?: number;
-      customer_tax_id?: string;
-      customer_name?: string;
-    } | null;
-
-    let action: ChatAction | null = null;
-    const msgNorm = normalizeTurkish(String(message ?? ""));
-    const wantsPreviewOrDownload =
-      /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
-      /\b(onizle|pdf|indir|goster|goruntule|tam\s*fatura|paylas)\b/i.test(
-        msgNorm,
-      );
-    if (wantsPreviewOrDownload || usedToolNames.has("create_invoice")) {
-      if (pending?.draft?.uuid) {
+        await ndWriter.write(
+          encodeNdjsonEvent({
+            type: "done",
+            message: fin.finalAssistant,
+            conversationId: cid,
+            action: fin.action,
+          }),
+        );
+      } catch (e) {
+        console.error("chat ndjson stream failed", e);
+        const msg =
+          e instanceof Error ? e.message : "Beklenmeyen bir hata oluştu.";
         try {
-          const html =
-            typeof pending.preview_html === "string" &&
-            pending.preview_html.length > 0
-              ? pending.preview_html
-              : await faturaGetInvoiceHtml(username, pending.draft.uuid, false);
-          action = {
-            type: "open_invoice_preview",
-            label: "Onizleme PDF",
-            preview: {
-              title: "Taslak Fatura Önizleme",
-              html,
-              uuid: pending.draft.uuid,
-              issued: false,
-            },
-          };
-        } catch (err) {
-          console.error("pending draft preview html failed", err);
-        }
-      } else if (last?.uuid) {
-        try {
-          const statusLower =
-            typeof last.status === "string" ? last.status.toLowerCase() : "";
-          const useSignedHtml =
-            statusLower.includes("approved") || statusLower.includes("onay");
-          const html =
-            typeof last.html === "string" && last.html.length > 0
-              ? last.html
-              : await faturaGetInvoiceHtml(username, last.uuid, useSignedHtml);
-          action = {
-            type: "open_invoice_preview",
-            label: "Faturayi PDF Ac",
-            preview: {
-              title: useSignedHtml ? "Kesilmiş Fatura" : "Taslak / Önizleme",
-              html,
-              uuid: last.uuid,
-              issued: useSignedHtml,
-            },
-          };
-        } catch (err) {
-          console.error("last_invoice preview html failed", err);
-        }
-      } else if (latestInvSnap?.invoice_uuid) {
-        try {
-          const inv = latestInvSnap;
-          const issued = inv.status === "approved";
-          const html = await faturaGetInvoiceHtml(
-            username,
-            inv.invoice_uuid,
-            issued,
+          await ndWriter.write(
+            encodeNdjsonEvent({ type: "error", message: msg }),
           );
-          action = {
-            type: "open_invoice_preview",
-            label: issued ? "Faturayi Gor" : "Taslagi Gor",
-            preview: {
-              title: issued ? "Kesilmiş Fatura" : "Taslak Fatura Önizleme",
-              html,
-              uuid: inv.invoice_uuid,
-              issued,
-            },
-          };
-        } catch (err) {
-          console.error("latest_invoice preview html failed", err);
+        } catch {
+          /* client disconnected */
+        }
+      } finally {
+        try {
+          await ndWriter.close();
+        } catch {
+          /* */
         }
       }
-    } else if (latestInvSnap?.invoice_uuid) {
-      let detail: InvoiceDetailPayload = latestInvSnap;
-      if (
-        last?.uuid &&
-        detail.invoice_uuid === last.uuid &&
-        (detail.gross_total === null || detail.vat_total === null)
-      ) {
-        detail = {
-          ...detail,
-          issue_date: detail.issue_date ?? last.issue_date ?? null,
-          status: detail.status || last.status || "approved",
-          currency: detail.currency || last.currency || "TRY",
-          gross_total: detail.gross_total ?? last.gross_total ?? null,
-          vat_total: detail.vat_total ?? last.vat_total ?? null,
-          net_total: detail.net_total ?? last.net_total ?? null,
-          customer_tax_id:
-            detail.customer_tax_id ?? last.customer_tax_id ?? null,
-          customer_name: detail.customer_name ?? last.customer_name ?? null,
-        };
-      }
-      action = {
-        type: "open_invoice_detail",
-        label: "Detayi Gor",
-        invoice: detail,
-      };
-    } else if (shouldOfferInvoicesAction(message as string, usedToolNames)) {
-      const listInput: Record<string, unknown> = lastListInvoicesInput ?? {};
-      const parsedRange = resolveDateRange(
-        listInput,
-        message as string,
-        "month",
-      );
-      const msgFilters = parseFiltersFromText(message as string);
-      const toolAmountGte =
-        typeof listInput.amount_gte === "number"
-          ? listInput.amount_gte
-          : typeof listInput.amount_gte === "string"
-            ? parseAmount(listInput.amount_gte as string)
-            : null;
-      const toolAmountEq =
-        typeof listInput.amount_eq === "number"
-          ? listInput.amount_eq
-          : typeof listInput.amount_eq === "string"
-            ? parseAmount(listInput.amount_eq as string)
-            : null;
-      const toolCustomerName =
-        typeof listInput.customer_name === "string" &&
-        listInput.customer_name.trim()
-          ? listInput.customer_name.trim()
-          : undefined;
-      if (parsedRange) {
-        action = {
-          type: "open_invoices",
-          label: "Faturalari Gor",
-          filter: {
-            ...parsedRange,
-            customerName: toolCustomerName ?? msgFilters.customerName,
-            amountGte: toolAmountGte ?? msgFilters.amountGte,
-            amountEq: toolAmountEq ?? msgFilters.amountEq,
-          },
-        };
-      }
-    }
+    })();
 
-    let finalAssistant = (assistantText || "").trim();
-    if (!finalAssistant) {
-      finalAssistant =
-        assistantFallbackForAction(action) ||
-        (usedToolNames.size > 0
-          ? "İşlem tamam."
-          : "Şu an yanıt oluşturamadım — ne yapmak istediğini tek cümleyle yazar mısın?");
-    }
-
-    await supabase.from("messages").insert({
-      conversation_id: convId,
-      role: "assistant",
-      content: finalAssistant,
-      action_snapshot: persistableAction(action),
+    return new Response(readable, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": NDJSON_CONTENT_TYPE,
+        "Cache-Control": "no-cache",
+      },
     });
-
-    return Response.json(
-      { message: finalAssistant, conversationId: convId, action },
-      { headers: corsHeaders },
-    );
   } catch (err) {
     if (err instanceof SessionAuthError) {
       return Response.json(

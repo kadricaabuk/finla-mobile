@@ -1,4 +1,6 @@
 import { invalidateInvoiceCaches } from '@/lib/invoices-cache'
+import type { ChatMessageAction } from '@/types/chat-actions'
+import { asChatStreamLine } from '@/types/chat-stream'
 import {
   clearTokens,
   getTokens,
@@ -8,6 +10,9 @@ import {
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '')
 const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? ''
+
+/** Chat NDJSON ile birlikte aynı uç için JSON düşüşü (Accept). */
+export const CHAT_STREAM_ACCEPT_HEADER = 'application/x-ndjson, application/json;q=0.9'
 
 function assertConfig(): void {
   if (!API_BASE_URL || !ANON_KEY) {
@@ -20,7 +25,7 @@ function assertConfig(): void {
   }
 }
 
-function authHeaders(accessToken: string): Record<string, string> {
+function authHeaders(accessToken: string, extraHeaders?: Record<string, string>): Record<string, string> {
   return {
     'Content-Type': 'application/json',
     apikey: ANON_KEY,
@@ -28,6 +33,7 @@ function authHeaders(accessToken: string): Record<string, string> {
     // App-level access token is sent in a dedicated header.
     Authorization: `Bearer ${ANON_KEY}`,
     'x-finla-access-token': accessToken,
+    ...extraHeaders,
   }
 }
 
@@ -72,6 +78,9 @@ export function userFacingApiError(err: unknown): string {
   }
   if (m.includes('network request failed') || m.includes('failed to fetch') || m.includes('econnrefused')) {
     return 'Ağ bağlantısı kurulamadı. İnternetinizi kontrol edin.'
+  }
+  if (m.includes('akış') || m.includes('stream')) {
+    return 'Canlı yanıt alınamadı. Lütfen tekrar deneyin.'
   }
   return typeof err === 'string' ? err : err instanceof Error ? err.message : 'Beklenmeyen bir sorun oluştu.'
 }
@@ -186,6 +195,34 @@ export interface LoginResponse {
   expiresIn?: number
 }
 
+export interface UserProfile {
+  taxIDOrTRID: string
+  title: string
+  name: string
+  surname: string
+  registryNo?: string
+  mersisNo?: string
+  taxOffice?: string
+  fullAddress?: string
+  buildingName?: string
+  buildingNumber?: string
+  doorNumber?: string
+  town?: string
+  district?: string
+  city?: string
+  zipCode?: string
+  country?: string
+  phoneNumber?: string
+  faxNumber?: string
+  email?: string
+  webSite?: string
+  businessCenter?: string
+}
+
+export interface UserProfileResponse {
+  profile: UserProfile
+}
+
 /** Login — anon gateway + credentials body */
 export async function loginRequest(username: string, password: string): Promise<LoginResponse> {
   assertConfig()
@@ -207,6 +244,11 @@ export async function logoutRequest(accessToken: string): Promise<void> {
     body: JSON.stringify({}),
   })
   await parseJsonOrThrow(res)
+}
+
+/** Authenticated user profile from GIB session. */
+export async function getUserProfile(): Promise<UserProfileResponse> {
+  return callApi<UserProfileResponse>('profile', {})
 }
 
 /**
@@ -232,6 +274,171 @@ export async function callApi<T>(functionName: string, body: object): Promise<T>
     res = await doFetch(refreshed.accessToken)
   }
   return parseJsonOrThrow(res) as Promise<T>
+}
+
+export interface StreamChatHandlers {
+  onMeta?: (conversationId: string) => void
+  onDelta?: (text: string) => void
+  onTool?: (phase: 'start' | 'end', name: string) => void
+}
+
+/** Aynı task icinde sirayla gelen NDJSON'da react state batching yuzunden ara durumlar boyanmayabilir. */
+function yieldToUiForStreamStatus(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 40))
+}
+
+async function consumeChatNdjson(
+  res: Response,
+  handlers: StreamChatHandlers,
+): Promise<{ message: string; conversationId: string; action?: ChatMessageAction }> {
+  const reader = res.body?.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  let donePayload: {
+    message: string
+    conversationId: string
+    action?: ChatMessageAction
+  } | null = null
+
+  const handleEventAsync = async (raw: unknown): Promise<void> => {
+    const ev = asChatStreamLine(raw)
+    if (!ev) return
+    switch (ev.type) {
+      case 'meta':
+        handlers.onMeta?.(ev.conversationId)
+        await yieldToUiForStreamStatus()
+        break
+      case 'delta':
+        handlers.onDelta?.(ev.text)
+        break
+      case 'tool':
+        handlers.onTool?.(ev.phase, ev.name)
+        await yieldToUiForStreamStatus()
+        break
+      case 'error':
+        throw new Error(ev.message)
+      case 'done':
+        donePayload = {
+          message: ev.message,
+          conversationId: ev.conversationId,
+          action: ev.action ?? undefined,
+        }
+        break
+      default:
+        break
+    }
+  }
+
+  // RN runtimelarinda ReadableStream her zaman aktif olmayabiliyor.
+  // Reader yoksa tam metni alip yine NDJSON satirlarini parse ederek geriye uyum saglariz.
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const parts = buf.split('\n')
+      buf = parts.pop() ?? ''
+      for (const line of parts) {
+        const t = line.trim()
+        if (!t) continue
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(t) as unknown
+        } catch {
+          throw new Error('Canlı yanıt işlenirken bir sorun oluştu. Lütfen tekrar deneyin.')
+        }
+        await handleEventAsync(parsed)
+      }
+    }
+  } else {
+    buf = await res.text()
+  }
+
+  const tail = buf.trim()
+  if (tail && !reader) {
+    for (const line of tail.split('\n')) {
+      const t = line.trim()
+      if (!t) continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(t) as unknown
+      } catch {
+        throw new Error('Canlı yanıt işlenirken bir sorun oluştu. Lütfen tekrar deneyin.')
+      }
+      await handleEventAsync(parsed)
+    }
+  } else if (tail) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(tail) as unknown
+    } catch {
+      throw new Error('Canlı yanıt yarıda kesildi. Lütfen tekrar deneyin.')
+    }
+    await handleEventAsync(parsed)
+  }
+
+  if (!donePayload) {
+    throw new Error('Yanıt tamamlanamadı. Lütfen tekrar deneyin.')
+  }
+  return donePayload
+}
+
+/**
+ * Authenticated streaming chat (NDJSON). Falls back to normal JSON body if the function
+ * returns application/json (e.g. eski sürüm).
+ */
+export async function streamChat(
+  payload: { message: string; conversationId: string | null },
+  handlers: StreamChatHandlers = {},
+  options?: { signal?: AbortSignal },
+): Promise<{ message: string; conversationId: string; action?: ChatMessageAction }> {
+  assertConfig()
+  let tokens = await getTokens()
+  if (!tokens) throw new Error('Oturum bulunamadı. Lütfen tekrar giriş yapın.')
+
+  const body = JSON.stringify({
+    message: payload.message,
+    conversationId: payload.conversationId,
+    stream: true,
+  })
+
+  const doFetch = async (access: string) =>
+    fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: authHeaders(access, { Accept: CHAT_STREAM_ACCEPT_HEADER }),
+      body,
+      signal: options?.signal,
+    })
+
+  let res = await doFetch(tokens.accessToken)
+  if (res.status === 401) {
+    const refreshed = await refreshTokensLocked()
+    if (!refreshed) throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.')
+    res = await doFetch(refreshed.accessToken)
+  }
+
+  if (!res.ok) {
+    await parseJsonOrThrow(res)
+  }
+
+  const ct = (res.headers.get('content-type') ?? '').toLowerCase()
+  if (ct.includes('ndjson')) {
+    return consumeChatNdjson(res, handlers)
+  }
+
+  const json = (await parseJsonOrThrow(res)) as {
+    message?: string
+    conversationId?: string
+    action?: ChatMessageAction
+  }
+  if (typeof json.message !== 'string' || typeof json.conversationId !== 'string') {
+    throw new Error('Sunucu yanıtı beklenen biçimde değil.')
+  }
+  return {
+    message: json.message,
+    conversationId: json.conversationId,
+    action: json.action,
+  }
 }
 
 /** @deprecated use callApi */

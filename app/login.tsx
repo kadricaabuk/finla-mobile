@@ -12,8 +12,29 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { loginRequest } from '@/lib/supabase'
+import { loginRequest, userFacingApiError } from '@/lib/supabase'
 import { clearLegacyCredentials, saveTokens } from '@/lib/session'
+
+function userFacingLoginError(
+  errorCode?: 'MULTI_SESSION_PERSISTED' | 'BAD_CREDENTIALS' | 'GIB_TEMPORARY' | 'UNKNOWN',
+  rawError?: string,
+): string {
+  if (errorCode === 'BAD_CREDENTIALS') {
+    return 'Kullanıcı adı veya şifre hatalı görünüyor. Bilgilerinizi kontrol edip tekrar deneyin.'
+  }
+  if (errorCode === 'GIB_TEMPORARY') {
+    return 'GİB servisi şu anda geçici olarak yanıt veremiyor. Lütfen birkaç dakika sonra tekrar deneyin.'
+  }
+  const msg = (rawError ?? '').toLowerCase()
+  if (
+    msg.includes('unexpected token') ||
+    msg.includes('<html') ||
+    msg.includes('not valid json')
+  ) {
+    return 'GİB servisinden geçersiz yanıt alındı. Lütfen kısa bir süre sonra tekrar deneyin.'
+  }
+  return rawError?.trim() || 'Giriş sırasında beklenmeyen bir sorun oluştu.'
+}
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('')
@@ -41,7 +62,7 @@ export default function LoginScreen() {
           )
           return
         }
-        Alert.alert('Giriş Başarısız', res.error ?? 'Bilgilerinizi kontrol edin.')
+        Alert.alert('Giriş Başarısız', userFacingLoginError(res.error_code, res.error))
         return
       }
 
@@ -60,7 +81,7 @@ export default function LoginScreen() {
     } catch (err) {
       Alert.alert(
         'Bağlantı Hatası',
-        err instanceof Error ? err.message : 'Sunucuya ulaşılamadı.',
+        userFacingApiError(err),
       )
     } finally {
       setLoading(false)

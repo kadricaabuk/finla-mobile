@@ -38,6 +38,12 @@ interface SideMenuProps {
   activeConversationId?: string | null;
   /** Faturalarım ekranındayken liste satırı yalnızca menüyü kapatır. */
   activeScreen?: "chat" | "invoices";
+  userProfile?: {
+    taxIDOrTRID?: string;
+    title?: string;
+    name?: string;
+    surname?: string;
+  } | null;
 }
 
 function formatConvDate(iso: string): string {
@@ -67,6 +73,7 @@ export default function SideMenu({
   openingConversationId = null,
   activeConversationId = null,
   activeScreen = "chat",
+  userProfile = null,
 }: SideMenuProps) {
   const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -107,6 +114,17 @@ export default function SideMenu({
     }
   }, [isOpen, translateX, backdropOpacity]);
 
+  const profileDisplayName =
+    userProfile?.title?.trim() ||
+    [userProfile?.name, userProfile?.surname]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    username;
+  const profileSubLabel = userProfile?.taxIDOrTRID
+    ? `VKN/TCKN: ${userProfile.taxIDOrTRID}`
+    : "GİB Hesabı";
+
   return (
     <View
       style={StyleSheet.absoluteFillObject}
@@ -132,7 +150,7 @@ export default function SideMenu({
           style={styles.menuScroll}
           contentContainerStyle={[
             styles.menuScrollInner,
-            { paddingBottom: insets.bottom + 96 },
+            { paddingBottom: insets.bottom + 172 },
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -150,7 +168,9 @@ export default function SideMenu({
           <TouchableOpacity
             style={[
               styles.newChatBtn,
-              activeScreen === "chat" && styles.navBtnCurrent,
+              activeScreen === "chat" &&
+                !activeConversationId &&
+                styles.navBtnCurrent,
             ]}
             onPress={onNewChat}
             activeOpacity={0.7}
@@ -233,14 +253,17 @@ export default function SideMenu({
           <View style={styles.profileRow}>
             <View style={styles.avatar}>
               <Text style={styles.avatarInitial}>
-                {username.charAt(0).toUpperCase()}
+                {profileDisplayName.charAt(0).toUpperCase()}
               </Text>
             </View>
             <View style={styles.profileInfo}>
               <Text style={styles.profileName} numberOfLines={1}>
-                {username}
+                {profileDisplayName}
               </Text>
               <Text style={styles.profileSub}>GİB Hesabı</Text>
+              <Text style={styles.profileSub} numberOfLines={1}>
+                {profileSubLabel}
+              </Text>
             </View>
             <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
               <Ionicons name="log-out-outline" size={20} color="#888" />
@@ -418,6 +441,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   footer: {
+    backgroundColor: "#fff",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#E8E8E8",
     paddingHorizontal: 16,
@@ -426,6 +450,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    zIndex: 1000,
+    elevation: 24,
   },
   profileRow: {
     flexDirection: "row",

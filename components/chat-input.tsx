@@ -35,7 +35,7 @@ export default function ChatInput({
   return (
     <Animated.View style={[styles.container, animatedContainerStyle]}>
       <View style={styles.row}>
-        {onAttach ? (
+        {/* {onAttach ? (
           <TouchableOpacity
             style={styles.circleBtn}
             onPress={onAttach}
@@ -45,7 +45,7 @@ export default function ChatInput({
           </TouchableOpacity>
         ) : (
           <View style={styles.circleBtnGhost} pointerEvents="none" />
-        )}
+        )} */}
 
         <TextInput
           style={[styles.input, disabled && styles.inputDisabled]}

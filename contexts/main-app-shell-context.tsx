@@ -3,7 +3,12 @@ import SideMenu from "@/components/side-menu";
 import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
-import { getUserProfile, type UserProfile } from "@/lib/supabase";
+import {
+  getFeaturesConfig,
+  getUserProfile,
+  type UserProfile,
+} from "@/lib/supabase";
+import { DEFAULT_FEATURES, type FinlaFeatures } from "@/types/features";
 import type { PropsWithChildren } from "react";
 import {
   createContext,
@@ -25,6 +30,7 @@ export interface MainShellSideMenuBindings {
 
 interface MainAppShellContextValue {
   sessionLabel: string;
+  features: FinlaFeatures;
   openMenu: () => void;
   closeMenu: () => void;
   registerSideMenu: (
@@ -60,6 +66,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   const [menuRegistration, setMenuRegistration] =
     useState<ShellMenuRegistration | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [features, setFeatures] = useState<FinlaFeatures>(DEFAULT_FEATURES);
 
   const fetchUserProfile = useCallback(async () => {
     try {
@@ -70,13 +77,23 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const fetchFeatures = useCallback(async () => {
+    try {
+      const res = await getFeaturesConfig();
+      setFeatures(res.features);
+    } catch {
+      setFeatures(DEFAULT_FEATURES);
+    }
+  }, []);
+
   useEffect(() => {
     if (!bootstrapped || !sessionLabel) {
       setUserProfile(null);
+      setFeatures(DEFAULT_FEATURES);
       return;
     }
-    void fetchUserProfile();
-  }, [bootstrapped, fetchUserProfile, sessionLabel]);
+    void Promise.all([fetchUserProfile(), fetchFeatures()]);
+  }, [bootstrapped, fetchFeatures, fetchUserProfile, sessionLabel]);
 
   const registerSideMenu = useCallback(
     (owner: string, bindings: MainShellSideMenuBindings) => {
@@ -109,6 +126,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   const ctx = useMemo<MainAppShellContextValue>(
     () => ({
       sessionLabel: sessionLabel!,
+      features,
       openMenu,
       closeMenu,
       registerSideMenu,
@@ -117,6 +135,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     }),
     [
       closeMenu,
+      features,
       openMenu,
       refreshList,
       registerSideMenu,
@@ -157,6 +176,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
         activeConversationId={bindings.activeConversationId}
         activeScreen={bindings.activeScreen}
         userProfile={userProfile}
+        features={features}
       />
     </MainAppShellContext.Provider>
   );

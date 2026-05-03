@@ -1,15 +1,15 @@
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import {
+  invoiceRangeForPreset,
+  type InvoiceDatePreset,
+  type InvoiceDateRange,
+} from "@/lib/invoice-date-presets";
+import {
   getInvoiceCacheEntry,
   hydrateInvoiceCache,
   INVOICES_CACHE_TTL_MS,
   putInvoiceCacheEntry,
 } from "@/lib/invoices-cache";
-import {
-  invoiceRangeForPreset,
-  type InvoiceDatePreset,
-  type InvoiceDateRange,
-} from "@/lib/invoice-date-presets";
 import { getTokens } from "@/lib/session";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
@@ -32,9 +32,7 @@ export function useInvoicesScreen(options?: {
   }>();
 
   const [preset, setPreset] = useState<InvoiceDatePreset>("bu_ay");
-  const [customRange, setCustomRange] = useState<InvoiceDateRange | null>(
-    null,
-  );
+  const [customRange, setCustomRange] = useState<InvoiceDateRange | null>(null);
   const [chatFilterInfoOpen, setChatFilterInfoOpen] = useState(false);
   const [chatFilters, setChatFilters] = useState<{
     customerName?: string;

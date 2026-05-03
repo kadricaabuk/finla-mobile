@@ -61,6 +61,7 @@ finla/
 │   │   ├── chat/                  # Claude AI orchestrator + action routing
 │   │   ├── conversations/         # Sohbet listesi + mesaj yükleme
 │   │   ├── invoices/              # Fatura sorgulama + invoice_facts upsert
+│   │   ├── excel-export/          # Fatura listesi → .xlsx + Storage signed URL
 │   │   ├── login/                 # GİB oturum → custom JWT üretimi
 │   │   ├── logout/                # Token geçersizleştirme
 │   │   ├── invoice-detail/        # Tekil fatura detayı

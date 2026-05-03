@@ -3,7 +3,8 @@ export interface ChatMessageAction {
     | "open_invoices"
     | "open_invoice_detail"
     | "open_invoice_preview"
-    | "open_sign_otp";
+    | "open_sign_otp"
+    | "open_excel_export";
   label: string;
   filter?: {
     startDate: string;
@@ -25,6 +26,12 @@ export interface ChatMessageAction {
   sign_otp?: {
     draftUuid: string;
     phoneMasked: string;
+  };
+  excel_export?: {
+    download_url: string;
+    file_name: string;
+    row_count: number;
+    expires_in_seconds?: number;
   };
 }
 

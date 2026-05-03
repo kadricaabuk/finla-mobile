@@ -59,6 +59,8 @@ function toolStatusText(rawName: string): string {
       return "SMS kodu doğrulanıyor…";
     case "confirm_invoice_issue":
       return "Fatura kesiliyor…";
+    case "export_invoices_excel":
+      return "Excel dosyası oluşturuluyor…";
     default:
       return "İşleniyor…";
   }

@@ -1,3 +1,4 @@
+import { loadFeatureFlags } from '../_shared/feature-config.ts'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
 import {
@@ -13,12 +14,13 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 )
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
 
   try {
     const username = await getSubjectFromAuthHeader(req)
+    const features = await loadFeatureFlags()
     const body = await req.json() as {
       startDate?: string
       endDate?: string
@@ -30,6 +32,19 @@ Deno.serve(async (req) => {
     }
     const { startDate, endDate, customerName, amountGte, amountEq } = body
     const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
+
+    if (direction === 'outgoing' && !features.outgoingInvoices) {
+      return Response.json(
+        { error: 'Giden fatura listesi bu sürümde kapalı.' },
+        { status: 403, headers: corsHeaders },
+      )
+    }
+    if (direction === 'incoming' && !features.incomingInvoices) {
+      return Response.json(
+        { error: 'Gelen fatura listesi bu sürümde kapalı.' },
+        { status: 403, headers: corsHeaders },
+      )
+    }
 
     if (!startDate || !endDate) {
       return Response.json(

@@ -17,11 +17,21 @@ import {
   mapInvoicesToFacts,
   mergeGibUserDataPatch,
 } from "../_shared/gib.ts";
+import { createInvoicesExcelExport } from "../_shared/invoices-excel-export.ts";
+import {
+  featureFlags,
+  loadFeatureFlags,
+  type FinlaFeatures,
+} from "../_shared/feature-config.ts";
+import {
+  allowedToolNames,
+  filterToolsWithEphemeralPromptCacheLast,
+} from "../_shared/feature-tools.ts";
 import {
   getSubjectFromAuthHeader,
   SessionAuthError,
 } from "../_shared/session-auth.ts";
-import { SYSTEM_PROMPT, TOOLS } from "../_shared/tools.ts";
+import { assembleSystemPrompt, TOOLS } from "../_shared/tools.ts";
 import { normalizeTurkish } from "../_shared/turkish.ts";
 import {
   clientWantsNdjsonStream,
@@ -34,6 +44,17 @@ import type {
   InvoiceSearchFilters,
   PendingInvoiceState,
 } from "./types.ts";
+
+function getActiveFeatures(): FinlaFeatures {
+  return featureFlags();
+}
+
+function anthropicToolsForChat(): Anthropic.Tool[] {
+  return filterToolsWithEphemeralPromptCacheLast(
+    TOOLS,
+    allowedToolNames(getActiveFeatures()),
+  );
+}
 
 const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
@@ -102,6 +123,19 @@ function resolveDateRangeFromText(
     const day = parseTrDate(explicit[1]);
     if (day)
       return { startDate: formatTrDate(day), endDate: formatTrDate(day) };
+  }
+
+  // "son 1 ay", "son bir ay"
+  if (
+    /son\s+(?:bir\s+)?1\s+ay\b/.test(lower.replace(/\s+/g, " ")) ||
+    lower.includes("son bir ay") ||
+    lower.includes("son 1 aylık") ||
+    lower.includes("son bir aylık")
+  ) {
+    const end = today;
+    const start = new Date(today);
+    start.setUTCMonth(start.getUTCMonth() - 1);
+    return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
   }
 
   if (
@@ -175,8 +209,18 @@ function shouldOfferInvoicesAction(
   userMessage: string,
   usedTools: Set<string>,
 ): boolean {
-  if (usedTools.has("list_invoices")) return true;
-  if (usedTools.has("list_invoices_received")) return true;
+  const f = getActiveFeatures();
+  if (!f.outgoingInvoices && !f.incomingInvoices) return false;
+  if (
+    f.outgoingInvoices && usedTools.has("list_invoices")
+  ) {
+    return true;
+  }
+  if (
+    f.incomingInvoices && usedTools.has("list_invoices_received")
+  ) {
+    return true;
+  }
   const lower = userMessage.toLocaleLowerCase("tr-TR");
   return (
     (lower.includes("fatura") || lower.includes("liste")) &&
@@ -300,6 +344,18 @@ function persistableAction(
       },
     };
   }
+  if (action.type === "open_excel_export") {
+    return {
+      type: action.type,
+      label: action.label,
+      excel_export: {
+        file_name: action.excel_export?.file_name ?? "finla-export.xlsx",
+        row_count: typeof action.excel_export?.row_count === "number"
+          ? action.excel_export.row_count
+          : 0,
+      },
+    };
+  }
   try {
     return JSON.parse(JSON.stringify(action)) as Record<string, unknown>;
   } catch {
@@ -316,6 +372,8 @@ function assistantFallbackForAction(action: ChatAction | null): string {
       return "Fatura listesi hazır — alttaki düğmeyle ekranı açabilirsin.";
     case "open_invoice_detail":
       return "Seçilen fatura için detay düğmesine dokunabilirsin.";
+    case "open_excel_export":
+      return "Excel dosyan hazır — alttaki düğmeyle indirip paylaşabilirsin.";
     default:
       return "";
   }
@@ -368,6 +426,12 @@ async function executeTool(
   userMessage: string,
   conversationId: string,
 ): Promise<unknown> {
+  const active = getActiveFeatures();
+  const allowedNames = allowedToolNames(active);
+  if (!allowedNames.has(toolName)) {
+    throw new Error("Bu özellik şu anda uygulamada kapalı.");
+  }
+
   const toIsoDate = (trDate: string): string => {
     const m = trDate.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     if (!m) throw new Error("Tarih formatı GG/AA/YYYY olmalıdır.");
@@ -830,6 +894,41 @@ async function executeTool(
       };
     }
 
+    case "export_invoices_excel": {
+      const range = resolveDateRange(input, userMessage, "month");
+      if (!range) throw new Error("Tarih aralığı belirlenemedi.");
+      let direction: "outgoing" | "incoming" = "outgoing";
+      if (input.direction === "incoming") {
+        direction = "incoming";
+      } else if (input.direction !== "outgoing") {
+        const n = normalizeTurkish(userMessage);
+        if (
+          /\bgelen\b/.test(n) ||
+          /\bbana\s+kesilen\b/.test(n)
+        ) {
+          direction = "incoming";
+        }
+      }
+      if (direction === "outgoing" && !active.outgoingInvoices) {
+        throw new Error("Giden fatura dışa aktarma kapalı.");
+      }
+      if (direction === "incoming" && !active.incomingInvoices) {
+        throw new Error("Gelen fatura dışa aktarma kapalı.");
+      }
+      return await createInvoicesExcelExport({
+        supabase,
+        username,
+        startDateTr: range.startDate,
+        endDateTr: range.endDate,
+        direction,
+        filters: {
+          customerName: filters.customerName,
+          amountGte: filters.amountGte,
+          amountEq: filters.amountEq,
+        },
+      });
+    }
+
     case "cancel_invoice":
       return faturaCancelInvoice(
         username,
@@ -844,36 +943,63 @@ async function executeTool(
 
 const MAX_AGENT_ROUNDS = 28;
 
-/** Same contract string as embedded in assistant loop (YAML-like rules for Claude output). */
-const RESPONSE_CONTRACT_AGENT = `Yanit stili:
-- Konusma dili kullan; rapor/excel dili kullanma.
-- Zorunlu sabit basliklar ("Istek", "Sonuc", "Tarih Araligi", "Sonraki Adim") kullanma.
-- Gerekirse tarihi cumle icinde dogalca belirt.
-- Tutar/KDV gibi sayisal degerleri sadece arac sonucundan kullan; tahmin etme.
-- Markdown tablo kullanma; gerekiyorsa kisa madde listesi kullan.
-- Kullanici "bu ay", "ayin basindan beri", "dun", "gecen hafta" derse tarih sormadan ilgili araci cagir.
-- Cevabi kisa tut (genelde 2-5 cumle).
+function assembleResponseContractAgent(f: FinlaFeatures): string {
+  const lines: string[] = [
+    `Yanit stili:`,
+    `- Konusma dili kullan; rapor/excel dili kullanma.`,
+    `- Zorunlu sabit basliklar ("Istek", "Sonuc", "Tarih Araligi", "Sonraki Adim") kullanma.`,
+    `- Gerekirse tarihi cumle icinde dogalca belirt.`,
+    `- Tutar/KDV gibi sayisal degerleri sadece arac sonucundan kullan; tahmin etme.`,
+    `- Markdown tablo kullanma; gerekiyorsa kisa madde listesi kullan.`,
+    `- Kullanici "bu ay", "ayin basindan beri", "dun", "gecen hafta" derse tarih sormadan ilgili araci cagir.`,
+    `- Cevabi kisa tut (genelde 2-5 cumle).`,
+    ``,
+    `Fatura arama/filtreleme:`,
+  ];
+  if (f.outgoingInvoices) {
+    lines.push(
+      `- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").`,
+    );
+  }
+  if (f.incomingInvoices) {
+    lines.push(
+      `- list_invoices_received (gelen) icin de bos sonucta tarih ve filtreleri belirt; kesilen faturalarla karistirma.`,
+    );
+  }
+  if (f.outgoingInvoices || f.incomingInvoices) {
+    lines.push(
+      `- Kullanici excel, csv, xlsx veya "disari aktar" isterse export_invoices_excel aracini cagir; gelen/kesilen ayrimi icin direction kullan.`,
+    );
+    lines.push(
+      `- Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.`,
+    );
+  }
+  if (f.profile) {
+    lines.push(
+      `- Kullanici "profilim", "firma bilgilerim", "kullanici bilgilerim", "bilgilerimi getir" derse mutlaka get_user_profile aracini cagir.`,
+    );
+  }
+  lines.push(
+    ``,
+    `Hata yonetimi (arac sonucunda "error_code" varsa):`,
+    `- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.`,
+    `- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.`,
+    `- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.`,
+    `- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.`,
+    `- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.`,
+    `- Hata sonrasi ne yapilabilecegini mutlaka belirt; "tekrar deneyin" yerine somut adim oner.`,
+  );
 
-Fatura arama/filtreleme:
-- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").
-- list_invoices_received (gelen) icin de ayni sekilde bos sonucta tarih ve filtreleri belirt; kesilen faturalarla karistirma.
-- Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.
-- Kullanici "profilim", "firma bilgilerim", "kullanici bilgilerim", "bilgilerimi getir" derse mutlaka get_user_profile aracini cagir.
-
-Hata yonetimi (arac sonucunda "error_code" varsa):
-- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.
-- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.
-- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.
-- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.
-- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.
-- Hata sonrasi ne yapilabilecegini mutlaka belirt; "tekrar deneyin" yerine somut adim oner.`;
+  return lines.join("\n");
+}
 
 function buildDynamicSystemPromptForAgent(): string {
-  return `${SYSTEM_PROMPT}
+  const f = getActiveFeatures();
+  return `${assembleSystemPrompt(f)}
 
 Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
 Saat dilimi: ${ISTANBUL_TZ}
-${RESPONSE_CONTRACT_AGENT}`;
+${assembleResponseContractAgent(f)}`;
 }
 
 type AgentLoopAccumulator = {
@@ -883,6 +1009,12 @@ type AgentLoopAccumulator = {
   latestInvoiceActionPayload: InvoiceDetailPayload | null;
   lastListInvoicesInput: Record<string, unknown> | null;
   lastListInvoicesReceivedInput: Record<string, unknown> | null;
+  lastExportExcelPayload: {
+    download_url: string;
+    file_name: string;
+    row_count: number;
+    expires_in_seconds: number;
+  } | null;
 };
 
 async function runAnthropicToolLoop(
@@ -899,6 +1031,8 @@ async function runAnthropicToolLoop(
   let latestInvoiceActionPayload: InvoiceDetailPayload | null = null;
   let lastListInvoicesInput: Record<string, unknown> | null = null;
   let lastListInvoicesReceivedInput: Record<string, unknown> | null = null;
+  let lastExportExcelPayload: AgentLoopAccumulator["lastExportExcelPayload"] =
+    null;
 
   const anthropicRoundParams =
     (): Anthropic.MessageCreateParamsNonStreaming => ({
@@ -912,16 +1046,7 @@ async function runAnthropicToolLoop(
           cache_control: { type: "ephemeral" },
         },
       ],
-      tools: TOOLS.map((t, i) =>
-        i === TOOLS.length - 1
-          ? {
-            ...t,
-            cache_control: {
-              type: "ephemeral",
-            } as Anthropic.CacheControlEphemeral,
-          }
-          : t,
-      ),
+      tools: anthropicToolsForChat(),
       messages: claudeMessages,
     });
 
@@ -993,7 +1118,8 @@ async function runAnthropicToolLoop(
             );
             if (
               block.name === "invoice_totals" ||
-              block.name === "latest_invoice"
+              block.name === "latest_invoice" ||
+              block.name === "export_invoices_excel"
             ) {
               usedFinanceTool = true;
             }
@@ -1013,6 +1139,30 @@ async function runAnthropicToolLoop(
             if (block.name === "list_invoices_received") {
               lastListInvoicesReceivedInput =
                 block.input as Record<string, unknown>;
+            }
+            if (block.name === "export_invoices_excel" && result !== null &&
+              typeof result === "object"
+            ) {
+              const r = result as Record<string, unknown>;
+              if (
+                typeof r.download_url === "string" &&
+                typeof r.file_name === "string"
+              ) {
+                lastExportExcelPayload = {
+                  download_url: r.download_url,
+                  file_name: r.file_name,
+                  row_count:
+                    typeof r.row_count === "number" &&
+                      Number.isFinite(r.row_count)
+                      ? r.row_count
+                      : 0,
+                  expires_in_seconds:
+                    typeof r.expires_in_seconds === "number" &&
+                      Number.isFinite(r.expires_in_seconds)
+                      ? r.expires_in_seconds
+                      : 300,
+                };
+              }
             }
             usedToolNames.add(block.name);
             content = JSON.stringify(result);
@@ -1052,6 +1202,7 @@ async function runAnthropicToolLoop(
     latestInvoiceActionPayload,
     lastListInvoicesInput,
     lastListInvoicesReceivedInput,
+    lastExportExcelPayload,
   };
 }
 
@@ -1065,6 +1216,7 @@ async function finalizeAgentAssistant(opts: {
   latestInvoiceActionPayload: InvoiceDetailPayload | null;
   lastListInvoicesInput: Record<string, unknown> | null;
   lastListInvoicesReceivedInput: Record<string, unknown> | null;
+  lastExportExcelPayload: AgentLoopAccumulator["lastExportExcelPayload"];
 }): Promise<{ finalAssistant: string; action: ChatAction | null }> {
   const {
     convId,
@@ -1076,10 +1228,13 @@ async function finalizeAgentAssistant(opts: {
     latestInvoiceActionPayload,
     lastListInvoicesInput,
     lastListInvoicesReceivedInput,
+    lastExportExcelPayload,
   } = opts;
+  const f = getActiveFeatures();
 
   let trimmedAssistant = assistantText;
   if (
+    f.profile &&
     !usedToolNames.has("get_user_profile") &&
     isUserProfileIntent(userMessage)
   ) {
@@ -1140,13 +1295,33 @@ async function finalizeAgentAssistant(opts: {
   } | null;
 
   let action: ChatAction | null = null;
+  if (
+    lastExportExcelPayload &&
+    usedToolNames.has("export_invoices_excel")
+  ) {
+    action = {
+      type: "open_excel_export",
+      label: `Excel indir (${lastExportExcelPayload.row_count} fatura)`,
+      excel_export: {
+        download_url: lastExportExcelPayload.download_url,
+        file_name: lastExportExcelPayload.file_name,
+        row_count: lastExportExcelPayload.row_count,
+        expires_in_seconds: lastExportExcelPayload.expires_in_seconds,
+      },
+    };
+  }
+
   const msgNorm = normalizeTurkish(String(userMessage ?? ""));
   const wantsPreviewOrDownload =
     /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
     /\b(onizle|pdf|indir|goster|goruntule|tam\s*fatura|paylas)\b/i.test(
       msgNorm,
     );
-  if (wantsPreviewOrDownload || usedToolNames.has("create_invoice")) {
+  if (
+    f.outgoingInvoices &&
+    !action &&
+    (wantsPreviewOrDownload || usedToolNames.has("create_invoice"))
+  ) {
     if (pending?.draft?.uuid) {
       try {
         const html =
@@ -1213,7 +1388,11 @@ async function finalizeAgentAssistant(opts: {
         console.error("latest_invoice preview html failed", err);
       }
     }
-  } else if (latestInvSnap?.invoice_uuid) {
+  } else if (
+    f.outgoingInvoices &&
+    !action &&
+    latestInvSnap?.invoice_uuid
+  ) {
     let detail: InvoiceDetailPayload = latestInvSnap;
     if (
       last?.uuid &&
@@ -1238,8 +1417,32 @@ async function finalizeAgentAssistant(opts: {
       label: "Detayi Gor",
       invoice: detail,
     };
-  } else if (shouldOfferInvoicesAction(userMessage, usedToolNames)) {
-    const incomingPreferred = usedToolNames.has("list_invoices_received");
+  } else if (!action &&
+    shouldOfferInvoicesAction(userMessage, usedToolNames)
+  ) {
+    const normMsg = normalizeTurkish(userMessage);
+    const usedReceivedList =
+      f.incomingInvoices &&
+      usedToolNames.has("list_invoices_received");
+    const usedOutgoingList =
+      f.outgoingInvoices && usedToolNames.has("list_invoices");
+    let incomingPreferred = usedReceivedList;
+    if (usedOutgoingList) incomingPreferred = false;
+    const msgSuggestsIncoming =
+      /\bgelen\b/.test(normMsg) || /\bbana\s+kesilen\b/.test(normMsg);
+    if (!usedOutgoingList && f.incomingInvoices && msgSuggestsIncoming) {
+      incomingPreferred = true;
+    }
+    if (
+      !usedOutgoingList &&
+      !usedReceivedList
+    ) {
+      if (!f.outgoingInvoices && f.incomingInvoices) {
+        incomingPreferred = true;
+      } else if (f.outgoingInvoices && !f.incomingInvoices) {
+        incomingPreferred = false;
+      }
+    }
     const listInput: Record<string, unknown> = incomingPreferred
       ? (lastListInvoicesReceivedInput ?? {})
       : (lastListInvoicesInput ?? {});
@@ -1266,7 +1469,11 @@ async function finalizeAgentAssistant(opts: {
         listInput.customer_name.trim()
         ? listInput.customer_name.trim()
         : undefined;
-    if (parsedRange) {
+    if (
+      parsedRange &&
+      !(incomingPreferred && !f.incomingInvoices) &&
+      !(!incomingPreferred && !f.outgoingInvoices)
+    ) {
       action = {
         type: "open_invoices",
         label: incomingPreferred ? "Gelen faturaları gör" : "Faturalari Gor",
@@ -1299,6 +1506,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const username = await getSubjectFromAuthHeader(req);
+    await loadFeatureFlags();
     const body = await req.json() as {
       message?: string;
       conversationId?: string | null;
@@ -1571,6 +1779,7 @@ Deno.serve(async (req: Request) => {
         latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
         lastListInvoicesInput: acc.lastListInvoicesInput,
         lastListInvoicesReceivedInput: acc.lastListInvoicesReceivedInput,
+        lastExportExcelPayload: acc.lastExportExcelPayload,
       });
       await supabase.from("messages").insert({
         conversation_id: cid,
@@ -1625,6 +1834,7 @@ Deno.serve(async (req: Request) => {
           latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
           lastListInvoicesInput: acc.lastListInvoicesInput,
           lastListInvoicesReceivedInput: acc.lastListInvoicesReceivedInput,
+          lastExportExcelPayload: acc.lastExportExcelPayload,
         });
 
         await supabase.from("messages").insert({

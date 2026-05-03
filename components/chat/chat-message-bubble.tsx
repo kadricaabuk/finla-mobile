@@ -1,4 +1,5 @@
 import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
+import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
@@ -22,6 +23,8 @@ interface ChatMessageBubbleProps {
   onOpenInvoiceDetail: (action: ChatMessage["action"]) => void;
   onOpenInvoicePreview: (action: ChatMessage["action"]) => void;
   onConfirmPreview: (draftUuid: string | undefined) => void;
+  /** Excel çıktısı: imzalı URL indir ve paylaş */
+  onShareExcelExport?: (action: ChatMessage["action"]) => void;
 }
 
 export function ChatMessageBubble({
@@ -32,7 +35,9 @@ export function ChatMessageBubble({
   onOpenInvoiceDetail,
   onOpenInvoicePreview,
   onConfirmPreview,
+  onShareExcelExport,
 }: ChatMessageBubbleProps) {
+  const { features } = useMainAppShell();
   const pending = Boolean(streamPending && msg.role === "assistant");
   const showStreamStatusBubble =
     msg.role === "assistant" &&
@@ -81,7 +86,10 @@ export function ChatMessageBubble({
           <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
         </View>
       )}
-      {msg.role === "assistant" && msg.action?.type === "open_invoices" && (
+      {msg.role === "assistant" && msg.action?.type === "open_invoices" &&
+        (msg.action?.filter?.direction === "incoming"
+          ? features.incomingInvoices
+          : features.outgoingInvoices) && (
         <TouchableOpacity
           style={styles.actionButton}
           activeOpacity={0.8}
@@ -112,7 +120,8 @@ export function ChatMessageBubble({
           </Text>
         </TouchableOpacity>
       )}
-      {msg.role === "assistant" &&
+      {features.outgoingInvoices &&
+        msg.role === "assistant" &&
         msg.action?.type === "open_invoice_detail" &&
         msg.action.invoice && (
           <TouchableOpacity
@@ -125,7 +134,34 @@ export function ChatMessageBubble({
             </Text>
           </TouchableOpacity>
         )}
-      {msg.role === "assistant" &&
+      {(features.outgoingInvoices || features.incomingInvoices) &&
+        msg.role === "assistant" &&
+        msg.action?.type === "open_excel_export" &&
+        msg.action.excel_export?.download_url &&
+        typeof onShareExcelExport === "function" && (
+          <TouchableOpacity
+            style={styles.actionButton}
+            activeOpacity={0.8}
+            onPress={() => onShareExcelExport(msg.action)}
+          >
+            <Text style={styles.actionButtonText}>
+              {(msg.action.label?.trim() ?? "").startsWith("Excel")
+                ? (msg.action.label ?? "Excel")
+                : msg.action.label || "Excel'i indir / paylaş"}
+            </Text>
+          </TouchableOpacity>
+        )}
+      {(features.outgoingInvoices || features.incomingInvoices) &&
+        msg.role === "assistant" &&
+        msg.action?.type === "open_excel_export" &&
+        !msg.action.excel_export?.download_url && (
+          <Text style={styles.expiredHint} numberOfLines={2}>
+            Excel bağlantısının süresi dolmuş olabilir; sohbette yeniden
+            isteyebilirsin.
+          </Text>
+        )}
+      {features.outgoingInvoices &&
+        msg.role === "assistant" &&
         msg.action?.type === "open_invoice_preview" &&
         (msg.action.preview?.html || msg.action.preview?.uuid) && (
           <View style={styles.actionRow}>
@@ -237,5 +273,12 @@ const styles = StyleSheet.create({
     color: "#000",
     fontSize: 13,
     fontWeight: "700",
+  },
+  expiredHint: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#777",
+    fontStyle: "italic",
   },
 });

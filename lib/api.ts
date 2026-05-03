@@ -1,5 +1,6 @@
 import { invalidateInvoiceCaches } from '@/lib/invoices-cache'
 import type { ChatMessageAction } from '@/types/chat-actions'
+import type { FinlaFeatures } from '@/types/features'
 import { asChatStreamLine } from '@/types/chat-stream'
 import {
   clearTokens,
@@ -223,6 +224,10 @@ export interface UserProfileResponse {
   profile: UserProfile
 }
 
+export interface FeaturesResponse {
+  features: FinlaFeatures
+}
+
 /** Login — anon gateway + credentials body */
 export async function loginRequest(username: string, password: string): Promise<LoginResponse> {
   assertConfig()
@@ -249,6 +254,30 @@ export async function logoutRequest(accessToken: string): Promise<void> {
 /** Authenticated user profile from GIB session. */
 export async function getUserProfile(): Promise<UserProfileResponse> {
   return callApi<UserProfileResponse>('profile', {})
+}
+
+/** Runtime feature flags (source-of-truth: Supabase DB). */
+export async function getFeaturesConfig(): Promise<FeaturesResponse> {
+  return callApi<FeaturesResponse>('features', {})
+}
+
+/** Fatura listesi Excel (.xlsx) — Edge Function `excel-export` */
+export interface ExcelExportResponse {
+  download_url: string
+  file_name: string
+  row_count: number
+  expires_in_seconds: number
+}
+
+export async function exportInvoicesExcel(body: {
+  startDate: string
+  endDate: string
+  direction?: 'outgoing' | 'incoming'
+  customerName?: string
+  amountGte?: number
+  amountEq?: number
+}): Promise<ExcelExportResponse> {
+  return callApi<ExcelExportResponse>('excel-export', body)
 }
 
 /** GİB portal profil kaydını günceller; yalnızca gönderilen alanlar değişir. */

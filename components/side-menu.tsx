@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { FinlaFeatures } from "@/types/features";
 
 const MENU_WIDTH = 280;
 
@@ -45,6 +46,7 @@ interface SideMenuProps {
     name?: string;
     surname?: string;
   } | null;
+  features: FinlaFeatures;
 }
 
 function formatConvDate(iso: string): string {
@@ -76,6 +78,7 @@ export default function SideMenu({
   activeConversationId = null,
   activeScreen = "chat",
   userProfile = null,
+  features,
 }: SideMenuProps) {
   const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -183,62 +186,69 @@ export default function SideMenu({
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.navBtn,
-              activeScreen === "invoices" && styles.navBtnCurrent,
-            ]}
-            onPress={() => {
-              if (activeScreen === "invoices") {
+          {features.outgoingInvoices ? (
+            <TouchableOpacity
+              style={[
+                styles.navBtn,
+                activeScreen === "invoices" && styles.navBtnCurrent,
+              ]}
+              onPress={() => {
+                if (activeScreen === "invoices") {
+                  onClose();
+                  return;
+                }
                 onClose();
-                return;
-              }
-              onClose();
-              router.push("/invoices");
-            }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="document-text-outline" size={18} color="#000" />
-            <Text style={styles.navBtnLabel}>Faturalarım</Text>
-          </TouchableOpacity>
+                router.push("/invoices");
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="document-text-outline" size={18} color="#000" />
+              <Text style={styles.navBtnLabel}>Faturalarım</Text>
+            </TouchableOpacity>
+          ) : null}
 
-          <TouchableOpacity
-            style={[
-              styles.navBtn,
-              activeScreen === "incoming_invoices" && styles.navBtnCurrent,
-            ]}
-            onPress={() => {
-              if (activeScreen === "incoming_invoices") {
+          {features.incomingInvoices ? (
+            <TouchableOpacity
+              style={[
+                styles.navBtn,
+                activeScreen === "incoming_invoices" &&
+                  styles.navBtnCurrent,
+              ]}
+              onPress={() => {
+                if (activeScreen === "incoming_invoices") {
+                  onClose();
+                  return;
+                }
                 onClose();
-                return;
-              }
-              onClose();
-              router.push("/incoming-invoices");
-            }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="download-outline" size={18} color="#000" />
-            <Text style={styles.navBtnLabel}>Gelen faturalar</Text>
-          </TouchableOpacity>
+                router.push("/incoming-invoices");
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="download-outline" size={18} color="#000" />
+              <Text style={styles.navBtnLabel}>Gelen faturalar</Text>
+            </TouchableOpacity>
+          ) : null}
 
-          <TouchableOpacity
-            style={[
-              styles.navBtn,
-              activeScreen === "profile" && styles.navBtnCurrent,
-            ]}
-            onPress={() => {
-              if (activeScreen === "profile") {
+          {features.profile ? (
+            <TouchableOpacity
+              style={[
+                styles.navBtn,
+                activeScreen === "profile" && styles.navBtnCurrent,
+              ]}
+              onPress={() => {
+                if (activeScreen === "profile") {
+                  onClose();
+                  return;
+                }
                 onClose();
-                return;
-              }
-              onClose();
-              router.push("/profile");
-            }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="person-outline" size={18} color="#000" />
-            <Text style={styles.navBtnLabel}>Profil</Text>
-          </TouchableOpacity>
+                router.push("/profile");
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="person-outline" size={18} color="#000" />
+              <Text style={styles.navBtnLabel}>Profil</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {onOpenConversation ? (
             <View style={styles.convSection}>

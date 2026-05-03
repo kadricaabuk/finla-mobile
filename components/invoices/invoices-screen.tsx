@@ -1,11 +1,11 @@
 import { InvoiceFiltersBar } from "@/components/invoices/invoice-filters-bar";
 import { InvoiceRowCard } from "@/components/invoices/invoice-row-card";
 import { useInvoicesScreen } from "@/components/invoices/use-invoices-screen";
-import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import type { InvoiceDatePreset } from "@/lib/invoice-date-presets";
+import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo } from "react";
 import {
@@ -70,11 +70,7 @@ export default function InvoicesScreen({
       onNewChat: handleDrawerNewChat,
       onOpenConversation: handleDrawerOpenConversation,
     }),
-    [
-      handleDrawerNewChat,
-      handleDrawerOpenConversation,
-      invoiceDirection,
-    ],
+    [handleDrawerNewChat, handleDrawerOpenConversation, invoiceDirection],
   );
 
   useRegisterMainShellSideMenu(shellOwnerId, sideMenuBindings);

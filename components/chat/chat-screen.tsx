@@ -8,9 +8,12 @@ import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
-import { useMemo } from "react";
+import { shareExcelDownload } from "@/lib/excel-share";
+import type { ChatMessageAction } from "@/types/chat-actions";
+import { useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -54,6 +57,25 @@ export default function ChatScreen() {
     handleOpenConversation,
     dismissSignOtp,
   } = useChatScreen();
+
+  const handleShareExcelExport = useCallback(
+    async (action: ChatMessageAction | undefined) => {
+      const url = action?.excel_export?.download_url;
+      const name = action?.excel_export?.file_name;
+      if (!url || !name) {
+        Alert.alert(
+          "Excel",
+          "İndirilecek bağlantı bulunamadı. Tekrar excel istemeyi dene.",
+        );
+        return;
+      }
+      const res = await shareExcelDownload(url, name);
+      if (!res.ok) {
+        Alert.alert("Excel", res.message);
+      }
+    },
+    [],
+  );
 
   const sideMenuBindings = useMemo(
     () => ({
@@ -120,6 +142,7 @@ export default function ChatScreen() {
                   setPreviewAction(action ?? null)
                 }
                 onConfirmPreview={handleConfirmFromPreview}
+                onShareExcelExport={handleShareExcelExport}
               />
             ))}
 

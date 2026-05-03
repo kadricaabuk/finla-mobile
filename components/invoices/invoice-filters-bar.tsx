@@ -1,7 +1,7 @@
 import {
-  INVOICE_DATE_PRESETS,
-  type InvoiceDatePreset,
-  type InvoiceDateRange,
+    INVOICE_DATE_PRESETS,
+    type InvoiceDatePreset,
+    type InvoiceDateRange,
 } from "@/lib/invoice-date-presets";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
@@ -69,14 +69,13 @@ export function InvoiceFiltersBar({
               ) : null}
               {typeof chatFilters?.amountGte === "number" ? (
                 <Text style={styles.chatFilterDetailText}>
-                  Tutar {">="}{" "}
-                  {chatFilters.amountGte.toLocaleString("tr-TR")} TL
+                  Tutar {">="} {chatFilters.amountGte.toLocaleString("tr-TR")}{" "}
+                  TL
                 </Text>
               ) : null}
               {typeof chatFilters?.amountEq === "number" ? (
                 <Text style={styles.chatFilterDetailText}>
-                  Tutar {"~="} {chatFilters.amountEq.toLocaleString("tr-TR")}{" "}
-                  TL
+                  Tutar {"~="} {chatFilters.amountEq.toLocaleString("tr-TR")} TL
                 </Text>
               ) : null}
               <TouchableOpacity

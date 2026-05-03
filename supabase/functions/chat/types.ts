@@ -1,5 +1,10 @@
 export interface ChatAction {
-  type: 'open_invoices' | 'open_invoice_detail' | 'open_invoice_preview' | 'open_sign_otp'
+  type:
+    | 'open_invoices'
+    | 'open_invoice_detail'
+    | 'open_invoice_preview'
+    | 'open_sign_otp'
+    | 'open_excel_export'
   label: string
   filter?: {
     startDate: string
@@ -12,6 +17,12 @@ export interface ChatAction {
   invoice?: InvoiceDetailPayload
   preview?: { title: string; html?: string; uuid?: string; issued?: boolean }
   sign_otp?: { draftUuid: string; phoneMasked: string }
+  excel_export?: {
+    download_url: string
+    file_name: string
+    row_count: number
+    expires_in_seconds?: number
+  }
 }
 
 export interface InvoiceSearchFilters {

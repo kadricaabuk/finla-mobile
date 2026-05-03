@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js'
+import { loadFeatureFlags } from '../_shared/feature-config.ts'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { faturaGetInvoiceHtml } from '../_shared/gib.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
@@ -14,12 +15,27 @@ Deno.serve(async (req: Request) => {
 
   try {
     const username = await getSubjectFromAuthHeader(req)
+    const features = await loadFeatureFlags()
     const body = await req.json() as {
       invoiceUuid?: string
       direction?: 'outgoing' | 'incoming'
     }
     const { invoiceUuid } = body
     const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
+
+    if (direction === 'outgoing' && !features.outgoingInvoices) {
+      return Response.json(
+        { error: 'Giden fatura detayı bu sürümde kapalı.' },
+        { status: 403, headers: corsHeaders },
+      )
+    }
+    if (direction === 'incoming' && !features.incomingInvoices) {
+      return Response.json(
+        { error: 'Gelen fatura detayı bu sürümde kapalı.' },
+        { status: 403, headers: corsHeaders },
+      )
+    }
+
     if (!invoiceUuid) {
       return Response.json(
         { error: 'invoiceUuid zorunludur.' },

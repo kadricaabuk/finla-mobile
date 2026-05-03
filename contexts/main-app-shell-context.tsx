@@ -4,6 +4,7 @@ import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
 import { getUserProfile, type UserProfile } from "@/lib/supabase";
+import type { PropsWithChildren } from "react";
 import {
   createContext,
   useCallback,
@@ -12,7 +13,6 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { PropsWithChildren } from "react";
 import { StyleSheet, View } from "react-native";
 
 export interface MainShellSideMenuBindings {
@@ -20,14 +20,17 @@ export interface MainShellSideMenuBindings {
   onOpenConversation?: (id: string) => void | Promise<void>;
   openingConversationId?: string | null;
   activeConversationId?: string | null;
-  activeScreen?: "chat" | "invoices";
+  activeScreen?: "chat" | "invoices" | "incoming_invoices" | "profile";
 }
 
 interface MainAppShellContextValue {
   sessionLabel: string;
   openMenu: () => void;
   closeMenu: () => void;
-  registerSideMenu: (owner: string, bindings: MainShellSideMenuBindings) => void;
+  registerSideMenu: (
+    owner: string,
+    bindings: MainShellSideMenuBindings,
+  ) => void;
   unregisterSideMenu: (owner: string) => void;
   refreshConversationList: (
     mode?: "indicator" | "pull" | "none",
@@ -51,7 +54,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     conversationsRefreshing,
     refreshConversationList,
   } = useConversationsList(sessionLabel);
-  const performLogout = useLogout();
+  const { logout: performLogout, loading: logoutLoading } = useLogout();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuRegistration, setMenuRegistration] =
@@ -83,9 +86,7 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   );
 
   const unregisterSideMenu = useCallback((owner: string) => {
-    setMenuRegistration((prev) =>
-      prev?.owner === owner ? null : prev,
-    );
+    setMenuRegistration((prev) => (prev?.owner === owner ? null : prev));
   }, []);
 
   const openMenu = useCallback(() => setMenuOpen(true), []);
@@ -99,10 +100,9 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
 
   const onPullRefreshConversations = useCallback(
     () =>
-      Promise.all([
-        refreshConversationList("pull"),
-        fetchUserProfile(),
-      ]).then(() => undefined),
+      Promise.all([refreshConversationList("pull"), fetchUserProfile()]).then(
+        () => undefined,
+      ),
     [fetchUserProfile, refreshConversationList],
   );
 
@@ -140,10 +140,9 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
 
   return (
     <MainAppShellContext.Provider value={ctx}>
-      <View style={styles.flex}>
-        {children}
-      </View>
+      <View style={styles.flex}>{children}</View>
       <SideMenu
+        logoutLoading={logoutLoading}
         isOpen={menuOpen}
         onClose={closeMenu}
         username={sessionLabel}

@@ -11,6 +11,8 @@ export interface ChatMessageAction {
     customerName?: string;
     amountGte?: number;
     amountEq?: number;
+    /** outgoing = kestiğim; incoming = gelen (bana kesilen) */
+    direction?: "outgoing" | "incoming";
   };
   invoice?: InvoiceDetailPayload;
   preview?: {

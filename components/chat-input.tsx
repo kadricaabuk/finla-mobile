@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 interface ChatInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
+  placeholder?: string;
   onAttach?: () => void;
   onVoice?: () => void;
 }
@@ -15,6 +16,7 @@ interface ChatInputProps {
 export default function ChatInput({
   onSend,
   disabled = false,
+  placeholder = "Finla'ya sor",
   onAttach,
   onVoice,
 }: ChatInputProps) {
@@ -51,7 +53,7 @@ export default function ChatInput({
           style={[styles.input, disabled && styles.inputDisabled]}
           value={text}
           onChangeText={setText}
-          placeholder="Finla'ya sor"
+          placeholder={placeholder}
           placeholderTextColor="#ABABAB"
           multiline
           editable={!disabled}

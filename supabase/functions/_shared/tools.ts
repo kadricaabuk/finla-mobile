@@ -12,6 +12,38 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'update_user_profile',
+    description:
+      'GİB e-Arşiv portalındaki kullanıcı profil kaydını günceller (ünvan, ad-soyad, iletişim, adres vb.). Sadece kullanıcı bilgi değişikliği istediğinde ve hangi alanların değişeceği belli olduğunda çağır; en az bir alan dolu olmalı. VKN/TCKN değişikliği çoğu zaman kısıtlıdır.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        taxIDOrTRID: { type: 'string', description: 'Vergi veya TC kimlik no' },
+        title: { type: 'string', description: 'Ticari ünvan' },
+        name: { type: 'string', description: 'Ad' },
+        surname: { type: 'string', description: 'Soyad' },
+        registryNo: { type: 'string', description: 'Sicil no' },
+        mersisNo: { type: 'string', description: 'MERSİS no' },
+        taxOffice: { type: 'string', description: 'Vergi dairesi' },
+        fullAddress: { type: 'string', description: 'Tam adres metni' },
+        buildingName: { type: 'string', description: 'Apartman/bina adı' },
+        buildingNumber: { type: 'string', description: 'Bina no' },
+        doorNumber: { type: 'string', description: 'Kapı no' },
+        town: { type: 'string', description: 'İlçe / kasaba' },
+        district: { type: 'string', description: 'Semt / mahalle' },
+        city: { type: 'string', description: 'İl' },
+        zipCode: { type: 'string', description: 'Posta kodu' },
+        country: { type: 'string', description: 'Ülke' },
+        phoneNumber: { type: 'string', description: 'Telefon' },
+        faxNumber: { type: 'string', description: 'Faks' },
+        email: { type: 'string', description: 'E-posta' },
+        webSite: { type: 'string', description: 'Web sitesi' },
+        businessCenter: { type: 'string', description: 'İş merkezi' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'lookup_recipient',
     description:
       'TC Kimlik No veya Vergi Kimlik No ile alıcı bilgilerini fatura.js (GİB e-Arşiv) üzerinden getirir. Fatura kesmeden önce alıcı bilgilerini doğrulamak için kullan.',
@@ -155,6 +187,38 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'list_invoices_received',
+    description:
+      'GİB e-Arşivde bana kesilen (gelen) e-faturaları listeler — getAllInvoicesIssuedToMeByDateRange. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay) aralık belirlenir. Kesilen (müşteriye) faturalar için list_invoices kullan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description:
+            'Opsiyonel tedarikçi/gönderici adı veya unvan filtresi (faturayı kesen taraf)',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'invoice_totals',
     description:
       'Onaylı faturalar için toplam satış, toplam KDV ve net tutar özetini getirir. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
@@ -246,17 +310,19 @@ Yeteneklerin:
 - Fatura kesim onayı (confirm_invoice_issue)
 - İmzalama SMS gönderimi (request_invoice_sign_otp)
 - İmzalama SMS doğrulaması (verify_invoice_sign_otp)
-- Fatura listeleme (list_invoices)
+- Fatura listeleme — kestiğin faturalar (list_invoices), sana kesilen gelen faturalar (list_invoices_received)
 - Toplam satış/KDV özeti (invoice_totals)
 - Son faturayı bulma (latest_invoice)
 - Fatura iptal etme (cancel_invoice)
 - Alıcı bilgisi sorgulama (lookup_recipient)
 - Kullanıcı profil bilgisi (get_user_profile)
+- GİB profil kaydı güncelleme (update_user_profile)
 
 Kurallar:
 - Türkçe yanıt ver
 - Kısa ve doğal konuşma dili kullan
 - Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.
+- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder.
 - Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al
 - create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme.
 - confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı.

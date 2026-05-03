@@ -36,8 +36,9 @@ interface SideMenuProps {
   onRefreshConversations?: () => void | Promise<void>;
   openingConversationId?: string | null;
   activeConversationId?: string | null;
+  logoutLoading?: boolean;
   /** Faturalarım ekranındayken liste satırı yalnızca menüyü kapatır. */
-  activeScreen?: "chat" | "invoices";
+  activeScreen?: "chat" | "invoices" | "incoming_invoices" | "profile";
   userProfile?: {
     taxIDOrTRID?: string;
     title?: string;
@@ -66,6 +67,7 @@ export default function SideMenu({
   onLogout,
   onOpenConversation,
   username,
+  logoutLoading,
   conversations = [],
   conversationsLoading = false,
   conversationsRefreshing = false,
@@ -200,6 +202,44 @@ export default function SideMenu({
             <Text style={styles.navBtnLabel}>Faturalarım</Text>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={[
+              styles.navBtn,
+              activeScreen === "incoming_invoices" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "incoming_invoices") {
+                onClose();
+                return;
+              }
+              onClose();
+              router.push("/incoming-invoices");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="download-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Gelen faturalar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.navBtn,
+              activeScreen === "profile" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "profile") {
+                onClose();
+                return;
+              }
+              onClose();
+              router.push("/profile");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="person-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Profil</Text>
+          </TouchableOpacity>
+
           {onOpenConversation ? (
             <View style={styles.convSection}>
               <Text style={styles.sectionLabel}>Sohbetler</Text>
@@ -251,22 +291,38 @@ export default function SideMenu({
 
         <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
           <View style={styles.profileRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarInitial}>
-                {profileDisplayName.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.profileInfo}>
-              <Text style={styles.profileName} numberOfLines={1}>
-                {profileDisplayName}
-              </Text>
-              <Text style={styles.profileSub}>GİB Hesabı</Text>
-              <Text style={styles.profileSub} numberOfLines={1}>
-                {profileSubLabel}
-              </Text>
-            </View>
+            <TouchableOpacity
+              style={styles.profileRowMain}
+              activeOpacity={0.7}
+              onPress={() => {
+                if (activeScreen === "profile") {
+                  onClose();
+                  return;
+                }
+                onClose();
+                router.push("/profile");
+              }}
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarInitial}>
+                  {profileDisplayName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.profileInfo}>
+                <Text style={styles.profileName} numberOfLines={1}>
+                  {profileDisplayName}
+                </Text>
+                <Text style={styles.profileSub} numberOfLines={1}>
+                  {profileSubLabel}
+                </Text>
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
-              <Ionicons name="log-out-outline" size={20} color="#888" />
+              {logoutLoading ? (
+                <ActivityIndicator size="small" color="#888" />
+              ) : (
+                <Ionicons name="log-out-outline" size={20} color="#888" />
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -457,6 +513,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+  },
+  profileRowMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
   },
   avatar: {
     width: 34,

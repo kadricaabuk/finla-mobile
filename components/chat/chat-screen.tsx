@@ -90,10 +90,7 @@ export default function ChatScreen() {
           <ScrollView
             ref={scrollRef}
             style={styles.flex}
-            contentContainerStyle={[
-              styles.messagesContent,
-              streaming && styles.messagesContentUnderFloatingStatus,
-            ]}
+            contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
             keyboardDismissMode="none"
             keyboardShouldPersistTaps="always"
@@ -108,6 +105,13 @@ export default function ChatScreen() {
                   msg.role === "assistant" &&
                   streamingMessageId !== null &&
                   msg.id === streamingMessageId
+                }
+                streamStatusLabel={
+                  streaming &&
+                  streamingMessageId === msg.id &&
+                  msg.role === "assistant"
+                    ? (streamingStatus ?? "Düşünüyor…")
+                    : null
                 }
                 onOpenInvoiceDetail={(action) =>
                   setDetailAction(action ?? null)
@@ -127,17 +131,6 @@ export default function ChatScreen() {
               </View>
             )}
           </ScrollView>
-
-          {streaming ? (
-            <View style={styles.streamStatusOverlay} pointerEvents="box-none">
-              <View style={styles.streamFloatingBubble}>
-                <ActivityIndicator size="small" color="#666" />
-                <Text style={styles.streamFloatingText} numberOfLines={4}>
-                  {streamingStatus ?? "Finla düşünüyor…"}
-                </Text>
-              </View>
-            </View>
-          ) : null}
         </View>
 
         <ChatInput disabled={loading || streaming} onSend={handleSend} />
@@ -205,42 +198,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 8,
-  },
-  /** Üstte asılı durum balonu için rezerv — içerik altında kalsın */
-  messagesContentUnderFloatingStatus: {
-    paddingTop: 72,
-  },
-  streamStatusOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingHorizontal: 16,
-    paddingTop: 6,
-    alignItems: "center",
-    backgroundColor: "transparent",
-  },
-  streamFloatingBubble: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    maxWidth: "92%",
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 20,
-    backgroundColor: "#F2F2F2",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  streamFloatingText: {
-    flexShrink: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#555",
   },
   bubble: {
     maxWidth: "80%",

@@ -1,6 +1,7 @@
 import { InvoiceFiltersBar } from "@/components/invoices/invoice-filters-bar";
 import { InvoiceRowCard } from "@/components/invoices/invoice-row-card";
 import { useInvoicesScreen } from "@/components/invoices/use-invoices-screen";
+import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
@@ -19,8 +20,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const INVOICES_SHELL_OWNER_ID = "screen-invoices";
+const INCOMING_SHELL_OWNER_ID = "screen-incoming-invoices";
 
-export default function InvoicesScreen() {
+export interface InvoicesScreenProps {
+  invoiceDirection?: InvoiceListDirection;
+}
+
+export default function InvoicesScreen({
+  invoiceDirection = "outgoing",
+}: InvoicesScreenProps) {
   const { openMenu } = useMainAppShell();
   const {
     preset,
@@ -38,20 +46,38 @@ export default function InvoicesScreen() {
     fetchInvoices,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
-  } = useInvoicesScreen();
+  } = useInvoicesScreen({ invoiceDirection });
+
+  const shellOwnerId =
+    invoiceDirection === "incoming"
+      ? INCOMING_SHELL_OWNER_ID
+      : INVOICES_SHELL_OWNER_ID;
+  const headerTitle =
+    invoiceDirection === "incoming" ? "Gelen faturalar" : "Faturalarım";
+  const emptyHint =
+    invoiceDirection === "incoming"
+      ? "Bu dönemde gelen fatura bulunamadı."
+      : "Bu dönemde fatura bulunamadı.";
 
   const sideMenuBindings = useMemo(
     () => ({
-      activeScreen: "invoices" as const,
+      activeScreen:
+        invoiceDirection === "incoming"
+          ? ("incoming_invoices" as const)
+          : ("invoices" as const),
       openingConversationId: null,
       activeConversationId: null,
       onNewChat: handleDrawerNewChat,
       onOpenConversation: handleDrawerOpenConversation,
     }),
-    [handleDrawerNewChat, handleDrawerOpenConversation],
+    [
+      handleDrawerNewChat,
+      handleDrawerOpenConversation,
+      invoiceDirection,
+    ],
   );
 
-  useRegisterMainShellSideMenu(INVOICES_SHELL_OWNER_ID, sideMenuBindings);
+  useRegisterMainShellSideMenu(shellOwnerId, sideMenuBindings);
 
   const onSelectPreset = (key: InvoiceDatePreset) => {
     setCustomRange(null);
@@ -75,7 +101,7 @@ export default function InvoicesScreen() {
           accessibilityLabel="Menü"
         />
         <Text style={styles.title} numberOfLines={1}>
-          Faturalarım
+          {headerTitle}
         </Text>
         <View style={styles.headerRight}>
           {customRange ? (
@@ -123,7 +149,9 @@ export default function InvoicesScreen() {
         <FlatList
           data={invoices}
           keyExtractor={(item, i) => item.ettn ?? String(i)}
-          renderItem={({ item }) => <InvoiceRowCard item={item} />}
+          renderItem={({ item }) => (
+            <InvoiceRowCard item={item} listDirection={invoiceDirection} />
+          )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -138,9 +166,7 @@ export default function InvoicesScreen() {
           ListEmptyComponent={
             <View style={styles.center}>
               <Ionicons name="document-outline" size={48} color="#DDDDDD" />
-              <Text style={styles.emptyText}>
-                Bu dönemde fatura bulunamadı.
-              </Text>
+              <Text style={styles.emptyText}>{emptyHint}</Text>
             </View>
           }
         />

@@ -2,14 +2,23 @@ import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Markdown from "react-native-markdown-display";
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
   confirmingDraftUuid: string | undefined;
-  /** Stream bitene kadar soluk balon + içerik (üstte sabit durum satırı kullanılır). */
+  /** Stream bitene kadar soluk balon; yanıt metni gelene kadar streamStatusLabel gösterilir. */
   streamPending?: boolean;
+  /** Yalnızca streamPending + boş asistan metni iken (düşünüyor / araştırıyor vb.). */
+  streamStatusLabel?: string | null;
   onOpenInvoiceDetail: (action: ChatMessage["action"]) => void;
   onOpenInvoicePreview: (action: ChatMessage["action"]) => void;
   onConfirmPreview: (draftUuid: string | undefined) => void;
@@ -19,13 +28,32 @@ export function ChatMessageBubble({
   msg,
   confirmingDraftUuid,
   streamPending,
+  streamStatusLabel,
   onOpenInvoiceDetail,
   onOpenInvoicePreview,
   onConfirmPreview,
 }: ChatMessageBubbleProps) {
   const pending = Boolean(streamPending && msg.role === "assistant");
-  if (msg.role === "assistant" && pending && msg.text.trim().length === 0) {
-    return null;
+  const showStreamStatusBubble =
+    msg.role === "assistant" &&
+    pending &&
+    msg.text.trim().length === 0;
+
+  if (showStreamStatusBubble) {
+    const label =
+      streamStatusLabel && streamStatusLabel.trim().length > 0
+        ? streamStatusLabel
+        : "Düşünüyor…";
+    return (
+      <View style={[styles.bubble, styles.aiBubblePending]}>
+        <View style={styles.streamStatusRow}>
+          <ActivityIndicator size="small" color="#888" />
+          <Text style={styles.streamStatusText} numberOfLines={3}>
+            {label}
+          </Text>
+        </View>
+      </View>
+    );
   }
 
   const bubbleStyles = [
@@ -57,9 +85,11 @@ export function ChatMessageBubble({
         <TouchableOpacity
           style={styles.actionButton}
           activeOpacity={0.8}
-          onPress={() =>
+          onPress={() => {
+            const incoming =
+              msg.action?.filter?.direction === "incoming";
             router.push({
-              pathname: "/invoices",
+              pathname: incoming ? "/incoming-invoices" : "/invoices",
               params: {
                 startDate: msg.action?.filter?.startDate,
                 endDate: msg.action?.filter?.endDate,
@@ -74,8 +104,8 @@ export function ChatMessageBubble({
                     : undefined,
                 source: "chat",
               },
-            })
-          }
+            });
+          }}
         >
           <Text style={styles.actionButtonText}>
             {msg.action.label || "Faturaları Gör"}
@@ -153,6 +183,17 @@ const styles = StyleSheet.create({
   },
   markdownPendingWrap: {
     opacity: 0.58,
+  },
+  streamStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  streamStatusText: {
+    flexShrink: 1,
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#555",
   },
   bubbleText: {
     fontSize: 15,

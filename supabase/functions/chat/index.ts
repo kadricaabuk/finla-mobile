@@ -2,16 +2,20 @@ import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import {
+  extractGibUserDataStringPatch,
   faturaCancelInvoice,
   faturaConfirmInvoiceIssue,
   faturaCreateInvoicePreview,
   faturaGetInvoiceHtml,
   faturaGetUserData,
+  faturaGetInvoicesIssuedToMe,
   faturaListInvoices,
   faturaLookupRecipient,
   faturaSendSignSMSCode,
+  faturaUpdateUserData,
   faturaVerifySignSMSCode,
   mapInvoicesToFacts,
+  mergeGibUserDataPatch,
 } from "../_shared/gib.ts";
 import {
   getSubjectFromAuthHeader,
@@ -172,6 +176,7 @@ function shouldOfferInvoicesAction(
   usedTools: Set<string>,
 ): boolean {
   if (usedTools.has("list_invoices")) return true;
+  if (usedTools.has("list_invoices_received")) return true;
   const lower = userMessage.toLocaleLowerCase("tr-TR");
   return (
     (lower.includes("fatura") || lower.includes("liste")) &&
@@ -369,13 +374,24 @@ async function executeTool(
     return `${m[3]}-${m[2]}-${m[1]}`;
   };
 
-  const ensureFacts = async (startDate: string, endDate: string) => {
-    const invoices = await faturaListInvoices(username, startDate, endDate);
-    const facts = mapInvoicesToFacts(username, invoices as unknown[]);
+  const syncFactsForRange = async (
+    startDate: string,
+    endDate: string,
+    factDirection: "outgoing" | "incoming",
+  ) => {
+    const invoices =
+      factDirection === "outgoing"
+        ? await faturaListInvoices(username, startDate, endDate)
+        : await faturaGetInvoicesIssuedToMe(username, startDate, endDate);
+    const facts = mapInvoicesToFacts(
+      username,
+      invoices as unknown[],
+      factDirection,
+    );
     if (facts.length === 0) return;
     const { error } = await supabase
       .from("invoice_facts")
-      .upsert(facts, { onConflict: "gib_username,invoice_uuid" });
+      .upsert(facts, { onConflict: "gib_username,invoice_uuid,direction" });
     if (error) throw error;
   };
 
@@ -420,6 +436,19 @@ async function executeTool(
   switch (toolName) {
     case "get_user_profile":
       return faturaGetUserData(username);
+
+    case "update_user_profile": {
+      const picked = extractGibUserDataStringPatch(input);
+      if (Object.keys(picked).length === 0) {
+        throw new Error(
+          "Güncellenecek alan belirtilmedi. Hangi bilgiyi değiştirmek istediğini yaz.",
+        );
+      }
+      const current = await faturaGetUserData(username);
+      const merged = mergeGibUserDataPatch(current, picked);
+      await faturaUpdateUserData(username, merged);
+      return faturaGetUserData(username);
+    }
 
     case "lookup_recipient":
       return faturaLookupRecipient(username, input.tax_id as string);
@@ -627,6 +656,7 @@ async function executeTool(
         {
           gib_username: username,
           invoice_uuid: issued.uuid,
+          direction: "outgoing",
           issue_date: draft.date.split("/").reverse().join("-"),
           status: "approved",
           currency: pending?.request?.currency ?? "TRY",
@@ -642,7 +672,7 @@ async function executeTool(
           },
           synced_at: new Date().toISOString(),
         },
-        { onConflict: "gib_username,invoice_uuid" },
+        { onConflict: "gib_username,invoice_uuid,direction" },
       );
 
       return {
@@ -663,11 +693,47 @@ async function executeTool(
         return faturaListInvoices(username, range.startDate, range.endDate);
       }
 
-      await ensureFacts(range.startDate, range.endDate);
+      await syncFactsForRange(range.startDate, range.endDate, "outgoing");
       let query = supabase
         .from("invoice_facts")
         .select("raw_payload")
         .eq("gib_username", username)
+        .eq("direction", "outgoing")
+        .gte("issue_date", toIsoDate(range.startDate))
+        .lte("issue_date", toIsoDate(range.endDate))
+        .order("issue_date", { ascending: false })
+        .limit(100);
+      query = applyFactFilters(
+        query as ReturnType<typeof supabase.from>,
+      ) as typeof query;
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []).map(
+        (row: { raw_payload: unknown }) => row.raw_payload,
+      );
+    }
+
+    case "list_invoices_received": {
+      const range = resolveDateRange(input, userMessage, "month");
+      if (!range) throw new Error("Tarih aralığı belirlenemedi.");
+      const hasFilters =
+        !!filters.customerName ||
+        typeof filters.amountGte === "number" ||
+        typeof filters.amountEq === "number";
+      if (!hasFilters) {
+        return faturaGetInvoicesIssuedToMe(
+          username,
+          range.startDate,
+          range.endDate,
+        );
+      }
+
+      await syncFactsForRange(range.startDate, range.endDate, "incoming");
+      let query = supabase
+        .from("invoice_facts")
+        .select("raw_payload")
+        .eq("gib_username", username)
+        .eq("direction", "incoming")
         .gte("issue_date", toIsoDate(range.startDate))
         .lte("issue_date", toIsoDate(range.endDate))
         .order("issue_date", { ascending: false })
@@ -685,11 +751,12 @@ async function executeTool(
     case "invoice_totals": {
       const range = resolveDateRange(input, userMessage, "month");
       if (!range) throw new Error("Tarih aralığı belirlenemedi.");
-      await ensureFacts(range.startDate, range.endDate);
+      await syncFactsForRange(range.startDate, range.endDate, "outgoing");
       let query = supabase
         .from("invoice_facts")
         .select("gross_total, vat_total, net_total")
         .eq("gib_username", username)
+        .eq("direction", "outgoing")
         .eq("status", "approved")
         .gte("issue_date", toIsoDate(range.startDate))
         .lte("issue_date", toIsoDate(range.endDate));
@@ -731,10 +798,10 @@ async function executeTool(
     case "latest_invoice": {
       const range = resolveDateRange(input, userMessage, "none");
       if (range) {
-        await ensureFacts(range.startDate, range.endDate);
+        await syncFactsForRange(range.startDate, range.endDate, "outgoing");
       } else {
         const month = resolveDateRange({}, userMessage, "month")!;
-        await ensureFacts(month.startDate, month.endDate);
+        await syncFactsForRange(month.startDate, month.endDate, "outgoing");
       }
 
       let query = supabase
@@ -743,6 +810,7 @@ async function executeTool(
           "invoice_uuid, issue_date, status, currency, gross_total, vat_total, net_total, customer_tax_id, customer_name",
         )
         .eq("gib_username", username)
+        .eq("direction", "outgoing")
         .order("issue_date", { ascending: false })
         .order("updated_at", { ascending: false })
         .limit(1);
@@ -788,6 +856,7 @@ const RESPONSE_CONTRACT_AGENT = `Yanit stili:
 
 Fatura arama/filtreleme:
 - list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").
+- list_invoices_received (gelen) icin de ayni sekilde bos sonucta tarih ve filtreleri belirt; kesilen faturalarla karistirma.
 - Fatura listesi getirince kullanilan tarih araligini ve varsa filtreler dogal sekilde belirt.
 - Kullanici "profilim", "firma bilgilerim", "kullanici bilgilerim", "bilgilerimi getir" derse mutlaka get_user_profile aracini cagir.
 
@@ -813,6 +882,7 @@ type AgentLoopAccumulator = {
   usedToolNames: Set<string>;
   latestInvoiceActionPayload: InvoiceDetailPayload | null;
   lastListInvoicesInput: Record<string, unknown> | null;
+  lastListInvoicesReceivedInput: Record<string, unknown> | null;
 };
 
 async function runAnthropicToolLoop(
@@ -828,6 +898,7 @@ async function runAnthropicToolLoop(
   const usedToolNames = new Set<string>();
   let latestInvoiceActionPayload: InvoiceDetailPayload | null = null;
   let lastListInvoicesInput: Record<string, unknown> | null = null;
+  let lastListInvoicesReceivedInput: Record<string, unknown> | null = null;
 
   const anthropicRoundParams =
     (): Anthropic.MessageCreateParamsNonStreaming => ({
@@ -939,6 +1010,10 @@ async function runAnthropicToolLoop(
             if (block.name === "list_invoices") {
               lastListInvoicesInput = block.input as Record<string, unknown>;
             }
+            if (block.name === "list_invoices_received") {
+              lastListInvoicesReceivedInput =
+                block.input as Record<string, unknown>;
+            }
             usedToolNames.add(block.name);
             content = JSON.stringify(result);
           } catch (err) {
@@ -976,6 +1051,7 @@ async function runAnthropicToolLoop(
     usedToolNames,
     latestInvoiceActionPayload,
     lastListInvoicesInput,
+    lastListInvoicesReceivedInput,
   };
 }
 
@@ -988,6 +1064,7 @@ async function finalizeAgentAssistant(opts: {
   usedToolNames: Set<string>;
   latestInvoiceActionPayload: InvoiceDetailPayload | null;
   lastListInvoicesInput: Record<string, unknown> | null;
+  lastListInvoicesReceivedInput: Record<string, unknown> | null;
 }): Promise<{ finalAssistant: string; action: ChatAction | null }> {
   const {
     convId,
@@ -998,6 +1075,7 @@ async function finalizeAgentAssistant(opts: {
     usedToolNames,
     latestInvoiceActionPayload,
     lastListInvoicesInput,
+    lastListInvoicesReceivedInput,
   } = opts;
 
   let trimmedAssistant = assistantText;
@@ -1161,7 +1239,10 @@ async function finalizeAgentAssistant(opts: {
       invoice: detail,
     };
   } else if (shouldOfferInvoicesAction(userMessage, usedToolNames)) {
-    const listInput: Record<string, unknown> = lastListInvoicesInput ?? {};
+    const incomingPreferred = usedToolNames.has("list_invoices_received");
+    const listInput: Record<string, unknown> = incomingPreferred
+      ? (lastListInvoicesReceivedInput ?? {})
+      : (lastListInvoicesInput ?? {});
     const parsedRange = resolveDateRange(
       listInput,
       userMessage,
@@ -1188,12 +1269,13 @@ async function finalizeAgentAssistant(opts: {
     if (parsedRange) {
       action = {
         type: "open_invoices",
-        label: "Faturalari Gor",
+        label: incomingPreferred ? "Gelen faturaları gör" : "Faturalari Gor",
         filter: {
           ...parsedRange,
           customerName: toolCustomerName ?? msgFilters.customerName,
           amountGte: toolAmountGte ?? msgFilters.amountGte,
           amountEq: toolAmountEq ?? msgFilters.amountEq,
+          direction: incomingPreferred ? "incoming" : "outgoing",
         },
       };
     }
@@ -1488,6 +1570,7 @@ Deno.serve(async (req: Request) => {
         usedToolNames: acc.usedToolNames,
         latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
         lastListInvoicesInput: acc.lastListInvoicesInput,
+        lastListInvoicesReceivedInput: acc.lastListInvoicesReceivedInput,
       });
       await supabase.from("messages").insert({
         conversation_id: cid,
@@ -1541,6 +1624,7 @@ Deno.serve(async (req: Request) => {
           usedToolNames: acc.usedToolNames,
           latestInvoiceActionPayload: acc.latestInvoiceActionPayload,
           lastListInvoicesInput: acc.lastListInvoicesInput,
+          lastListInvoicesReceivedInput: acc.lastListInvoicesReceivedInput,
         });
 
         await supabase.from("messages").insert({

@@ -11,6 +11,13 @@ import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, type ScrollView } from "react-native";
 
+/** So very fast GİB round-trips still show the tool line (e.g. “Gelen faturalar…”) long enough to read. */
+const MIN_TOOL_STATUS_DISPLAY_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function newChatMessageId(): string {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
@@ -29,13 +36,19 @@ function toolStatusText(rawName: string): string {
   const toolName = first && first.length > 0 ? first : rawName.trim();
   switch (toolName) {
     case "list_invoices":
-      return "Faturalar kontrol ediliyor…";
+      return "Faturalar araştırılıyor…";
+    case "list_invoices_received":
+      return "Gelen faturalar araştırılıyor…";
     case "latest_invoice":
       return "Son fatura aranıyor…";
     case "invoice_totals":
-      return "Toplamlar hesaplanıyor…";
+      return "Toplamlar araştırılıyor…";
     case "lookup_recipient":
-      return "Alıcı bilgileri doğrulanıyor…";
+      return "Alıcı bilgileri araştırılıyor…";
+    case "get_user_profile":
+      return "Profil bilgileri alınıyor…";
+    case "update_user_profile":
+      return "Profil güncelleniyor…";
     case "create_invoice":
       return "Taslak fatura hazırlanıyor…";
     case "cancel_invoice":
@@ -64,7 +77,7 @@ export function useChatScreen() {
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
-  /** Stream sırasındaki geçici asistan mesajı (soluk balon + üstte sabit durum çubuğu). */
+  /** Stream sırasındaki geçici asistan mesajı; metin gelene kadar balonda durum etiketi. */
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(
     null,
   );
@@ -93,8 +106,12 @@ export function useChatScreen() {
   >(null);
   const scrollRef = useRef<ScrollView>(null);
   const sendingRef = useRef(false);
+  /** Wall time when we last showed a tool-phase status (tool start). */
+  const toolStatusShownAtRef = useRef<number | null>(null);
   const deltaQueueRef = useRef<string[]>([]);
-  const deltaDrainTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deltaDrainTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const deltaDrainedWaitersRef = useRef<(() => void)[]>([]);
   const streamedAssistantTextRef = useRef("");
   const receivedDeltaRef = useRef(false);
@@ -173,7 +190,9 @@ export function useChatScreen() {
       scrollToBottom();
 
       if (queue.length === 0) {
-        deltaDrainedWaitersRef.current.splice(0).forEach((resolve) => resolve());
+        deltaDrainedWaitersRef.current
+          .splice(0)
+          .forEach((resolve) => resolve());
       }
     }, 28);
   }, []);
@@ -260,7 +279,8 @@ export function useChatScreen() {
         };
         setMessages((prev) => [...prev, userMsg]);
         setStreaming(true);
-        setStreamingStatus("Finla düşünüyor…");
+        toolStatusShownAtRef.current = null;
+        setStreamingStatus("Düşünüyor…");
         scrollToBottom();
 
         const assistId = newChatMessageId();
@@ -283,17 +303,25 @@ export function useChatScreen() {
                 setConversationId((prev) => prev ?? nid);
               },
               onDelta: (t) => {
-                setStreamingStatus("Yanıt yazılıyor…");
                 receivedDeltaRef.current = true;
                 streamedAssistantTextRef.current += t;
                 deltaQueueRef.current.push(t);
               },
-              onTool: (phase, name) => {
+              onTool: async (phase, name) => {
                 if (phase === "start") {
+                  toolStatusShownAtRef.current = Date.now();
                   setStreamingStatus(toolStatusText(name));
-                } else {
-                  setStreamingStatus("Yanıt hazırlanıyor…");
+                  return;
                 }
+                const shownAt = toolStatusShownAtRef.current;
+                toolStatusShownAtRef.current = null;
+                if (shownAt != null) {
+                  const elapsed = Date.now() - shownAt;
+                  if (elapsed < MIN_TOOL_STATUS_DISPLAY_MS) {
+                    await sleep(MIN_TOOL_STATUS_DISPLAY_MS - elapsed);
+                  }
+                }
+                setStreamingStatus("Düşünüyor…");
               },
             },
           );
@@ -301,7 +329,6 @@ export function useChatScreen() {
           setConversationId((prev) => prev ?? res.conversationId);
 
           if (!receivedDeltaRef.current && res.message) {
-            setStreamingStatus("Yanıt yazılıyor…");
             streamedAssistantTextRef.current = res.message;
             deltaQueueRef.current.push(res.message);
           }

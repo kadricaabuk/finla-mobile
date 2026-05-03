@@ -14,7 +14,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     const username = await getSubjectFromAuthHeader(req)
-    const { invoiceUuid } = await req.json()
+    const body = await req.json() as {
+      invoiceUuid?: string
+      direction?: 'outgoing' | 'incoming'
+    }
+    const { invoiceUuid } = body
+    const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
     if (!invoiceUuid) {
       return Response.json(
         { error: 'invoiceUuid zorunludur.' },
@@ -29,6 +34,7 @@ Deno.serve(async (req: Request) => {
       )
       .eq('gib_username', username)
       .eq('invoice_uuid', invoiceUuid)
+      .eq('direction', direction)
       .single()
 
     if (error) {
@@ -81,6 +87,7 @@ Deno.serve(async (req: Request) => {
           })
           .eq('gib_username', username)
           .eq('invoice_uuid', invoiceUuid)
+          .eq('direction', direction)
       } catch {
         // Keep existing record when GIB HTML fetch fails.
       }

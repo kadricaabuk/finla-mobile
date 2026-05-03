@@ -12,11 +12,14 @@ import {
 } from "@/lib/invoice-date-presets";
 import { getTokens } from "@/lib/session";
 import { callApi, userFacingApiError } from "@/lib/supabase";
-import type { GIBInvoice } from "@/types/gib-invoice";
+import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
-export function useInvoicesScreen() {
+export function useInvoicesScreen(options?: {
+  invoiceDirection?: InvoiceListDirection;
+}) {
+  const invoiceDirection = options?.invoiceDirection ?? "outgoing";
   const { closeMenu } = useMainAppShell();
 
   const params = useLocalSearchParams<{
@@ -53,7 +56,7 @@ export function useInvoicesScreen() {
       if (!tokens) return;
 
       const range = rangeOverride ?? invoiceRangeForPreset(p);
-      const cacheKey = `${range.startDate}|${range.endDate}`;
+      const cacheKey = `${invoiceDirection}|${range.startDate}|${range.endDate}`;
 
       await hydrateInvoiceCache(tokens.accessToken);
 
@@ -79,6 +82,7 @@ export function useInvoicesScreen() {
           error?: string;
         }>("invoices", {
           ...range,
+          direction: invoiceDirection,
           customerName: chatFilters?.customerName,
           amountGte: chatFilters?.amountGte,
           amountEq: chatFilters?.amountEq,
@@ -96,7 +100,7 @@ export function useInvoicesScreen() {
         setRefreshing(false);
       }
     },
-    [chatFilters],
+    [chatFilters, invoiceDirection],
   );
 
   useEffect(() => {
@@ -163,6 +167,7 @@ export function useInvoicesScreen() {
   );
 
   return {
+    invoiceDirection,
     preset,
     setPreset,
     customRange,
@@ -180,3 +185,5 @@ export function useInvoicesScreen() {
     handleDrawerOpenConversation,
   };
 }
+
+export type { InvoiceListDirection };

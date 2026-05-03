@@ -15,9 +15,12 @@ export interface CreateInvoiceInput {
   currency?: string
 }
 
+export type InvoiceDirection = 'outgoing' | 'incoming'
+
 export interface InvoiceFactRow {
   gib_username: string
   invoice_uuid: string
+  direction: InvoiceDirection
   issue_date: string | null
   status: string
   currency: string
@@ -39,6 +42,30 @@ function nowTimeFormatted(): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
+/** GİB HTML: TCKN (11 hane) alıcıda "SAYIN" adı çoğunlukla aliciAdi/aliciSoyadi; VKN (10 hane) için aliciUnvan. */
+function recipientNameFields(
+  buyerName: string,
+  taxId: string | undefined,
+): { title: string; name?: string; surname?: string } {
+  const trimmed = buyerName.trim()
+  const id = typeof taxId === 'string' ? taxId.replace(/\s/g, '') : ''
+  const isVkn = id.length === 10 && /^\d{10}$/.test(id)
+  const isTckn = id.length === 11 && /^\d{11}$/.test(id)
+
+  if (isVkn) {
+    return { title: trimmed }
+  }
+
+  if (isTckn) {
+    const parts = trimmed.split(/\s+/).filter(Boolean)
+    const name = parts[0] ?? trimmed
+    const surname = parts.length > 1 ? parts.slice(1).join(' ') : name
+    return { title: '', name, surname }
+  }
+
+  return { title: trimmed }
+}
+
 export function buildInvoiceDetails(input: CreateInvoiceInput) {
   const items = input.items.map((item) => {
     const totalAmount = item.quantity * item.unitPrice
@@ -56,12 +83,17 @@ export function buildInvoiceDetails(input: CreateInvoiceInput) {
   })
   const grandTotal = items.reduce((s, i) => s + i.price, 0)
   const totalVAT = items.reduce((s, i) => s + i.VATAmount, 0)
+  const taxId = input.buyerTaxId?.replace(/\s/g, '') || '11111111111'
+  const { title, name, surname } = recipientNameFields(input.buyerName, taxId)
+
   return {
     date: input.date || todayFormatted(),
     time: nowTimeFormatted(),
     currency: input.currency || 'TRY',
-    taxIDOrTRID: input.buyerTaxId || '11111111111',
-    title: input.buyerName,
+    taxIDOrTRID: taxId,
+    title,
+    ...(name !== undefined ? { name } : {}),
+    ...(surname !== undefined ? { surname } : {}),
     fullAddress: input.buyerAddress || '',
     taxOffice: 'ISTANBUL',
     items,
@@ -104,7 +136,48 @@ function readInvoiceUuid(invoice: Record<string, unknown>): string | null {
   return docNo || null
 }
 
-export function mapInvoicesToFacts(username: string, invoices: unknown[]): InvoiceFactRow[] {
+function pickStr(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const t = value.trim()
+  return t.length > 0 ? t : null
+}
+
+function combineNameParts(a: unknown, b: unknown): string | null {
+  const p = [pickStr(a), pickStr(b)].filter(Boolean).join(' ').trim()
+  return p.length > 0 ? p : null
+}
+
+/** Outgoing: counterparty = buyer (alıcı). Incoming: counterparty = issuer (gönderici). */
+function readCounterpartyForFact(
+  invoice: Record<string, unknown>,
+  direction: InvoiceDirection,
+): { customer_name: string | null; customer_tax_id: string | null } {
+  if (direction === 'incoming') {
+    return {
+      customer_name:
+        pickStr(invoice.gondericiUnvanAdSoyad) ??
+        pickStr(invoice.gondericiUnvan) ??
+        combineNameParts(invoice.gondericiAdi, invoice.gondericiSoyadi),
+      customer_tax_id:
+        pickStr(invoice.gondericiVknTckn) ??
+        pickStr(invoice.gondericiVkn) ??
+        pickStr(invoice.gondericiTckn),
+    }
+  }
+  return {
+    customer_name:
+      pickStr(invoice.aliciUnvanAdSoyad) ??
+      pickStr(invoice.aliciUnvan) ??
+      combineNameParts(invoice.aliciAdi, invoice.aliciSoyadi),
+    customer_tax_id: pickStr(invoice.aliciVknTckn) ?? pickStr(invoice.aliciVkn),
+  }
+}
+
+export function mapInvoicesToFacts(
+  username: string,
+  invoices: unknown[],
+  direction: InvoiceDirection = 'outgoing',
+): InvoiceFactRow[] {
   return invoices
     .map((row): InvoiceFactRow | null => {
       if (!row || typeof row !== 'object') return null
@@ -128,22 +201,20 @@ export function mapInvoicesToFacts(username: string, invoices: unknown[]): Invoi
         explicitVat ??
         (grossTotal !== null && netTotal !== null ? grossTotal - netTotal : null)
 
+      const cp = readCounterpartyForFact(invoice, direction)
+
       return {
         gib_username: username,
         invoice_uuid: invoiceUuid,
+        direction,
         issue_date: parseIssueDate(invoice.belgeTarihi ?? invoice.faturaTarihi),
         status: normalizeStatus(invoice.onayDurumu),
         currency: typeof invoice.paraBirimi === 'string' ? invoice.paraBirimi : 'TRY',
         gross_total: grossTotal,
         vat_total: vatTotal,
         net_total: netTotal,
-        customer_tax_id: typeof invoice.aliciVknTckn === 'string' ? invoice.aliciVknTckn : null,
-        customer_name:
-          typeof invoice.aliciUnvanAdSoyad === 'string'
-            ? invoice.aliciUnvanAdSoyad
-            : typeof invoice.aliciUnvan === 'string'
-              ? invoice.aliciUnvan
-              : null,
+        customer_tax_id: cp.customer_tax_id,
+        customer_name: cp.customer_name,
         raw_payload: invoice,
       }
     })

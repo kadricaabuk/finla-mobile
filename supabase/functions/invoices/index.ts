@@ -1,6 +1,10 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
-import { faturaListInvoices, mapInvoicesToFacts } from '../_shared/gib.ts'
+import {
+  faturaGetInvoicesIssuedToMe,
+  faturaListInvoices,
+  mapInvoicesToFacts,
+} from '../_shared/gib.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 import { normalizeTurkish } from '../_shared/turkish.ts'
 
@@ -15,7 +19,17 @@ Deno.serve(async (req) => {
 
   try {
     const username = await getSubjectFromAuthHeader(req)
-    const { startDate, endDate, customerName, amountGte, amountEq } = await req.json()
+    const body = await req.json() as {
+      startDate?: string
+      endDate?: string
+      customerName?: string
+      amountGte?: number
+      amountEq?: number
+      /** outgoing = kestiğim; incoming = bana kesilen (gelen) */
+      direction?: 'outgoing' | 'incoming'
+    }
+    const { startDate, endDate, customerName, amountGte, amountEq } = body
+    const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
 
     if (!startDate || !endDate) {
       return Response.json(
@@ -24,12 +38,16 @@ Deno.serve(async (req) => {
       )
     }
 
-    const invoices = await faturaListInvoices(username, startDate, endDate) as unknown[]
-    const facts = mapInvoicesToFacts(username, invoices)
+    const invoices = (
+      direction === 'incoming'
+        ? await faturaGetInvoicesIssuedToMe(username, startDate, endDate)
+        : await faturaListInvoices(username, startDate, endDate)
+    ) as unknown[]
+    const facts = mapInvoicesToFacts(username, invoices, direction)
     if (facts.length > 0) {
       const { error: upsertError } = await supabase
         .from('invoice_facts')
-        .upsert(facts, { onConflict: 'gib_username,invoice_uuid' })
+        .upsert(facts, { onConflict: 'gib_username,invoice_uuid,direction' })
       if (upsertError) console.error('invoice_facts upsert failed', upsertError)
     }
 

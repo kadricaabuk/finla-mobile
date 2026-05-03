@@ -9,7 +9,13 @@
     "ios": "expo start --ios",
     "ios:clean": "npm run ios -- --clear",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:status": "supabase status",
+    "supabase:status:env": "supabase status -o env",
+    "supabase:db:reset": "supabase db reset",
+    "supabase:functions": "supabase functions serve --env-file supabase/.env"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -9,6 +9,7 @@ export {
   loginRequest,
   logoutRequest,
   getUserProfile,
+  updateUserProfile,
   streamChat,
   userFacingApiError,
   type LoginResponse,

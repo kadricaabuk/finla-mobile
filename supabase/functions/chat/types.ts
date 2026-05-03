@@ -7,6 +7,7 @@ export interface ChatAction {
     customerName?: string
     amountGte?: number
     amountEq?: number
+    direction?: 'outgoing' | 'incoming'
   }
   invoice?: InvoiceDetailPayload
   preview?: { title: string; html?: string; uuid?: string; issued?: boolean }

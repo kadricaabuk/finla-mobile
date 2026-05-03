@@ -251,6 +251,13 @@ export async function getUserProfile(): Promise<UserProfileResponse> {
   return callApi<UserProfileResponse>('profile', {})
 }
 
+/** GİB portal profil kaydını günceller; yalnızca gönderilen alanlar değişir. */
+export async function updateUserProfile(
+  updates: Partial<UserProfile>,
+): Promise<UserProfileResponse> {
+  return callApi<UserProfileResponse>('profile', { updates })
+}
+
 /**
  * Authenticated POST to a function name (e.g. chat, invoices).
  * On 401, refreshes once and retries.
@@ -279,7 +286,7 @@ export async function callApi<T>(functionName: string, body: object): Promise<T>
 export interface StreamChatHandlers {
   onMeta?: (conversationId: string) => void
   onDelta?: (text: string) => void
-  onTool?: (phase: 'start' | 'end', name: string) => void
+  onTool?: (phase: 'start' | 'end', name: string) => void | Promise<void>
 }
 
 /** Aynı task icinde sirayla gelen NDJSON'da react state batching yuzunden ara durumlar boyanmayabilir. */
@@ -312,7 +319,7 @@ async function consumeChatNdjson(
         handlers.onDelta?.(ev.text)
         break
       case 'tool':
-        handlers.onTool?.(ev.phase, ev.name)
+        await Promise.resolve(handlers.onTool?.(ev.phase, ev.name))
         await yieldToUiForStreamStatus()
         break
       case 'error':

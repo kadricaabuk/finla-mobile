@@ -1,3 +1,4 @@
+import type { FinlaFeatures } from "@/types/features";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useRef } from "react";
@@ -14,7 +15,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { FinlaFeatures } from "@/types/features";
 
 const MENU_WIDTH = 280;
 
@@ -211,8 +211,7 @@ export default function SideMenu({
             <TouchableOpacity
               style={[
                 styles.navBtn,
-                activeScreen === "incoming_invoices" &&
-                  styles.navBtnCurrent,
+                activeScreen === "incoming_invoices" && styles.navBtnCurrent,
               ]}
               onPress={() => {
                 if (activeScreen === "incoming_invoices") {
@@ -225,7 +224,7 @@ export default function SideMenu({
               activeOpacity={0.7}
             >
               <Ionicons name="download-outline" size={18} color="#000" />
-              <Text style={styles.navBtnLabel}>Gelen faturalar</Text>
+              <Text style={styles.navBtnLabel}>Gelen Faturalar</Text>
             </TouchableOpacity>
           ) : null}
 

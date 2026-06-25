@@ -1,0 +1,20 @@
+# Navigate to outgoing invoices (Faturalarım). Requires outgoingInvoices feature flag.
+
+appId: com.finla.app
+---
+- runFlow:
+    when:
+      notVisible:
+        id: "side-menu-outgoing-invoices"
+    commands:
+      - tapOn:
+          id: "header-menu"
+- tapOn:
+    id: "side-menu-outgoing-invoices"
+- extendedWaitUntil:
+    visible:
+      id: "invoices-title"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-filter-bu_ay"
+- assertVisible: "Bu Ay"

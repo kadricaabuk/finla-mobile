@@ -99,6 +99,7 @@ export default function ChatScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
         <IconHeaderButton
+          testID="header-menu"
           name="menu"
           onPress={openMenu}
           accessibilityLabel="Menü"

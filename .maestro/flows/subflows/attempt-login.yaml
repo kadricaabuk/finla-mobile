@@ -1,0 +1,62 @@
+# Single login attempt. Called with env TEST_USERNAME / TEST_PASSWORD.
+# On failure: waits for alert after loading ends, dismisses, fails fast (no 30s chat wait).
+
+appId: com.finla.app
+---
+- tapOn:
+    text: "OK"
+    optional: true
+    label: "Dismiss alert (EN)"
+- tapOn:
+    text: "Tamam"
+    optional: true
+    label: "Dismiss alert (TR)"
+- tapOn:
+    id: "login-username"
+- eraseText
+- inputText: ${TEST_USERNAME}
+- tapOn:
+    id: "login-password"
+- eraseText
+- inputText: ${TEST_PASSWORD}
+- tapOn: "finla"
+- tapOn:
+    id: "login-submit"
+- extendedWaitUntil:
+    notVisible:
+      id: "login-loading"
+    timeout: 45000
+    label: "Wait for login request to finish"
+- runFlow:
+    when:
+      visible:
+        id: "login-username"
+    commands:
+      - extendedWaitUntil:
+          visible: "GİB Oturumu Açık"
+          timeout: 5000
+          optional: true
+      - extendedWaitUntil:
+          visible: "Giriş Başarısız"
+          timeout: 2000
+          optional: true
+      - extendedWaitUntil:
+          visible: "Bağlantı Hatası"
+          timeout: 2000
+          optional: true
+      - extendedWaitUntil:
+          visible: "OK"
+          timeout: 3000
+          optional: true
+      - extendedWaitUntil:
+          visible: "Tamam"
+          timeout: 3000
+          optional: true
+      - tapOn:
+          text: "OK"
+          optional: true
+      - tapOn:
+          text: "Tamam"
+          optional: true
+- assertVisible:
+    id: "chat-input"

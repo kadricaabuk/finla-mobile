@@ -1,0 +1,85 @@
+# Tries test users 33333301–33333309 until chat screen appears.
+
+appId: com.finla.app
+---
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333301"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333302"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333303"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333304"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333305"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333306"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333307"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333308"
+      TEST_PASSWORD: "1"
+- runFlow:
+    when:
+      notVisible:
+        id: "chat-input"
+    optional: true
+    file: attempt-login.yaml
+    env:
+      TEST_USERNAME: "33333309"
+      TEST_PASSWORD: "1"

@@ -124,6 +124,7 @@ export default function LoginScreen() {
             <View style={styles.field}>
               <Text style={styles.label}>Kullanıcı Kodu</Text>
               <TextInput
+                testID="login-username"
                 nativeID="kullaniciKodu"
                 accessibilityLabel="Kullanıcı kodu"
                 style={styles.input}
@@ -142,6 +143,7 @@ export default function LoginScreen() {
             <View style={styles.field}>
               <Text style={styles.label}>Şifre</Text>
               <TextInput
+                testID="login-password"
                 nativeID="sifre"
                 accessibilityLabel="Şifre"
                 style={styles.input}
@@ -160,13 +162,15 @@ export default function LoginScreen() {
             </View>
 
             <TouchableOpacity
+              testID="login-submit"
+              accessibilityLabel="Giriş Yap"
               style={[styles.button, loading && styles.buttonDisabled]}
               onPress={handleLogin}
               disabled={loading}
               activeOpacity={0.85}
             >
               {loading ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator testID="login-loading" color="#fff" />
               ) : (
                 <Text style={styles.buttonText}>Giriş Yap</Text>
               )}

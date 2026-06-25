@@ -1,0 +1,3 @@
+# Maestro workspace config — https://docs.maestro.dev
+flows:
+  - flows/*

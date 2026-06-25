@@ -92,11 +92,12 @@ export default function InvoicesScreen({
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
         <IconHeaderButton
+          testID="header-menu"
           name="menu"
           onPress={openMenu}
           accessibilityLabel="Menü"
         />
-        <Text style={styles.title} numberOfLines={1}>
+        <Text testID="invoices-title" style={styles.title} numberOfLines={1}>
           {headerTitle}
         </Text>
         <View style={styles.headerRight}>

@@ -50,6 +50,8 @@ export default function ChatInput({
         )} */}
 
         <TextInput
+          testID="chat-input"
+          accessibilityLabel="Finla'ya sor"
           style={[styles.input, disabled && styles.inputDisabled]}
           value={text}
           onChangeText={setText}
@@ -62,6 +64,8 @@ export default function ChatInput({
 
         {hasText && (
           <TouchableOpacity
+            testID="chat-send"
+            accessibilityLabel="Gönder"
             style={[
               styles.circleBtn,
               styles.actionBtn,

@@ -1,0 +1,13 @@
+# Chat send test (login + message + assistant reply)
+#
+# Run: npm run maestro:chat
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/send-chat.yaml

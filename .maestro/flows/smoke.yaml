@@ -1,0 +1,18 @@
+# P0 smoke test: login → chat → menu → invoices → logout
+#
+# Run: npm run maestro:smoke
+# Requires: test env, feature_flags.outgoingInvoices enabled
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+- assertVisible: "finla"
+- assertVisible: "Kullanıcı Kodu"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/send-chat.yaml
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-outgoing-invoices.yaml
+- runFlow: subflows/logout.yaml

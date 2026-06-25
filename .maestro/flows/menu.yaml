@@ -1,0 +1,13 @@
+# Side menu test (login + open menu + conversations loaded)
+#
+# Run: npm run maestro:menu
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml

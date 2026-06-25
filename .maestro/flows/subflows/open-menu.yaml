@@ -1,0 +1,12 @@
+# Open side menu and wait for conversations section.
+
+appId: com.finla.app
+---
+- tapOn:
+    id: "header-menu"
+- assertVisible:
+    id: "side-menu-new-chat"
+- assertVisible: "Sohbetler"
+- extendedWaitUntil:
+    notVisible: "Yükleniyor…"
+    timeout: 30000

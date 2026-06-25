@@ -72,7 +72,10 @@ export function ChatMessageBubble({
   const markdownWrap = pending ? styles.markdownPendingWrap : undefined;
 
   return (
-    <View style={bubbleStyles}>
+    <View
+      testID={msg.role === "assistant" ? "chat-assistant-message" : "chat-user-message"}
+      style={bubbleStyles}
+    >
       {msg.role === "user" ? (
         <Text style={[styles.bubbleText, styles.userText]}>{msg.text}</Text>
       ) : hasMarkdownTable(msg.text) ? (

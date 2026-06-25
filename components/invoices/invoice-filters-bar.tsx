@@ -34,6 +34,7 @@ export function InvoiceFiltersBar({
         {INVOICE_DATE_PRESETS.map((p) => (
           <TouchableOpacity
             key={p.key}
+            testID={`invoice-filter-${p.key}`}
             style={[
               styles.chip,
               !customRange && preset === p.key && styles.chipActive,

@@ -1,0 +1,14 @@
+# Logout via side menu → login screen.
+
+appId: com.finla.app
+---
+- tapOn:
+    id: "header-menu"
+- tapOn:
+    id: "side-menu-logout"
+- extendedWaitUntil:
+    visible:
+      id: "login-username"
+    timeout: 30000
+- assertVisible:
+    id: "login-submit"

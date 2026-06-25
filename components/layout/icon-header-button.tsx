@@ -14,6 +14,7 @@ interface IconHeaderButtonProps extends Omit<TouchableOpacityProps, "style"> {
   name: IoniconsName;
   size?: number;
   color?: string;
+  testID?: string;
 }
 
 export function IconHeaderButton({
@@ -21,10 +22,12 @@ export function IconHeaderButton({
   size = 24,
   color = "#000",
   accessibilityLabel,
+  testID,
   ...rest
 }: IconHeaderButtonProps) {
   return (
     <TouchableOpacity
+      testID={testID}
       style={styles.btn}
       hitSlop={HIT_SLOP}
       accessibilityRole="button"

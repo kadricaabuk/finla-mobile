@@ -1,0 +1,14 @@
+# Send a chat message and wait for assistant reply.
+
+appId: com.finla.app
+---
+- tapOn:
+    id: "chat-input"
+- inputText: "Merhaba"
+- tapOn:
+    id: "chat-send"
+- assertVisible: "Merhaba"
+- extendedWaitUntil:
+    visible:
+      id: "chat-assistant-message"
+    timeout: 120000

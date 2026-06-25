@@ -171,6 +171,7 @@ export default function SideMenu({
           }
         >
           <TouchableOpacity
+            testID="side-menu-new-chat"
             style={[
               styles.newChatBtn,
               activeScreen === "chat" &&
@@ -188,6 +189,7 @@ export default function SideMenu({
 
           {features.outgoingInvoices ? (
             <TouchableOpacity
+              testID="side-menu-outgoing-invoices"
               style={[
                 styles.navBtn,
                 activeScreen === "invoices" && styles.navBtnCurrent,
@@ -209,6 +211,7 @@ export default function SideMenu({
 
           {features.incomingInvoices ? (
             <TouchableOpacity
+              testID="side-menu-incoming-invoices"
               style={[
                 styles.navBtn,
                 activeScreen === "incoming_invoices" && styles.navBtnCurrent,
@@ -230,6 +233,7 @@ export default function SideMenu({
 
           {features.profile ? (
             <TouchableOpacity
+              testID="side-menu-profile"
               style={[
                 styles.navBtn,
                 activeScreen === "profile" && styles.navBtnCurrent,
@@ -326,7 +330,12 @@ export default function SideMenu({
                 </Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
+            <TouchableOpacity
+              testID="side-menu-logout"
+              accessibilityLabel="Çıkış"
+              style={styles.logoutBtn}
+              onPress={onLogout}
+            >
               {logoutLoading ? (
                 <ActivityIndicator size="small" color="#888" />
               ) : (

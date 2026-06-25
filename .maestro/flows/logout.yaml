@@ -1,0 +1,13 @@
+# Logout test
+#
+# Run: npm run maestro:logout
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/logout.yaml

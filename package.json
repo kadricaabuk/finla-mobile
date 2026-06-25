@@ -5,17 +5,26 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "ios:clean": "npm run ios -- --clear",
+    "ios:open": "open ios/finla.xcworkspace",
     "web": "expo start --web",
     "lint": "expo lint",
+    "maestro:login": "maestro test .maestro/flows/login.yaml",
+    "maestro:smoke": "maestro test .maestro/flows/smoke.yaml",
+    "maestro:chat": "maestro test .maestro/flows/chat-send.yaml",
+    "maestro:menu": "maestro test .maestro/flows/menu.yaml",
+    "maestro:invoices": "maestro test .maestro/flows/invoices.yaml",
+    "maestro:logout": "maestro test .maestro/flows/logout.yaml",
+    "maestro:test": "maestro test .maestro/flows/",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:status": "supabase status",
     "supabase:status:env": "supabase status -o env",
     "supabase:db:reset": "supabase db reset",
-    "supabase:functions": "supabase functions serve --env-file supabase/.env"
+    "supabase:functions": "supabase functions serve --env-file supabase/.env",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -57,6 +66,7 @@
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true

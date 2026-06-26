@@ -6,7 +6,10 @@ import {
   type StoredTokens,
 } from "@/lib/session";
 import type { ChatMessageAction } from "@/types/chat-actions";
-import { asChatStreamLine } from "@/types/chat-stream";
+import {
+  asChatStreamLine,
+  type ChatStreamEventToolLog,
+} from "@/types/chat-stream";
 import type { FinlaFeatures } from "@/types/features";
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(
@@ -18,6 +21,60 @@ const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 /** Chat NDJSON ile birlikte aynı uç için JSON düşüşü (Accept). */
 export const CHAT_STREAM_ACCEPT_HEADER =
   "application/x-ndjson, application/json;q=0.9";
+
+const API_DEV_LOG_MAX_STRING = 2_000;
+const API_DEV_LOG_MAX_ARRAY = 20;
+const API_DEV_LOG_MAX_DEPTH = 6;
+
+function newApiDevRequestId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function devLogApi(payload: Record<string, unknown>): void {
+  if (!__DEV__) return;
+  console.log("[finla api]", {
+    ts: new Date().toISOString(),
+    ...payload,
+  });
+}
+
+function sanitizeForApiDevLog(value: unknown, depth = 0): unknown {
+  if (depth > API_DEV_LOG_MAX_DEPTH) return "[max_depth]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") {
+    if (value.length <= API_DEV_LOG_MAX_STRING) return value;
+    return `${value.slice(0, API_DEV_LOG_MAX_STRING)}…[+${value.length - API_DEV_LOG_MAX_STRING} chars]`;
+  }
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    const sliced = value
+      .slice(0, API_DEV_LOG_MAX_ARRAY)
+      .map((item) => sanitizeForApiDevLog(item, depth + 1));
+    if (value.length > API_DEV_LOG_MAX_ARRAY) {
+      sliced.push(`…[+${value.length - API_DEV_LOG_MAX_ARRAY} items]`);
+    }
+    return sliced;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      /password|sms_code|token|cred|secret|refresh/i.test(key) ||
+      key === "code"
+    ) {
+      out[key] = "[redacted]";
+      continue;
+    }
+    if (
+      (key === "preview_html" || key === "html") &&
+      typeof raw === "string"
+    ) {
+      out[key] = `[html ${raw.length} chars]`;
+      continue;
+    }
+    out[key] = sanitizeForApiDevLog(raw, depth + 1);
+  }
+  return out;
+}
 
 function assertConfig(): void {
   if (!API_BASE_URL || !ANON_KEY) {
@@ -171,29 +228,60 @@ let refreshPromise: Promise<StoredTokens> | null = null;
 
 async function performRefresh(refreshToken: string): Promise<StoredTokens> {
   assertConfig();
-  const res = await fetch(`${API_BASE_URL}/refresh`, {
+  const requestId = newApiDevRequestId();
+  const startedAt = Date.now();
+  devLogApi({
+    request_id: requestId,
+    phase: "request",
+    function: "refresh",
     method: "POST",
-    headers: publicHeaders(),
-    body: JSON.stringify({ refreshToken }),
+    body: { refreshToken: "[redacted]" },
   });
-  const body = (await parseJsonOrThrow(res)) as {
-    success?: boolean;
-    accessToken?: string;
-    refreshToken?: string;
-    expiresIn?: number;
-    error?: string;
-  };
-  if (body.success === false || !body.accessToken || !body.refreshToken) {
-    throw new Error(body.error ?? "Token yenileme başarısız.");
+  try {
+    const res = await fetch(`${API_BASE_URL}/refresh`, {
+      method: "POST",
+      headers: publicHeaders(),
+      body: JSON.stringify({ refreshToken }),
+    });
+    const body = (await parseJsonOrThrow(res)) as {
+      success?: boolean;
+      accessToken?: string;
+      refreshToken?: string;
+      expiresIn?: number;
+      error?: string;
+    };
+    if (body.success === false || !body.accessToken || !body.refreshToken) {
+      throw new Error(body.error ?? "Token yenileme başarısız.");
+    }
+    const expiresIn = typeof body.expiresIn === "number" ? body.expiresIn : 900;
+    const tokens: StoredTokens = {
+      accessToken: body.accessToken,
+      refreshToken: body.refreshToken,
+      expiresAtMs: Date.now() + expiresIn * 1000,
+    };
+    await saveTokens(tokens);
+    devLogApi({
+      request_id: requestId,
+      phase: "response",
+      function: "refresh",
+      status: res.status,
+      duration_ms: Date.now() - startedAt,
+      body: sanitizeForApiDevLog({
+        success: body.success,
+        expiresIn: body.expiresIn,
+      }),
+    });
+    return tokens;
+  } catch (err) {
+    devLogApi({
+      request_id: requestId,
+      phase: "error",
+      function: "refresh",
+      duration_ms: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   }
-  const expiresIn = typeof body.expiresIn === "number" ? body.expiresIn : 900;
-  const tokens: StoredTokens = {
-    accessToken: body.accessToken,
-    refreshToken: body.refreshToken,
-    expiresAtMs: Date.now() + expiresIn * 1000,
-  };
-  await saveTokens(tokens);
-  return tokens;
 }
 
 async function refreshTokensLocked(): Promise<StoredTokens | null> {
@@ -267,24 +355,80 @@ export async function loginRequest(
   password: string,
 ): Promise<LoginResponse> {
   assertConfig();
-  const res = await fetch(`${API_BASE_URL}/login`, {
+  const requestId = newApiDevRequestId();
+  const startedAt = Date.now();
+  devLogApi({
+    request_id: requestId,
+    phase: "request",
+    function: "login",
     method: "POST",
-    headers: publicHeaders(),
-    body: JSON.stringify({ username, password }),
+    body: sanitizeForApiDevLog({ username, password }),
   });
-  const body = (await parseJsonOrThrow(res)) as LoginResponse;
-  return body;
+  try {
+    const res = await fetch(`${API_BASE_URL}/login`, {
+      method: "POST",
+      headers: publicHeaders(),
+      body: JSON.stringify({ username, password }),
+    });
+    const body = (await parseJsonOrThrow(res)) as LoginResponse;
+    devLogApi({
+      request_id: requestId,
+      phase: "response",
+      function: "login",
+      status: res.status,
+      duration_ms: Date.now() - startedAt,
+      body: sanitizeForApiDevLog(body),
+    });
+    return body;
+  } catch (err) {
+    devLogApi({
+      request_id: requestId,
+      phase: "error",
+      function: "login",
+      duration_ms: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 /** Logout — Bearer access token */
 export async function logoutRequest(accessToken: string): Promise<void> {
   assertConfig();
-  const res = await fetch(`${API_BASE_URL}/logout`, {
+  const requestId = newApiDevRequestId();
+  const startedAt = Date.now();
+  devLogApi({
+    request_id: requestId,
+    phase: "request",
+    function: "logout",
     method: "POST",
-    headers: authHeaders(accessToken),
-    body: JSON.stringify({}),
+    body: {},
   });
-  await parseJsonOrThrow(res);
+  try {
+    const res = await fetch(`${API_BASE_URL}/logout`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({}),
+    });
+    const body = await parseJsonOrThrow(res);
+    devLogApi({
+      request_id: requestId,
+      phase: "response",
+      function: "logout",
+      status: res.status,
+      duration_ms: Date.now() - startedAt,
+      body: sanitizeForApiDevLog(body),
+    });
+  } catch (err) {
+    devLogApi({
+      request_id: requestId,
+      phase: "error",
+      function: "logout",
+      duration_ms: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 /** Authenticated user profile from GIB session. */
@@ -335,6 +479,16 @@ export async function callApi<T>(
   let tokens = await getTokens();
   if (!tokens) throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
 
+  const requestId = newApiDevRequestId();
+  const startedAt = Date.now();
+  devLogApi({
+    request_id: requestId,
+    phase: "request",
+    function: functionName,
+    method: "POST",
+    body: sanitizeForApiDevLog(body),
+  });
+
   const doFetch = async (access: string) =>
     fetch(`${API_BASE_URL}/${functionName}`, {
       method: "POST",
@@ -342,20 +496,45 @@ export async function callApi<T>(
       body: JSON.stringify(body),
     });
 
-  let res = await doFetch(tokens.accessToken);
-  if (res.status === 401) {
-    const refreshed = await refreshTokensLocked();
-    if (!refreshed)
-      throw new Error("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
-    res = await doFetch(refreshed.accessToken);
+  try {
+    let res = await doFetch(tokens.accessToken);
+    let retried = false;
+    if (res.status === 401) {
+      const refreshed = await refreshTokensLocked();
+      if (!refreshed) {
+        throw new Error("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+      }
+      retried = true;
+      res = await doFetch(refreshed.accessToken);
+    }
+    const parsed = (await parseJsonOrThrow(res)) as T;
+    devLogApi({
+      request_id: requestId,
+      phase: "response",
+      function: functionName,
+      status: res.status,
+      retried_after_401: retried,
+      duration_ms: Date.now() - startedAt,
+      body: sanitizeForApiDevLog(parsed),
+    });
+    return parsed;
+  } catch (err) {
+    devLogApi({
+      request_id: requestId,
+      phase: "error",
+      function: functionName,
+      duration_ms: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   }
-  return parseJsonOrThrow(res) as Promise<T>;
 }
 
 export interface StreamChatHandlers {
   onMeta?: (conversationId: string) => void;
   onDelta?: (text: string) => void;
   onTool?: (phase: "start" | "end", name: string) => void | Promise<void>;
+  onToolLog?: (log: ChatStreamEventToolLog) => void;
 }
 
 /** Aynı task icinde sirayla gelen NDJSON'da react state batching yuzunden ara durumlar boyanmayabilir. */
@@ -394,6 +573,12 @@ async function consumeChatNdjson(
       case "tool":
         await Promise.resolve(handlers.onTool?.(ev.phase, ev.name));
         await yieldToUiForStreamStatus();
+        break;
+      case "tool_log":
+        if (__DEV__) {
+          console.log("[finla tool]", ev);
+        }
+        handlers.onToolLog?.(ev);
         break;
       case "error":
         throw new Error(ev.message);
@@ -484,11 +669,23 @@ export async function streamChat(
   let tokens = await getTokens();
   if (!tokens) throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
 
-  const body = JSON.stringify({
+  const requestId = newApiDevRequestId();
+  const startedAt = Date.now();
+  const requestBody = {
     message: payload.message,
     conversationId: payload.conversationId,
     stream: true,
+  };
+  devLogApi({
+    request_id: requestId,
+    phase: "request",
+    function: "chat",
+    method: "POST",
+    stream: true,
+    body: sanitizeForApiDevLog(requestBody),
   });
+
+  const body = JSON.stringify(requestBody);
 
   const doFetch = async (access: string) =>
     fetch(`${API_BASE_URL}/chat`, {
@@ -498,39 +695,87 @@ export async function streamChat(
       signal: options?.signal,
     });
 
-  let res = await doFetch(tokens.accessToken);
-  if (res.status === 401) {
-    const refreshed = await refreshTokensLocked();
-    if (!refreshed)
-      throw new Error("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
-    res = await doFetch(refreshed.accessToken);
-  }
+  try {
+    let res = await doFetch(tokens.accessToken);
+    let retried = false;
+    if (res.status === 401) {
+      const refreshed = await refreshTokensLocked();
+      if (!refreshed) {
+        throw new Error("Oturum süresi doldu. Lütfen tekrar giriş yapın.");
+      }
+      retried = true;
+      res = await doFetch(refreshed.accessToken);
+    }
 
-  if (!res.ok) {
-    await parseJsonOrThrow(res);
-  }
+    if (!res.ok) {
+      await parseJsonOrThrow(res);
+    }
 
-  const ct = (res.headers.get("content-type") ?? "").toLowerCase();
-  if (ct.includes("ndjson")) {
-    return consumeChatNdjson(res, handlers);
-  }
+    const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+    const isNdjson = ct.includes("ndjson");
+    devLogApi({
+      request_id: requestId,
+      phase: "response_meta",
+      function: "chat",
+      status: res.status,
+      retried_after_401: retried,
+      content_type: ct,
+      stream: isNdjson,
+      duration_ms: Date.now() - startedAt,
+    });
 
-  const json = (await parseJsonOrThrow(res)) as {
-    message?: string;
-    conversationId?: string;
-    action?: ChatMessageAction;
-  };
-  if (
-    typeof json.message !== "string" ||
-    typeof json.conversationId !== "string"
-  ) {
-    throw new Error("Sunucu yanıtı beklenen biçimde değil.");
+    if (isNdjson) {
+      const result = await consumeChatNdjson(res, handlers);
+      devLogApi({
+        request_id: requestId,
+        phase: "response",
+        function: "chat",
+        stream: true,
+        duration_ms: Date.now() - startedAt,
+        body: sanitizeForApiDevLog({
+          message: result.message,
+          conversationId: result.conversationId,
+          action: result.action ?? null,
+        }),
+      });
+      return result;
+    }
+
+    const json = (await parseJsonOrThrow(res)) as {
+      message?: string;
+      conversationId?: string;
+      action?: ChatMessageAction;
+    };
+    if (
+      typeof json.message !== "string" ||
+      typeof json.conversationId !== "string"
+    ) {
+      throw new Error("Sunucu yanıtı beklenen biçimde değil.");
+    }
+    const result = {
+      message: json.message,
+      conversationId: json.conversationId,
+      action: json.action,
+    };
+    devLogApi({
+      request_id: requestId,
+      phase: "response",
+      function: "chat",
+      stream: false,
+      duration_ms: Date.now() - startedAt,
+      body: sanitizeForApiDevLog(result),
+    });
+    return result;
+  } catch (err) {
+    devLogApi({
+      request_id: requestId,
+      phase: "error",
+      function: "chat",
+      duration_ms: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   }
-  return {
-    message: json.message,
-    conversationId: json.conversationId,
-    action: json.action,
-  };
 }
 
 /** @deprecated use callApi */

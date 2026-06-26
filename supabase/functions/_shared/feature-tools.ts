@@ -11,6 +11,7 @@ export function allowedToolNames(f: FinlaFeatures): Set<string> {
   if (f.outgoingInvoices) {
     [
       "lookup_recipient",
+      "get_exchange_rate",
       "create_invoice",
       "confirm_invoice_issue",
       "request_invoice_sign_otp",

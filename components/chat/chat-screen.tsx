@@ -168,6 +168,7 @@ export default function ChatScreen() {
 
       <InvoicePreviewModal
         action={previewAction}
+        conversationId={conversationId}
         onClose={() => setPreviewAction(null)}
       />
 

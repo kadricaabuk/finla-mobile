@@ -19,7 +19,10 @@ export interface ChatMessageAction {
   preview?: {
     title: string;
     html?: string;
+    pdfBase64?: string;
     uuid?: string;
+    /** GİB fatura tarihi (MM/DD/YYYY) — invoice-html için */
+    draftDate?: string;
     /** true = kesilmiş fatura HTML (signed); false = taslak önizleme */
     issued?: boolean;
   };

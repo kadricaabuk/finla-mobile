@@ -71,12 +71,20 @@ export function isBadCredentialsError(err: unknown): boolean {
 
 export function isRecoverableAuthError(err: unknown): boolean {
   const msg = normalizeMsg(err)
+  if (
+    msg.includes('unexpected token') ||
+    msg.includes('not valid json') ||
+    msg.includes('<html')
+  ) {
+    return false
+  }
   return (
     msg.includes('clientip') ||
     msg.includes('oturum geçersiz') ||
     msg.includes('oturum gecersiz') ||
     msg.includes('session invalid') ||
-    msg.includes('token') ||
+    msg.includes('geçersiz token') ||
+    msg.includes('gecersiz token') ||
     msg.includes('yetkisiz') ||
     msg.includes('unauthorized')
   )

@@ -1,3 +1,5 @@
+import { normalizeGibUnit } from './gib-unit-codes.ts'
+
 export interface InvoiceLineItem {
   name: string
   quantity: number
@@ -10,9 +12,14 @@ export interface CreateInvoiceInput {
   buyerName: string
   buyerTaxId?: string
   buyerAddress?: string
+  /** Alıcı vergi dairesi (opsiyonel; lookup_recipient sonucundan). */
+  taxOffice?: string
   items: InvoiceLineItem[]
+  /** GG/AA/YYYY (Türkçe); GİB API'ye MM/DD/YYYY olarak dönüştürülür. */
   date?: string
   currency?: string
+  /** Dövizli fatura: 1 birim dövizin TL karşılığı (ör. USD için 40.50). */
+  currencyRate?: string
 }
 
 export type InvoiceDirection = 'outgoing' | 'incoming'
@@ -32,9 +39,25 @@ export interface InvoiceFactRow {
   raw_payload: Record<string, unknown>
 }
 
-function todayFormatted(): string {
+/** Bugünün tarihi GG/AA/YYYY (chat / tool girdisi). */
+function todayTrFormatted(): string {
   const d = new Date()
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
+}
+
+/**
+ * GİB fatura oluşturma API'si MM/DD/YYYY bekler (fatura integration testleri).
+ * Finla girdisi GG/AA/YYYY → AA/GG/YYYY.
+ */
+export function trDateToGibApiFormat(trDate: string): string {
+  const m = trDate.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return trDate.trim()
+  const [, dd, mm, yyyy] = m
+  return `${mm}/${dd}/${yyyy}`
+}
+
+export function todayGibApiFormatted(): string {
+  return trDateToGibApiFormat(todayTrFormatted())
 }
 
 function nowTimeFormatted(): string {
@@ -42,15 +65,30 @@ function nowTimeFormatted(): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
+export function normalizeCurrencyRate(raw: string): string {
+  const normalized = raw.trim().replace(/\./g, '').replace(',', '.')
+  const n = Number(normalized)
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      'Dövizli fatura için geçerli bir kur oranı gerekli (exchange_rate: 1 birim dövizin TL karşılığı).',
+    )
+  }
+  return n.toFixed(4).replace(/\.?0+$/, '') || n.toString()
+}
+
+function resolveBuyerTaxId(buyerTaxId: string | undefined): string {
+  const id = typeof buyerTaxId === 'string' ? buyerTaxId.replace(/\s/g, '') : ''
+  return id
+}
+
 /** GİB HTML: TCKN (11 hane) alıcıda "SAYIN" adı çoğunlukla aliciAdi/aliciSoyadi; VKN (10 hane) için aliciUnvan. */
 function recipientNameFields(
   buyerName: string,
-  taxId: string | undefined,
+  taxId: string,
 ): { title: string; name?: string; surname?: string } {
   const trimmed = buyerName.trim()
-  const id = typeof taxId === 'string' ? taxId.replace(/\s/g, '') : ''
-  const isVkn = id.length === 10 && /^\d{10}$/.test(id)
-  const isTckn = id.length === 11 && /^\d{11}$/.test(id)
+  const isVkn = taxId.length === 10 && /^\d{10}$/.test(taxId)
+  const isTckn = taxId.length === 11 && /^\d{11}$/.test(taxId)
 
   if (isVkn) {
     return { title: trimmed }
@@ -67,13 +105,25 @@ function recipientNameFields(
 }
 
 export function buildInvoiceDetails(input: CreateInvoiceInput) {
+  const currency = (input.currency?.trim().toUpperCase() || 'TRY')
+  let currencyRate: string | undefined
+  if (currency !== 'TRY') {
+    const rawRate = input.currencyRate?.trim()
+    if (!rawRate) {
+      throw new Error(
+        'Dövizli fatura için exchange_rate zorunludur (1 birim dövizin TL karşılığı, örn. 40.50).',
+      )
+    }
+    currencyRate = normalizeCurrencyRate(rawRate)
+  }
+
   const items = input.items.map((item) => {
     const totalAmount = item.quantity * item.unitPrice
     const vatAmount = Math.round(totalAmount * item.vatRate) / 100
     return {
       name: item.name,
       quantity: item.quantity,
-      unitType: item.unit || 'ADET',
+      unitType: normalizeGibUnit(item.unit),
       unitPrice: item.unitPrice,
       price: totalAmount,
       VATRate: item.vatRate,
@@ -83,24 +133,56 @@ export function buildInvoiceDetails(input: CreateInvoiceInput) {
   })
   const grandTotal = items.reduce((s, i) => s + i.price, 0)
   const totalVAT = items.reduce((s, i) => s + i.VATAmount, 0)
-  const taxId = input.buyerTaxId?.replace(/\s/g, '') || '11111111111'
+  const taxId = resolveBuyerTaxId(input.buyerTaxId)
   const { title, name, surname } = recipientNameFields(input.buyerName, taxId)
+  const trDate = input.date?.trim() || todayTrFormatted()
+  const gibDate = trDateToGibApiFormat(trDate)
+  const taxOffice =
+    typeof input.taxOffice === 'string' ? input.taxOffice.trim() : ''
+  const fullAddress = input.buyerAddress?.trim() || 'Test Sokak No:1'
+  const country = 'Türkiye'
 
   return {
-    date: input.date || todayFormatted(),
+    date: gibDate,
     time: nowTimeFormatted(),
-    currency: input.currency || 'TRY',
+    currency,
+    ...(currencyRate !== undefined ? { currencyRate } : {}),
     taxIDOrTRID: taxId,
-    title,
+    ...(title ? { title } : {}),
     ...(name !== undefined ? { name } : {}),
     ...(surname !== undefined ? { surname } : {}),
-    fullAddress: input.buyerAddress || '',
-    taxOffice: 'ISTANBUL',
+    fullAddress,
+    country,
+    ...(taxOffice ? { taxOffice } : {}),
     items,
     grandTotal,
     totalVAT,
     grandTotalInclVAT: grandTotal + totalVAT,
     paymentTotal: grandTotal + totalVAT,
+  }
+}
+
+/** create_invoice hata loglarında GİB'e giden normalize alanların özeti. */
+export function summarizeGibInvoicePayload(input: CreateInvoiceInput) {
+  try {
+    const details = buildInvoiceDetails(input)
+    const trDate = input.date?.trim() || todayTrFormatted()
+    return {
+      tr_date: trDate,
+      gib_date: details.date,
+      country: details.country,
+      tax_office: details.taxOffice,
+      full_address: details.fullAddress,
+      units: details.items.map((i) => i.unitType),
+      currency: details.currency,
+      tax_id_len: resolveBuyerTaxId(input.buyerTaxId).length,
+    }
+  } catch (e) {
+    return {
+      summary_error: e instanceof Error ? e.message : String(e),
+      tr_date: input.date,
+      units: input.items.map((i) => normalizeGibUnit(i.unit)),
+    }
   }
 }
 
@@ -118,7 +200,10 @@ function parseIssueDate(value: unknown): string | null {
   const m = value.trim().match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/)
   if (!m) return null
   const year = m[3].length === 2 ? `20${m[3]}` : m[3]
-  return `${year}-${m[2]}-${m[1]}`
+  // GİB faturaTarihi alanı MM/DD/YYYY döner
+  const month = m[1]
+  const day = m[2]
+  return `${year}-${month}-${day}`
 }
 
 function normalizeStatus(value: unknown): string {
@@ -219,4 +304,107 @@ export function mapInvoicesToFacts(
       }
     })
     .filter((row): row is InvoiceFactRow => row !== null)
+}
+
+export type LocalDraftPreviewInput = {
+  buyer_name?: string
+  buyer_tax_id?: string
+  date?: string
+  currency?: string
+  items?: {
+    name?: string
+    quantity?: number
+    unit?: string
+    unit_price?: number
+    vat_rate?: number
+  }[]
+}
+
+function formatTry(amount: number): string {
+  return amount.toLocaleString('tr-TR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+/** GİB HTML/PDF alınamazsa gösterilecek yerel özet önizleme. */
+export function buildLocalDraftPreviewHtml(
+  input: LocalDraftPreviewInput,
+): string {
+  const currency = (input.currency?.trim().toUpperCase() || 'TRY')
+  const rows = (input.items ?? []).map((item) => {
+    const qty = Number(item.quantity ?? 1)
+    const unitPrice = Number(item.unit_price ?? 0)
+    const vatRate = Number(item.vat_rate ?? 0)
+    const net = qty * unitPrice
+    const vat = Math.round(net * vatRate) / 100
+    const gross = net + vat
+    return {
+      name: item.name?.trim() || 'Kalem',
+      qty,
+      unit: item.unit?.trim() || 'adet',
+      unitPrice,
+      vatRate,
+      net,
+      vat,
+      gross,
+    }
+  })
+  const netTotal = rows.reduce((s, r) => s + r.net, 0)
+  const vatTotal = rows.reduce((s, r) => s + r.vat, 0)
+  const grossTotal = netTotal + vatTotal
+  const buyer = [input.buyer_name, input.buyer_tax_id].filter(Boolean).join(' · ')
+
+  const itemRows = rows
+    .map(
+      (r) =>
+        `<tr>
+          <td>${escapeHtml(r.name)}</td>
+          <td style="text-align:right">${r.qty} ${escapeHtml(r.unit)}</td>
+          <td style="text-align:right">${formatTry(r.unitPrice)}</td>
+          <td style="text-align:right">%${r.vatRate}</td>
+          <td style="text-align:right">${formatTry(r.gross)}</td>
+        </tr>`,
+    )
+    .join('')
+
+  return `<!DOCTYPE html>
+<html lang="tr">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:16px;color:#111;line-height:1.45}
+  .banner{background:#fff8e6;border:1px solid #f0d78c;border-radius:8px;padding:12px;margin-bottom:16px;font-size:14px}
+  h1{font-size:20px;margin:0 0 8px}
+  .meta{color:#555;font-size:14px;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid #e5e5e5;padding:8px 4px;vertical-align:top}
+  th{text-align:left;color:#666;font-weight:600}
+  tfoot td{font-weight:600;border-top:2px solid #ccc}
+</style></head>
+<body>
+  <div class="banner">GİB resmi önizlemesi şu an alınamadı. Aşağıda taslak özeti gösteriliyor; tutarları kontrol edip onaylayabilirsin.</div>
+  <h1>Taslak Fatura Özeti</h1>
+  <div class="meta">
+    ${buyer ? `<div>Alıcı: ${escapeHtml(buyer)}</div>` : ''}
+    ${input.date ? `<div>Tarih: ${escapeHtml(input.date)}</div>` : ''}
+    <div>Para birimi: ${escapeHtml(currency)}</div>
+  </div>
+  <table>
+    <thead><tr><th>Kalem</th><th style="text-align:right">Miktar</th><th style="text-align:right">Birim fiyat</th><th style="text-align:right">KDV</th><th style="text-align:right">Toplam</th></tr></thead>
+    <tbody>${itemRows}</tbody>
+    <tfoot>
+      <tr><td colspan="4">Ara toplam</td><td style="text-align:right">${formatTry(netTotal)} ${currency}</td></tr>
+      <tr><td colspan="4">KDV</td><td style="text-align:right">${formatTry(vatTotal)} ${currency}</td></tr>
+      <tr><td colspan="4">Genel toplam</td><td style="text-align:right">${formatTry(grossTotal)} ${currency}</td></tr>
+    </tfoot>
+  </table>
+</body></html>`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }

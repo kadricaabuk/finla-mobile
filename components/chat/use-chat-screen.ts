@@ -45,6 +45,8 @@ function toolStatusText(rawName: string): string {
       return "Toplamlar araştırılıyor…";
     case "lookup_recipient":
       return "Alıcı bilgileri araştırılıyor…";
+    case "get_exchange_rate":
+      return "Döviz kuru alınıyor…";
     case "get_user_profile":
       return "Profil bilgileri alınıyor…";
     case "update_user_profile":
@@ -358,6 +360,12 @@ export function useChatScreen() {
             res.action.sign_otp?.draftUuid
           ) {
             setSignOtpAction(res.action);
+          }
+          if (
+            res.action?.type === "open_invoice_preview" &&
+            (res.action.preview?.uuid || res.action.preview?.html)
+          ) {
+            setPreviewAction(res.action);
           }
           if (isNewThread && res.conversationId)
             void refreshConversationList("none");

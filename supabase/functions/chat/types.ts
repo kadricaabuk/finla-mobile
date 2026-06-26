@@ -44,6 +44,7 @@ export type InvoiceDetailPayload = {
 }
 
 export interface PendingInvoiceState {
+  status?: 'exchange_rate_pending' | 'preview_ready'
   draft?: { date?: string; uuid?: string }
   request?: {
     buyer_name?: string
@@ -51,6 +52,14 @@ export interface PendingInvoiceState {
     items?: { quantity?: number; unit_price?: number; vat_rate?: number }[]
     currency?: string
     date?: string
+    exchange_rate?: string
+  }
+  exchange_rate_quote?: {
+    currency: string
+    rate: string
+    rate_date: string
+    source: string
+    rate_type: string
   }
   preview_html?: string
   signing?: {

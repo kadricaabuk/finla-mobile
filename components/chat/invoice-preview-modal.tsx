@@ -2,12 +2,18 @@ import { injectHtmlViewport } from "@/lib/inject-html-viewport";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { ChatMessageAction } from "@/types/chat-actions";
 import { Ionicons } from "@expo/vector-icons";
+import {
+  cacheDirectory,
+  EncodingType,
+  writeAsStringAsync,
+} from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -18,39 +24,98 @@ import WebView from "react-native-webview";
 
 interface InvoicePreviewModalProps {
   action: ChatMessageAction | null;
+  conversationId: string | null;
   onClose: () => void;
+}
+
+type InvoiceHtmlResponse = {
+  html?: string;
+  pdfBase64?: string;
+};
+
+async function writePdfToCache(
+  uuid: string,
+  pdfBase64: string,
+): Promise<string> {
+  const baseDir =
+    typeof cacheDirectory === "string" && cacheDirectory.length > 0
+      ? cacheDirectory
+      : "";
+  if (!baseDir) {
+    throw new Error("Dosya önbelleği kullanılamıyor.");
+  }
+  const path = `${baseDir}invoice-preview-${uuid}.pdf`;
+  await writeAsStringAsync(path, pdfBase64, {
+    encoding: EncodingType.Base64,
+  });
+  return path;
 }
 
 export function InvoicePreviewModal({
   action,
+  conversationId,
   onClose,
 }: InvoicePreviewModalProps) {
   const [fetchedHtml, setFetchedHtml] = useState<string | null>(null);
+  const [fetchedPdfUri, setFetchedPdfUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   const uuid = action?.preview?.uuid;
   const propHtml = action?.preview?.html;
+  const propPdfBase64 = action?.preview?.pdfBase64;
+  const draftDate = action?.preview?.draftDate;
   const issued = action?.preview?.issued ?? false;
 
   const visible =
     action?.type === "open_invoice_preview" &&
-    !!(action.preview?.uuid || action.preview?.html);
+    !!(action.preview?.uuid || action.preview?.html || action.preview?.pdfBase64);
 
   const html = propHtml ?? fetchedHtml;
+  const pdfUri = fetchedPdfUri;
 
   useEffect(() => {
     if (!visible) {
       setFetchedHtml(null);
+      setFetchedPdfUri(null);
       setError(null);
       setLoadingHtml(false);
       setRetryKey(0);
       return;
     }
 
-    if (propHtml || !uuid) {
+    if (propHtml) {
       setFetchedHtml(null);
+      setFetchedPdfUri(null);
+      setError(null);
+      setLoadingHtml(false);
+      return;
+    }
+
+    if (propPdfBase64 && uuid) {
+      let cancelled = false;
+      setLoadingHtml(true);
+      setError(null);
+      setFetchedPdfUri(null);
+      void writePdfToCache(uuid, propPdfBase64)
+        .then((uri) => {
+          if (!cancelled) setFetchedPdfUri(uri);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(userFacingApiError(e));
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingHtml(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!uuid) {
+      setFetchedHtml(null);
+      setFetchedPdfUri(null);
       setError(null);
       setLoadingHtml(false);
       return;
@@ -60,20 +125,35 @@ export function InvoicePreviewModal({
     setLoadingHtml(true);
     setError(null);
     setFetchedHtml(null);
+    setFetchedPdfUri(null);
 
     const run = async () => {
       const fetchOnce = async (signed: boolean) =>
-        callApi<{ html: string }>("invoice-html", {
+        callApi<InvoiceHtmlResponse>("invoice-html", {
           invoiceUuid: uuid,
           signed,
+          ...(draftDate ? { draftDate } : {}),
+          ...(conversationId ? { conversationId } : {}),
         });
+
+      const applyResponse = async (res: InvoiceHtmlResponse) => {
+        if (res.html) {
+          setFetchedHtml(res.html);
+          return;
+        }
+        if (res.pdfBase64) {
+          const uri = await writePdfToCache(uuid, res.pdfBase64);
+          setFetchedPdfUri(uri);
+        }
+      };
+
       try {
         const res = await fetchOnce(issued);
-        if (!cancelled) setFetchedHtml(res.html);
+        if (!cancelled) await applyResponse(res);
       } catch {
         try {
           const res = await fetchOnce(!issued);
-          if (!cancelled) setFetchedHtml(res.html);
+          if (!cancelled) await applyResponse(res);
         } catch (e2) {
           if (!cancelled) setError(userFacingApiError(e2));
         }
@@ -86,7 +166,18 @@ export function InvoicePreviewModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, uuid, propHtml, issued, retryKey]);
+  }, [
+    visible,
+    uuid,
+    propHtml,
+    propPdfBase64,
+    draftDate,
+    issued,
+    retryKey,
+    conversationId,
+  ]);
+
+  const hasContent = !!html || !!pdfUri;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -97,18 +188,23 @@ export function InvoicePreviewModal({
               {action?.preview?.title || "Fatura Önizleme"}
             </Text>
             <View style={styles.previewHeaderButtons}>
-              {html ? (
+              {hasContent ? (
                 <TouchableOpacity
                   style={styles.previewHeaderBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   onPress={async () => {
-                    const { uri } = await Print.printToFileAsync({
-                      html,
-                      base64: false,
-                    });
+                    let shareUri = pdfUri;
+                    if (!shareUri && html) {
+                      const { uri } = await Print.printToFileAsync({
+                        html,
+                        base64: false,
+                      });
+                      shareUri = uri;
+                    }
+                    if (!shareUri) return;
                     const canShare = await Sharing.isAvailableAsync();
                     if (canShare) {
-                      await Sharing.shareAsync(uri, {
+                      await Sharing.shareAsync(shareUri, {
                         mimeType: "application/pdf",
                         dialogTitle: "Fatura PDF",
                         UTI: "com.adobe.pdf",
@@ -129,12 +225,12 @@ export function InvoicePreviewModal({
             </View>
           </View>
 
-          {loadingHtml && !html ? (
+          {loadingHtml && !hasContent ? (
             <View style={styles.centered}>
               <ActivityIndicator size="large" color="#000" />
               <Text style={styles.hint}>Önizleme yükleniyor…</Text>
             </View>
-          ) : error && !html ? (
+          ) : error && !hasContent ? (
             <View style={styles.centered}>
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity
@@ -152,6 +248,17 @@ export function InvoicePreviewModal({
               originWhitelist={["*"]}
               javaScriptEnabled={false}
               scrollEnabled
+            />
+          ) : pdfUri ? (
+            <WebView
+              source={{ uri: pdfUri }}
+              style={styles.previewWebView}
+              originWhitelist={["*"]}
+              javaScriptEnabled={false}
+              scrollEnabled
+              {...(Platform.OS === "android"
+                ? { allowFileAccess: true, allowFileAccessFromFileURLs: true }
+                : {})}
             />
           ) : null}
         </SafeAreaView>

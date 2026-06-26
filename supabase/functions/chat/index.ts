@@ -7,6 +7,7 @@ import {
   faturaConfirmInvoiceIssue,
   faturaCreateInvoicePreview,
   faturaGetInvoiceHtml,
+  gibGetInvoicePreview,
   faturaGetUserData,
   faturaGetInvoicesIssuedToMe,
   faturaListInvoices,
@@ -18,6 +19,17 @@ import {
   mergeGibUserDataPatch,
 } from "../_shared/gib.ts";
 import { createInvoicesExcelExport } from "../_shared/invoices-excel-export.ts";
+import {
+  fetchTcmbExchangeRate,
+  isForeignInvoiceCurrency,
+  type SupportedExchangeCurrency,
+} from "../_shared/exchange-rate.ts";
+import {
+  buildLocalDraftPreviewHtml,
+  normalizeCurrencyRate,
+  summarizeGibInvoicePayload,
+  type CreateInvoiceInput,
+} from "../_shared/invoice-mapper.ts";
 import {
   featureFlags,
   loadFeatureFlags,
@@ -287,6 +299,51 @@ function classifyGibOperationError(
     }
   }
   if (
+    (toolName === "create_invoice" || toolName === "get_exchange_rate") &&
+    lower.includes("tcmb kur")
+  ) {
+    return {
+      code: "EXCHANGE_RATE_UNAVAILABLE",
+      message:
+        "TCMB kur bilgisine şu an ulaşılamadı. Biraz sonra tekrar dene veya kur oranını manuel gir.",
+    };
+  }
+  if (
+    toolName === "create_invoice" &&
+    (lower.includes("exchange_rate") ||
+      lower.includes("kur oranı") ||
+      lower.includes("kur orani") ||
+      lower.includes("dövizli fatura") ||
+      lower.includes("dovizli fatura"))
+  ) {
+    return {
+      code: "MISSING_EXCHANGE_RATE",
+      message:
+        "Dövizli fatura için kur oranı gerekli. 1 birim dövizin TL karşılığını sor (ör. USD için 40.50).",
+    };
+  }
+  if (
+    toolName === "create_invoice" &&
+    (lower.includes("önizleme html") || lower.includes("html alınamadı"))
+  ) {
+    return {
+      code: "PREVIEW_HTML_UNAVAILABLE",
+      message:
+        "Fatura taslağı oluşturuldu ancak önizleme HTML'i şu an alınamadı. Taslak GİB'de mevcut; onay akışına devam edilebilir.",
+    };
+  }
+  if (
+    toolName === "create_invoice" &&
+    (lower.includes("string index out of range") ||
+      lower.includes("index out of range"))
+  ) {
+    return {
+      code: "INVALID_INVOICE_DATA",
+      message:
+        "Fatura verisi GİB tarafından işlenemedi. Birim kodu, kur oranı veya alıcı bilgilerini kontrol et.",
+    };
+  }
+  if (
     lower.includes("tarih") &&
     (lower.includes("geçersiz") ||
       lower.includes("hatalı") ||
@@ -324,6 +381,122 @@ function classifyGibOperationError(
   return { code: "GIB_ERROR", message: raw };
 }
 
+const TOOL_LOG_MAX_STRING = 2_000;
+const TOOL_LOG_MAX_ARRAY = 20;
+const TOOL_LOG_MAX_DEPTH = 6;
+
+type ToolCallLogMeta = {
+  source?: "agent" | "fast_path";
+  tool_use_id?: string;
+  agent_round?: number;
+  ndjsonWriter?: WritableStreamDefaultWriter<Uint8Array> | null;
+};
+
+function sanitizeForToolLog(value: unknown, depth = 0): unknown {
+  if (depth > TOOL_LOG_MAX_DEPTH) return "[max_depth]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") {
+    if (value.length <= TOOL_LOG_MAX_STRING) return value;
+    return `${value.slice(0, TOOL_LOG_MAX_STRING)}…[+${value.length - TOOL_LOG_MAX_STRING} chars]`;
+  }
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    const sliced = value
+      .slice(0, TOOL_LOG_MAX_ARRAY)
+      .map((item) => sanitizeForToolLog(item, depth + 1));
+    if (value.length > TOOL_LOG_MAX_ARRAY) {
+      sliced.push(`…[+${value.length - TOOL_LOG_MAX_ARRAY} items]`);
+    }
+    return sliced;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (/password|sms_code|token|cred|secret|refresh/i.test(key)) {
+      out[key] = "[redacted]";
+      continue;
+    }
+    if (key === "code" && typeof raw === "string") {
+      out[key] = "[redacted]";
+      continue;
+    }
+    if (
+      (key === "preview_html" || key === "html") &&
+      typeof raw === "string"
+    ) {
+      out[key] = `[html ${raw.length} chars]`;
+      continue;
+    }
+    out[key] = sanitizeForToolLog(raw, depth + 1);
+  }
+  return out;
+}
+
+async function logToolCallJson(
+  payload: Record<string, unknown>,
+  ndjsonWriter?: WritableStreamDefaultWriter<Uint8Array> | null,
+): Promise<void> {
+  const ts = new Date().toISOString();
+  console.log(
+    JSON.stringify({
+      ts,
+      event: "tool_call",
+      ...payload,
+    }),
+  );
+  if (!ndjsonWriter) return;
+  const phase = payload.phase;
+  if (phase !== "start" && phase !== "success" && phase !== "error") return;
+  const tool = payload.tool;
+  const conversation_id = payload.conversation_id;
+  const gib_username = payload.gib_username;
+  if (
+    typeof tool !== "string" ||
+    typeof conversation_id !== "string" ||
+    typeof gib_username !== "string"
+  ) {
+    return;
+  }
+  await ndjsonWriter.write(
+    encodeNdjsonEvent({
+      type: "tool_log",
+      ts,
+      phase,
+      tool,
+      conversation_id,
+      gib_username,
+      ...(typeof payload.source === "string"
+        ? { source: payload.source as "agent" | "fast_path" }
+        : {}),
+      ...(typeof payload.tool_use_id === "string"
+        ? { tool_use_id: payload.tool_use_id }
+        : {}),
+      ...(typeof payload.agent_round === "number"
+        ? { agent_round: payload.agent_round }
+        : {}),
+      ...(payload.input !== undefined ? { input: payload.input } : {}),
+      ...(payload.output !== undefined ? { output: payload.output } : {}),
+      ...(typeof payload.user_message_preview === "string"
+        ? { user_message_preview: payload.user_message_preview }
+        : {}),
+      ...(typeof payload.duration_ms === "number"
+        ? { duration_ms: payload.duration_ms }
+        : {}),
+      ...(typeof payload.error_message === "string"
+        ? { error_message: payload.error_message }
+        : {}),
+      ...(typeof payload.error_code === "string"
+        ? { error_code: payload.error_code }
+        : {}),
+      ...(typeof payload.error_classified_message === "string"
+        ? { error_classified_message: payload.error_classified_message }
+        : {}),
+      ...(payload.gib_payload_debug !== undefined
+        ? { gib_payload_debug: payload.gib_payload_debug }
+        : {}),
+    }),
+  );
+}
+
 /** DB'ye yazılacak action: HTML ve geçici OTP UI'sı çıkarılır (boyut ve süre dolmuş kartlar). */
 function persistableAction(
   action: ChatAction | null,
@@ -337,6 +510,7 @@ function persistableAction(
       preview: {
         uuid: action.preview?.uuid,
         title: action.preview?.title ?? "Önizleme",
+        draftDate: action.preview?.draftDate,
         issued:
           typeof action.preview?.issued === "boolean"
             ? action.preview.issued
@@ -363,11 +537,72 @@ function persistableAction(
   }
 }
 
+function wantsInvoicePreviewOrDownload(message: string): boolean {
+  const msgNorm = normalizeTurkish(message);
+  return (
+    /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
+    /\b(taslak|taslagi|onizle|pdf|indir|goster|goruntule|gormek|gor|tam\s*fatura|paylas)\b/i
+      .test(msgNorm)
+  );
+}
+
+/** Mevcut taslağı gösterme niyeti (yeni taslak oluşturma / onay değil). */
+function isDraftPreviewIntent(message: string): boolean {
+  if (!wantsInvoicePreviewOrDownload(message)) return false;
+  const msgNorm = normalizeTurkish(message);
+  return !/\b(onayliyorum|onay|kes|olustur|yeni\s*fatura|yeniden)\b/.test(msgNorm);
+}
+
+async function buildPendingDraftPreviewAction(
+  username: string,
+  pending: PendingInvoiceState,
+): Promise<ChatAction | null> {
+  const uuid = pending.draft?.uuid;
+  const draftDate = pending.draft?.date;
+  if (!uuid) return null;
+
+  let html =
+    typeof pending.preview_html === "string" ? pending.preview_html : "";
+  let pdfBase64: string | undefined;
+
+  if (!html.length) {
+    try {
+      const preview = await gibGetInvoicePreview(
+        username,
+        uuid,
+        false,
+        draftDate,
+      );
+      html = preview.html ?? "";
+      pdfBase64 = preview.pdfBase64;
+    } catch (err) {
+      console.error("buildPendingDraftPreviewAction preview failed", err);
+    }
+  }
+
+  if (!html.length && !pdfBase64 && pending.request) {
+    html = buildLocalDraftPreviewHtml(pending.request);
+  }
+
+  return {
+    type: "open_invoice_preview",
+    label: "Taslağı Gör",
+    preview: {
+      title: "Taslak Fatura Önizleme",
+      ...(html.length > 0 ? { html } : {}),
+      ...(pdfBase64 ? { pdfBase64 } : {}),
+      uuid,
+      ...(draftDate ? { draftDate } : {}),
+      issued: false,
+    },
+  };
+}
+
 function assistantFallbackForAction(action: ChatAction | null): string {
   if (!action) return "";
   switch (action.type) {
     case "open_invoice_preview":
-      return "Önizleme hazır — alttaki düğmeyle açıp kontrol edebilirsin.";
+      return "Taslak hazır — önizlemeyi kontrol edebilirsin. Uygunsa onaylayıp imzalamaya geçebilirsin.";
     case "open_invoices":
       return "Fatura listesi hazır — alttaki düğmeyle ekranı açabilirsin.";
     case "open_invoice_detail":
@@ -419,7 +654,7 @@ function parseFiltersFromText(text: string): InvoiceSearchFilters {
   return filters;
 }
 
-async function executeTool(
+async function executeToolImpl(
   toolName: string,
   input: Record<string, unknown>,
   username: string,
@@ -517,7 +752,52 @@ async function executeTool(
     case "lookup_recipient":
       return faturaLookupRecipient(username, input.tax_id as string);
 
+    case "get_exchange_rate": {
+      const currency = input.currency as string;
+      if (!isForeignInvoiceCurrency(currency)) {
+        throw new Error("Sadece USD veya EUR kuru sorgulanabilir.");
+      }
+      const quote = await fetchTcmbExchangeRate(
+        currency as SupportedExchangeCurrency,
+        typeof input.date === "string" ? input.date : undefined,
+      );
+      return {
+        status: "ok",
+        currency: quote.currency,
+        exchange_rate: quote.rate,
+        rate_date: quote.rateDate,
+        source: quote.source,
+        rate_type: quote.rateType,
+        message:
+          `TCMB ${quote.rateDate} döviz satış kuru: 1 ${quote.currency} = ${quote.rate} TL`,
+      };
+    }
+
     case "create_invoice": {
+      const { data: convPending } = await supabase
+        .from("conversations")
+        .select("pending_invoice")
+        .eq("id", conversationId)
+        .single();
+      const existingPending =
+        convPending?.pending_invoice as PendingInvoiceState | null;
+      if (
+        existingPending?.status === "preview_ready" &&
+        existingPending?.draft?.uuid
+      ) {
+        const hasHtml =
+          typeof existingPending.preview_html === "string" &&
+          existingPending.preview_html.length > 0;
+        return {
+          status: "preview_ready",
+          draft_uuid: existingPending.draft.uuid,
+          reused_existing: true,
+          ...(hasHtml ? {} : { preview_html_pending: true }),
+          message:
+            "Zaten bir fatura taslağı var. Önizlemeyi açıp kontrol et; uygunsa onayla.",
+        };
+      }
+
       const items = input.items as {
         name: string;
         quantity: number;
@@ -525,10 +805,62 @@ async function executeTool(
         unit_price: number;
         vat_rate: number;
       }[];
-      const preview = await faturaCreateInvoicePreview(username, {
+      const currency =
+        typeof input.currency === "string"
+          ? input.currency.trim().toUpperCase()
+          : "TRY";
+      const invoiceDate =
+        typeof input.date === "string" ? input.date : undefined;
+      const providedRate =
+        typeof input.exchange_rate === "string"
+          ? input.exchange_rate.trim()
+          : "";
+
+      let resolvedRate = providedRate;
+      if (isForeignInvoiceCurrency(currency) && !resolvedRate) {
+        const quote = await fetchTcmbExchangeRate(
+          currency as SupportedExchangeCurrency,
+          invoiceDate,
+        );
+        await supabase
+          .from("conversations")
+          .update({
+            pending_invoice: {
+              status: "exchange_rate_pending",
+              exchange_rate_quote: {
+                currency: quote.currency,
+                rate: quote.rate,
+                rate_date: quote.rateDate,
+                source: quote.source,
+                rate_type: quote.rateType,
+              },
+              request: input,
+            },
+          })
+          .eq("id", conversationId);
+
+        return {
+          status: "exchange_rate_confirmation",
+          currency: quote.currency,
+          exchange_rate: quote.rate,
+          rate_date: quote.rateDate,
+          source: quote.source,
+          rate_type: quote.rateType,
+          message:
+            `TCMB ${quote.rateDate} kuru: 1 ${quote.currency} = ${quote.rate} TL (döviz satış). Bu kurla fatura taslağı oluşturmamı onaylıyor musun? Farklı bir kur istersen belirt.`,
+        };
+      }
+
+      if (isForeignInvoiceCurrency(currency) && resolvedRate) {
+        resolvedRate = normalizeCurrencyRate(resolvedRate);
+      }
+
+      const invoiceInput: CreateInvoiceInput = {
         buyerName: input.buyer_name as string,
         buyerTaxId: input.buyer_tax_id as string | undefined,
         buyerAddress: input.buyer_address as string | undefined,
+        taxOffice:
+          typeof input.tax_office === "string" ? input.tax_office : undefined,
         items: items.map((i) => ({
           name: i.name,
           quantity: i.quantity,
@@ -536,16 +868,31 @@ async function executeTool(
           unitPrice: i.unit_price,
           vatRate: i.vat_rate,
         })),
-        date: input.date as string | undefined,
-        currency: input.currency as string | undefined,
-      });
+        date: invoiceDate,
+        currency,
+        currencyRate: resolvedRate || undefined,
+      };
+
+      const preview = await faturaCreateInvoicePreview(username, invoiceInput);
 
       await supabase
         .from("conversations")
         .update({
           pending_invoice: {
+            status: "preview_ready",
             draft: preview.draft,
-            request: input,
+            request: { ...input, exchange_rate: resolvedRate || undefined },
+            ...(isForeignInvoiceCurrency(currency)
+              ? {
+                exchange_rate_quote: {
+                  currency,
+                  rate: resolvedRate,
+                  rate_date: invoiceDate ?? "",
+                  source: providedRate ? "user" : "TCMB",
+                  rate_type: "forex_selling",
+                },
+              }
+              : {}),
             preview_html: preview.html,
             created_at: new Date().toISOString(),
           },
@@ -555,7 +902,13 @@ async function executeTool(
       return {
         status: "preview_ready",
         draft_uuid: preview.draft.uuid,
-        message: 'Fatura taslağı hazır. Kesmem için "onaylıyorum" yaz.',
+        ...(isForeignInvoiceCurrency(currency)
+          ? { exchange_rate: resolvedRate, currency }
+          : {}),
+        ...(preview.html.length > 0 ? {} : { preview_html_pending: true }),
+        message: preview.html.length > 0
+          ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve imzalamaya geç."
+          : "Taslak GİB'de oluşturuldu. Önizleme açılacak; uygunsa onayla ve imzalamaya geç.",
       };
     }
 
@@ -941,6 +1294,125 @@ async function executeTool(
   }
 }
 
+function createInvoiceInputFromToolInput(
+  input: Record<string, unknown>,
+): CreateInvoiceInput | null {
+  const items = input.items;
+  if (!Array.isArray(items) || typeof input.buyer_name !== "string") {
+    return null;
+  }
+  const currency =
+    typeof input.currency === "string"
+      ? input.currency.trim().toUpperCase()
+      : "TRY";
+  const resolvedRate =
+    typeof input.exchange_rate === "string" ? input.exchange_rate.trim() : "";
+  return {
+    buyerName: input.buyer_name,
+    buyerTaxId:
+      typeof input.buyer_tax_id === "string" ? input.buyer_tax_id : undefined,
+    buyerAddress:
+      typeof input.buyer_address === "string" ? input.buyer_address : undefined,
+    taxOffice:
+      typeof input.tax_office === "string" ? input.tax_office : undefined,
+    items: items.map((row) => {
+      const i = row as Record<string, unknown>;
+      return {
+        name: String(i.name ?? ""),
+        quantity: Number(i.quantity ?? 1),
+        unit: String(i.unit ?? "adet"),
+        unitPrice: Number(i.unit_price ?? 0),
+        vatRate: Number(i.vat_rate ?? 20),
+      };
+    }),
+    date: typeof input.date === "string" ? input.date : undefined,
+    currency,
+    currencyRate: resolvedRate || undefined,
+  };
+}
+
+async function executeTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  username: string,
+  userMessage: string,
+  conversationId: string,
+  logMeta?: ToolCallLogMeta,
+): Promise<unknown> {
+  const startedAt = Date.now();
+  const { ndjsonWriter, ...metaRest } = logMeta ?? {};
+  const logBase = {
+    tool: toolName,
+    conversation_id: conversationId,
+    gib_username: username,
+    ...metaRest,
+  };
+  await logToolCallJson(
+    {
+      ...logBase,
+      phase: "start",
+      input: sanitizeForToolLog(input),
+      user_message_preview:
+        userMessage.length > 200
+          ? `${userMessage.slice(0, 200)}…`
+          : userMessage,
+    },
+    ndjsonWriter,
+  );
+
+  try {
+    const result = await executeToolImpl(
+      toolName,
+      input,
+      username,
+      userMessage,
+      conversationId,
+    );
+    await logToolCallJson(
+      {
+        ...logBase,
+        phase: "success",
+        duration_ms: Date.now() - startedAt,
+        output: sanitizeForToolLog(result),
+      },
+      ndjsonWriter,
+    );
+    return result;
+  } catch (err) {
+    const classified = classifyGibOperationError(err, toolName);
+    const gibPayloadDebug =
+      toolName === "create_invoice"
+        ? (() => {
+          const mapped = createInvoiceInputFromToolInput(input);
+          return mapped ? summarizeGibInvoicePayload(mapped) : undefined;
+        })()
+        : undefined;
+    let classifiedMessage = classified.message;
+    if (
+      classified.code === "INVALID_INVOICE_DATA" &&
+      gibPayloadDebug !== undefined
+    ) {
+      classifiedMessage =
+        `${classified.message} [gib_debug: ${JSON.stringify(gibPayloadDebug)}]`;
+    }
+    await logToolCallJson(
+      {
+        ...logBase,
+        phase: "error",
+        duration_ms: Date.now() - startedAt,
+        error_message: err instanceof Error ? err.message : String(err),
+        error_code: classified.code,
+        error_classified_message: classifiedMessage,
+        ...(gibPayloadDebug !== undefined
+          ? { gib_payload_debug: gibPayloadDebug }
+          : {}),
+      },
+      ndjsonWriter,
+    );
+    throw err;
+  }
+}
+
 const MAX_AGENT_ROUNDS = 28;
 
 function assembleResponseContractAgent(f: FinlaFeatures): string {
@@ -957,6 +1429,15 @@ function assembleResponseContractAgent(f: FinlaFeatures): string {
     `Fatura arama/filtreleme:`,
   ];
   if (f.outgoingInvoices) {
+    lines.push(
+      `- Fatura kesim akisi: (1) create_invoice ile taslak olustur, (2) kullanici onizlemeyi gorur, (3) onay + SMS imza.`,
+    );
+    lines.push(
+      `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR CAGIRMA; kullaniciya mevcut taslagi onizle.`,
+    );
+    lines.push(
+      `- Kullanici "taslagi gor", "onizle", "pdf" derse yeni taslak olusturma; mevcut pending taslak varsa onu ac.`,
+    );
     lines.push(
       `- list_invoices aracindan bos sonuc gelirse, kullanilan tarih ve filtre kriterlerini kullaniciya bildir (ornek: "Ahmet icin bu ay fatura bulunamadi").`,
     );
@@ -984,6 +1465,10 @@ function assembleResponseContractAgent(f: FinlaFeatures): string {
     `Hata yonetimi (arac sonucunda "error_code" varsa):`,
     `- INVALID_TAX_ID: "Bu VKN/TCKN gecersiz gorunuyor, numarayi kontrol eder misin?" diye sor.`,
     `- INVALID_DATE: "Tarih formati yanlis — GG/AA/YYYY formatinda girer misin?" de.`,
+    `- MISSING_EXCHANGE_RATE: USD/EUR fatura icin get_exchange_rate ile TCMB kurunu goster veya kullanicidan kur iste.`,
+    `- EXCHANGE_RATE_CONFIRMATION: create_invoice "exchange_rate_confirmation" dondururse TCMB kurunu ozetle ve onay iste; onaydan sonra ayni parametrelerle exchange_rate gondererek create_invoice tekrar cagir.`,
+    `- EXCHANGE_RATE_UNAVAILABLE: TCMB'ye ulasilamadi; biraz bekle veya manuel kur sor.`,
+    `- INVALID_INVOICE_DATA: Birim, kur veya alici bilgisinde sorun olabilir; kullanicidan eksik bilgiyi netlestir.`,
     `- GIB_UNAVAILABLE: "GIB su an yanit vermiyor, biraz bekleyip tekrar deneyelim." de.`,
     `- SESSION_EXPIRED: "Oturumun sona ermis gibi gorunuyor, uygulamayi kapatip tekrar acmayi dene." de.`,
     `- GIB_ERROR veya diger: Hata mesajini dogal Turkce ile ozetle, kullanici ne yapmasi gerektigini acikla.`,
@@ -1115,6 +1600,12 @@ async function runAnthropicToolLoop(
               username,
               userMsg,
               convId,
+              {
+                source: "agent",
+                tool_use_id: block.id,
+                agent_round: round,
+                ndjsonWriter,
+              },
             );
             if (
               block.name === "invoice_totals" ||
@@ -1311,37 +1802,16 @@ async function finalizeAgentAssistant(opts: {
     };
   }
 
-  const msgNorm = normalizeTurkish(String(userMessage ?? ""));
-  const wantsPreviewOrDownload =
-    /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
-    /\b(onizle|pdf|indir|goster|goruntule|tam\s*fatura|paylas)\b/i.test(
-      msgNorm,
-    );
+  const wantsPreviewOrDownload = wantsInvoicePreviewOrDownload(
+    String(userMessage ?? ""),
+  );
   if (
     f.outgoingInvoices &&
     !action &&
     (wantsPreviewOrDownload || usedToolNames.has("create_invoice"))
   ) {
     if (pending?.draft?.uuid) {
-      try {
-        const html =
-          typeof pending.preview_html === "string" &&
-            pending.preview_html.length > 0
-            ? pending.preview_html
-            : await faturaGetInvoiceHtml(username, pending.draft.uuid, false);
-        action = {
-          type: "open_invoice_preview",
-          label: "Onizleme PDF",
-          preview: {
-            title: "Taslak Fatura Önizleme",
-            html,
-            uuid: pending.draft.uuid,
-            issued: false,
-          },
-        };
-      } catch (err) {
-        console.error("pending draft preview html failed", err);
-      }
+      action = await buildPendingDraftPreviewAction(username, pending);
     } else if (last?.uuid) {
       try {
         const statusLower =
@@ -1564,9 +2034,8 @@ Deno.serve(async (req: Request) => {
       .toLocaleLowerCase("tr-TR")
       .trim();
     const isConfirmMessage =
-      /\b(onayliyorum|onaylıyorum|onay|evet onay|devam)\b/.test(
-        normalizedMessage,
-      ) && !/\b(onaylama|onaysiz|onaysız)\b/.test(normalizedMessage);
+      /\b(onayliyorum|onaylıyorum)\b/.test(normalizedMessage) ||
+      /\bevet\s+onay\b/.test(normalizedMessage);
     const isConfirmAction = requestAction?.type === "confirm_pending_invoice";
     const isRequestOtpAction = requestAction?.type === "request_sign_otp";
     const isVerifyOtpAction = requestAction?.type === "verify_sign_otp";
@@ -1605,6 +2074,7 @@ Deno.serve(async (req: Request) => {
             username,
             message ?? "",
             cid,
+            { source: "fast_path" },
           );
           const result = await executeTool(
             "confirm_invoice_issue",
@@ -1612,6 +2082,7 @@ Deno.serve(async (req: Request) => {
             username,
             message ?? "",
             cid,
+            { source: "fast_path" },
           );
           const payload = result as { uuid?: string; message?: string };
           const directMessage = payload?.uuid
@@ -1643,6 +2114,50 @@ Deno.serve(async (req: Request) => {
             { headers: corsHeaders },
           );
         }
+      }
+    }
+
+    const chatFeatures = getActiveFeatures();
+
+    // Deterministic fast-path: pending taslak önizleme (yeni create_invoice çağırma)
+    if (
+      hasMessage &&
+      chatFeatures.outgoingInvoices &&
+      !isConfirmMessage &&
+      !isConfirmAction &&
+      !isRequestOtpAction &&
+      !isVerifyOtpAction &&
+      isDraftPreviewIntent(message ?? "")
+    ) {
+      const { data: convState, error: pendingErr } = await supabase
+        .from("conversations")
+        .select("pending_invoice")
+        .eq("id", cid)
+        .single();
+      if (pendingErr) throw pendingErr;
+
+      const pending = convState?.pending_invoice as PendingInvoiceState | null;
+      if (pending?.draft?.uuid) {
+        const previewAction = await buildPendingDraftPreviewAction(
+          username,
+          pending,
+        );
+        const directMessage = previewAction
+          ? "Taslak faturanı önizlemede açtım. Kontrol et; uygunsa onayla ve imzalamaya geç."
+          : "Taslak bulunamadı. Önce fatura bilgilerini verip taslak oluşturalım.";
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+        });
+        return Response.json(
+          {
+            message: directMessage,
+            conversationId: cid,
+            action: previewAction,
+          },
+          { headers: corsHeaders },
+        );
       }
     }
 
@@ -1681,6 +2196,7 @@ Deno.serve(async (req: Request) => {
             username,
             message ?? "",
             cid,
+            { source: "fast_path" },
           );
           const payload = result as {
             status?: string;

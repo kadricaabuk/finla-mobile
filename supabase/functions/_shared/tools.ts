@@ -60,6 +60,27 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_exchange_rate',
+    description:
+      'TCMB döviz satış kurunu getirir (1 USD/EUR kaç TL). Dövizli fatura öncesi kur bilgisini kullanıcıya göstermek için kullan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        currency: {
+          type: 'string',
+          description: 'Para birimi',
+          enum: ['USD', 'EUR'],
+        },
+        date: {
+          type: 'string',
+          description:
+            'Fatura tarihi GG/AA/YYYY. Belirtilmezse bugünün TCMB kuru kullanılır.',
+        },
+      },
+      required: ['currency'],
+    },
+  },
+  {
     name: 'create_invoice',
     description:
       'fatura.js üzerinden e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
@@ -72,11 +93,17 @@ export const TOOLS: Anthropic.Tool[] = [
         },
         buyer_tax_id: {
           type: 'string',
-          description: 'Alıcının TC Kimlik No veya Vergi Kimlik No (opsiyonel)',
+          description:
+            'Alıcının TC Kimlik No veya Vergi Kimlik No (opsiyonel). Kullanıcı TCKN/VKN vermek istemezse bu alanı gönderme.',
         },
         buyer_address: {
           type: 'string',
           description: 'Alıcının adresi (opsiyonel)',
+        },
+        tax_office: {
+          type: 'string',
+          description:
+            'Alıcının vergi dairesi (opsiyonel; lookup_recipient sonucundan geçilebilir)',
         },
         items: {
           type: 'array',
@@ -88,11 +115,12 @@ export const TOOLS: Anthropic.Tool[] = [
               quantity: { type: 'number', description: 'Miktar' },
               unit: {
                 type: 'string',
-                description: 'Birim: ADET, KG, SAAT, GÜN, METRE, LITRE, KUTU, vb.',
+                description:
+                  'Ölçü birimi (Türkçe veya GİB kodu): adet, kg, saat, gün, litre, metre, kutu vb. Sistem GİB koduna çevirir (ör. adet→C62, saat→HUR, kg→KGM).',
               },
               unit_price: {
                 type: 'number',
-                description: 'Birim fiyat (KDV hariç, TL cinsinden)',
+                description: 'Birim fiyat (KDV hariç; currency alanındaki para biriminde)',
               },
               vat_rate: {
                 type: 'number',
@@ -111,6 +139,11 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Para birimi',
           enum: ['TRY', 'USD', 'EUR'],
+        },
+        exchange_rate: {
+          type: 'string',
+          description:
+            'Onaylanmış kur: 1 birim dövizin TL karşılığı. Belirtilmezse TCMB kuru otomatik çekilir ve kullanıcı onayı istenir.',
         },
       },
       required: ['buyer_name', 'items'],
@@ -360,6 +393,7 @@ export function assembleSystemPrompt(f: FinlaFeatures): string {
   const capabilityLines: string[] = []
   if (f.outgoingInvoices) {
     capabilityLines.push('- Fatura oluşturma (create_invoice)')
+    capabilityLines.push('- TCMB döviz kuru (get_exchange_rate)')
     capabilityLines.push('- Fatura kesim onayı (confirm_invoice_issue)')
     capabilityLines.push('- İmzalama SMS gönderimi (request_invoice_sign_otp)')
     capabilityLines.push('- İmzalama SMS doğrulaması (verify_invoice_sign_otp)')
@@ -403,10 +437,34 @@ export function assembleSystemPrompt(f: FinlaFeatures): string {
   }
   if (f.outgoingInvoices) {
     ruleLines.push(
+      `- Fatura akışı: (1) create_invoice → taslak, (2) uygulama önizlemeyi açar, (3) kullanıcı onaylar → SMS imza`,
+    )
+    ruleLines.push(
+      `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
+    )
+    ruleLines.push(
       `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al`,
     )
     ruleLines.push(
       `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
+    )
+    ruleLines.push(
+      `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
+    )
+    ruleLines.push(
+      `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,
+    )
+    ruleLines.push(
+      `- Birim alanında Türkçe yaz (adet, saat, kg); sistem GİB koduna çevirir`,
+    )
+    ruleLines.push(
+      `- lookup_recipient boş dönerse bu TEST ortamında normal olabilir; TCKN/VKN kayıtlı değil diye create_invoice hatasını açıklama`,
+    )
+    ruleLines.push(
+      `- create_invoice başarılı (preview_ready) ise taslak oluşmuştur; HTML önizleme alınamasa bile kullanıcı onaylayıp kesebilir`,
+    )
+    ruleLines.push(
+      `- create_invoice INVALID_INVOICE_DATA hatasında birim kodu veya tarih formatı sorunudur; alıcı kimlik numarasını suçlama`,
     )
     ruleLines.push(
       `- confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı`,

@@ -2,10 +2,34 @@
 
 export const NDJSON_CONTENT_TYPE = "application/x-ndjson";
 
+export type NdjsonToolLogPhase = "start" | "success" | "error";
+
+/** Sanitized tool call log — streamed to client in __DEV__ for Chrome DevTools. */
+export type NdjsonToolLogEvent = {
+  type: "tool_log";
+  ts: string;
+  phase: NdjsonToolLogPhase;
+  tool: string;
+  conversation_id: string;
+  gib_username: string;
+  source?: "agent" | "fast_path";
+  tool_use_id?: string;
+  agent_round?: number;
+  input?: unknown;
+  output?: unknown;
+  user_message_preview?: string;
+  duration_ms?: number;
+  error_message?: string;
+  error_code?: string;
+  error_classified_message?: string;
+  gib_payload_debug?: unknown;
+};
+
 export type NdjsonChatEvent =
   | { type: "meta"; conversationId: string }
   | { type: "delta"; text: string }
   | { type: "tool"; phase: "start" | "end"; name: string }
+  | NdjsonToolLogEvent
   | {
     type: "done";
     message: string;

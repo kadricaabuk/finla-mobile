@@ -10,7 +10,7 @@ import {
   asChatStreamLine,
   type ChatStreamEventToolLog,
 } from "@/types/chat-stream";
-import type { FinlaFeatures } from "@/types/features";
+import type { UserProfile } from "@/lib/api";
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(
   /\/$/,
@@ -345,10 +345,6 @@ export interface UserProfileResponse {
   profile: UserProfile;
 }
 
-export interface FeaturesResponse {
-  features: FinlaFeatures;
-}
-
 /** Login — anon gateway + credentials body */
 export async function loginRequest(
   username: string,
@@ -434,11 +430,6 @@ export async function logoutRequest(accessToken: string): Promise<void> {
 /** Authenticated user profile from GIB session. */
 export async function getUserProfile(): Promise<UserProfileResponse> {
   return callApi<UserProfileResponse>("profile", {});
-}
-
-/** Runtime feature flags (source-of-truth: Supabase DB). */
-export async function getFeaturesConfig(): Promise<FeaturesResponse> {
-  return callApi<FeaturesResponse>("features", {});
 }
 
 /** Fatura listesi Excel (.xlsx) — Edge Function `excel-export` */

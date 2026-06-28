@@ -1,4 +1,4 @@
-import { type ConversationSummary } from "@/components/side-menu";
+import type { ConversationSummary } from "@/types/conversations";
 import { callApi } from "@/lib/supabase";
 import { useCallback, useEffect, useState } from "react";
 

@@ -1,13 +1,13 @@
-import { loadFeatureFlags } from '../_shared/feature-config.ts'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
 import {
-  faturaGetInvoicesIssuedToMe,
-  faturaListInvoices,
-  mapInvoicesToFacts,
-} from '../_shared/gib.ts'
+  filterGibInvoicesByFacts,
+  filterInvoiceFacts,
+  syncFactsForRange,
+  type InvoiceFactRow,
+} from '../_shared/invoice-facts.ts'
+import { gibListInvoices, mapInvoicesToFacts } from '../_shared/gib.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
-import { normalizeTurkish } from '../_shared/turkish.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -20,31 +20,16 @@ Deno.serve(async (req: Request) => {
 
   try {
     const username = await getSubjectFromAuthHeader(req)
-    const features = await loadFeatureFlags()
     const body = await req.json() as {
       startDate?: string
       endDate?: string
       customerName?: string
       amountGte?: number
       amountEq?: number
-      /** outgoing = kestiğim; incoming = bana kesilen (gelen) */
       direction?: 'outgoing' | 'incoming'
     }
     const { startDate, endDate, customerName, amountGte, amountEq } = body
-    const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
-
-    if (direction === 'outgoing' && !features.outgoingInvoices) {
-      return Response.json(
-        { error: 'Giden fatura listesi bu sürümde kapalı.' },
-        { status: 403, headers: corsHeaders },
-      )
-    }
-    if (direction === 'incoming' && !features.incomingInvoices) {
-      return Response.json(
-        { error: 'Gelen fatura listesi bu sürümde kapalı.' },
-        { status: 403, headers: corsHeaders },
-      )
-    }
+    const direction = 'outgoing' as const
 
     if (!startDate || !endDate) {
       return Response.json(
@@ -53,11 +38,7 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const invoices = (
-      direction === 'incoming'
-        ? await faturaGetInvoicesIssuedToMe(username, startDate, endDate)
-        : await faturaListInvoices(username, startDate, endDate)
-    ) as unknown[]
+    const invoices = (await gibListInvoices(username, startDate, endDate)) as unknown[]
     const facts = mapInvoicesToFacts(username, invoices, direction)
     if (facts.length > 0) {
       const { error: upsertError } = await supabase
@@ -66,33 +47,19 @@ Deno.serve(async (req: Request) => {
       if (upsertError) console.error('invoice_facts upsert failed', upsertError)
     }
 
-    const hasCustomer = typeof customerName === 'string' && customerName.trim().length > 0
-    const hasAmountGte = typeof amountGte === 'number' && Number.isFinite(amountGte)
-    const hasAmountEq = typeof amountEq === 'number' && Number.isFinite(amountEq)
-
-    let filteredInvoices = invoices
-    if (hasCustomer || hasAmountGte || hasAmountEq) {
-      const normalizedCustomer = hasCustomer ? normalizeTurkish(customerName) : ''
-      const eqTolerance = 0.5
-      const matched = facts
-        .filter((f) => {
-          if (hasCustomer) {
-            const candidate = normalizeTurkish(f.customer_name ?? '')
-            if (!candidate.includes(normalizedCustomer)) return false
-          }
-          const amount = f.gross_total ?? f.net_total ?? 0
-          if (hasAmountGte && amount < amountGte) return false
-          if (hasAmountEq && Math.abs(amount - amountEq) > eqTolerance) return false
-          return true
-        })
-        .map((f) => f.invoice_uuid)
-      const matchedSet = new Set(matched)
-      filteredInvoices = (invoices as Array<Record<string, unknown>>).filter((i) => {
-        const ettn = typeof i.ettn === 'string' ? i.ettn : ''
-        const docNo = typeof i.belgeNumarasi === 'string' ? i.belgeNumarasi : ''
-        return matchedSet.has(ettn) || matchedSet.has(docNo)
-      })
-    }
+    const filters = { customerName, amountGte, amountEq }
+    const factRows = facts as InvoiceFactRow[]
+    const hasFilters = Boolean(
+      (typeof customerName === 'string' && customerName.trim().length > 0) ||
+        (typeof amountGte === 'number' && Number.isFinite(amountGte)) ||
+        (typeof amountEq === 'number' && Number.isFinite(amountEq)),
+    )
+    const matchedFacts = hasFilters
+      ? filterInvoiceFacts(factRows, filters)
+      : factRows
+    const filteredInvoices = hasFilters
+      ? filterGibInvoicesByFacts(invoices, matchedFacts)
+      : invoices
 
     return Response.json({ invoices: filteredInvoices, synced: facts.length }, { headers: corsHeaders })
   } catch (err) {

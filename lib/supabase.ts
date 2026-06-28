@@ -8,7 +8,6 @@ export {
   CHAT_STREAM_ACCEPT_HEADER,
   loginRequest,
   logoutRequest,
-  getFeaturesConfig,
   getUserProfile,
   updateUserProfile,
   exportInvoicesExcel,
@@ -17,7 +16,6 @@ export {
   type LoginResponse,
   type UserProfile,
   type UserProfileResponse,
-  type FeaturesResponse,
   type ExcelExportResponse,
   type StreamChatHandlers,
 } from './api'

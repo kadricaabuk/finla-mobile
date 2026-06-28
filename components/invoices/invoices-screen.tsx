@@ -5,7 +5,6 @@ import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import type { InvoiceDatePreset } from "@/lib/invoice-date-presets";
-import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo } from "react";
 import {
@@ -20,15 +19,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const INVOICES_SHELL_OWNER_ID = "screen-invoices";
-const INCOMING_SHELL_OWNER_ID = "screen-incoming-invoices";
 
-export interface InvoicesScreenProps {
-  invoiceDirection?: InvoiceListDirection;
-}
-
-export default function InvoicesScreen({
-  invoiceDirection = "outgoing",
-}: InvoicesScreenProps) {
+export default function InvoicesScreen() {
   const { openMenu } = useMainAppShell();
   const {
     preset,
@@ -46,31 +38,21 @@ export default function InvoicesScreen({
     fetchInvoices,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
-  } = useInvoicesScreen({ invoiceDirection });
+  } = useInvoicesScreen();
 
-  const shellOwnerId =
-    invoiceDirection === "incoming"
-      ? INCOMING_SHELL_OWNER_ID
-      : INVOICES_SHELL_OWNER_ID;
-  const headerTitle =
-    invoiceDirection === "incoming" ? "Gelen faturalar" : "Faturalarım";
-  const emptyHint =
-    invoiceDirection === "incoming"
-      ? "Bu dönemde gelen fatura bulunamadı."
-      : "Bu dönemde fatura bulunamadı.";
+  const shellOwnerId = INVOICES_SHELL_OWNER_ID;
+  const headerTitle = "Faturalarım";
+  const emptyHint = "Bu dönemde fatura bulunamadı.";
 
   const sideMenuBindings = useMemo(
     () => ({
-      activeScreen:
-        invoiceDirection === "incoming"
-          ? ("incoming_invoices" as const)
-          : ("invoices" as const),
+      activeScreen: "invoices" as const,
       openingConversationId: null,
       activeConversationId: null,
       onNewChat: handleDrawerNewChat,
       onOpenConversation: handleDrawerOpenConversation,
     }),
-    [handleDrawerNewChat, handleDrawerOpenConversation, invoiceDirection],
+    [handleDrawerNewChat, handleDrawerOpenConversation],
   );
 
   useRegisterMainShellSideMenu(shellOwnerId, sideMenuBindings);
@@ -147,7 +129,7 @@ export default function InvoicesScreen({
           data={invoices}
           keyExtractor={(item, i) => item.ettn ?? String(i)}
           renderItem={({ item }) => (
-            <InvoiceRowCard item={item} listDirection={invoiceDirection} />
+            <InvoiceRowCard item={item} listDirection="outgoing" />
           )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}

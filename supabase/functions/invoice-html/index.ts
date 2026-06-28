@@ -1,6 +1,12 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { gibGetInvoicePreview } from '../_shared/gib.ts'
-import { buildLocalDraftPreviewHtml } from '../_shared/invoice-mapper.ts'
+import {
+  buildLocalPreviewFromRequest,
+} from '../_shared/invoice-preview.ts'
+import {
+  loadPendingInvoice,
+  type PendingInvoiceState,
+} from '../_shared/invoice-workflow.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
 
@@ -12,24 +18,8 @@ const supabase = createClient(
 type Body = {
   invoiceUuid?: string
   signed?: boolean
-  /** GİB fatura tarihi MM/DD/YYYY — taslak listesinde eşleşme için */
   draftDate?: string
-  /** GİB önizlemesi patlarsa pending_invoice özeti için */
   conversationId?: string
-}
-
-type PendingRequest = {
-  buyer_name?: string
-  buyer_tax_id?: string
-  date?: string
-  currency?: string
-  items?: Array<{
-    name?: string
-    quantity?: number
-    unit?: string
-    unit_price?: number
-    vat_rate?: number
-  }>
 }
 
 async function loadLocalPreviewFallback(
@@ -45,12 +35,9 @@ async function loadLocalPreviewFallback(
   if (error || !data) return null
   if (data.gib_username !== username) return null
 
-  const pending = data.pending_invoice as {
-    draft?: { uuid?: string }
-    request?: PendingRequest
-  } | null
+  const pending = data.pending_invoice as PendingInvoiceState | null
   if (!pending?.request || pending.draft?.uuid !== invoiceUuid) return null
-  return buildLocalDraftPreviewHtml(pending.request)
+  return buildLocalPreviewFromRequest(pending.request).html ?? null
 }
 
 Deno.serve(async (req: Request) => {

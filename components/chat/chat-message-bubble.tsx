@@ -1,5 +1,4 @@
 import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
-import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
@@ -37,7 +36,6 @@ export function ChatMessageBubble({
   onConfirmPreview,
   onShareExcelExport,
 }: ChatMessageBubbleProps) {
-  const { features } = useMainAppShell();
   const pending = Boolean(streamPending && msg.role === "assistant");
   const showStreamStatusBubble =
     msg.role === "assistant" &&
@@ -89,18 +87,13 @@ export function ChatMessageBubble({
           <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
         </View>
       )}
-      {msg.role === "assistant" && msg.action?.type === "open_invoices" &&
-        (msg.action?.filter?.direction === "incoming"
-          ? features.incomingInvoices
-          : features.outgoingInvoices) && (
+      {msg.role === "assistant" && msg.action?.type === "open_invoices" && (
         <TouchableOpacity
           style={styles.actionButton}
           activeOpacity={0.8}
           onPress={() => {
-            const incoming =
-              msg.action?.filter?.direction === "incoming";
             router.push({
-              pathname: incoming ? "/incoming-invoices" : "/invoices",
+              pathname: "/invoices",
               params: {
                 startDate: msg.action?.filter?.startDate,
                 endDate: msg.action?.filter?.endDate,
@@ -123,8 +116,7 @@ export function ChatMessageBubble({
           </Text>
         </TouchableOpacity>
       )}
-      {features.outgoingInvoices &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_invoice_detail" &&
         msg.action.invoice && (
           <TouchableOpacity
@@ -137,8 +129,7 @@ export function ChatMessageBubble({
             </Text>
           </TouchableOpacity>
         )}
-      {(features.outgoingInvoices || features.incomingInvoices) &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_excel_export" &&
         msg.action.excel_export?.download_url &&
         typeof onShareExcelExport === "function" && (
@@ -154,8 +145,7 @@ export function ChatMessageBubble({
             </Text>
           </TouchableOpacity>
         )}
-      {(features.outgoingInvoices || features.incomingInvoices) &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_excel_export" &&
         !msg.action.excel_export?.download_url && (
           <Text style={styles.expiredHint} numberOfLines={2}>
@@ -163,8 +153,7 @@ export function ChatMessageBubble({
             isteyebilirsin.
           </Text>
         )}
-      {features.outgoingInvoices &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_invoice_preview" &&
         (msg.action.preview?.html || msg.action.preview?.uuid) && (
           <View style={styles.actionRow}>

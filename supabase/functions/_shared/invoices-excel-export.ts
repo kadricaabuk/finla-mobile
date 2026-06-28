@@ -2,14 +2,12 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import * as XLSX from "npm:xlsx@0.18.5";
 import { sha256Hex } from "./crypto.ts";
 import {
-  faturaGetInvoicesIssuedToMe,
-  faturaListInvoices,
-  mapInvoicesToFacts,
-} from "./gib.ts";
-
-export const INVOICE_EXPORT_MAX_ROWS = 5000;
-export const INVOICE_EXPORT_SIGNED_URL_SECONDS = 300;
-const EXPORT_BUCKET = "exports";
+  applyFactFiltersToQuery,
+  syncFactsForRange,
+  toIsoDate,
+  type InvoiceExportFilters,
+  type InvoiceFactRow,
+} from "./invoice-facts.ts";
 
 /**
  * Yerelde `kong:8000` gibi dahili adresler dönebilir. İstemciler için dış adres (ör.
@@ -32,17 +30,11 @@ function rewriteStorageSignedUrlForEdge(signedUrl: string): string | undefined {
   }
 }
 
-export type InvoiceExportFilters = {
-  customerName?: string;
-  amountGte?: number;
-  amountEq?: number;
-};
+export const INVOICE_EXPORT_MAX_ROWS = 5000;
+export const INVOICE_EXPORT_SIGNED_URL_SECONDS = 300;
+const EXPORT_BUCKET = "exports";
 
-function toIsoDate(trDate: string): string {
-  const m = trDate.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) throw new Error("Tarih formatı GG/AA/YYYY olmalıdır.");
-  return `${m[3]}-${m[2]}-${m[1]}`;
-}
+export type { InvoiceExportFilters } from "./invoice-facts.ts";
 
 function formatTrIssueDate(isoDate: string | null): string {
   if (!isoDate) return "";
@@ -50,42 +42,6 @@ function formatTrIssueDate(isoDate: string | null): string {
   if (!m) return isoDate;
   return `${m[3]}.${m[2]}.${m[1]}`;
 }
-
-async function syncFactsForRange(
-  supabase: SupabaseClient,
-  username: string,
-  startDate: string,
-  endDate: string,
-  factDirection: "outgoing" | "incoming",
-): Promise<void> {
-  const invoices =
-    factDirection === "outgoing"
-      ? await faturaListInvoices(username, startDate, endDate)
-      : await faturaGetInvoicesIssuedToMe(username, startDate, endDate);
-  const facts = mapInvoicesToFacts(
-    username,
-    invoices as unknown[],
-    factDirection,
-  );
-  if (facts.length === 0) return;
-  const { error } = await supabase.from("invoice_facts").upsert(facts, {
-    onConflict: "gib_username,invoice_uuid,direction",
-  });
-  if (error) throw error;
-}
-
-type InvoiceFactRow = {
-  invoice_uuid: string;
-  direction: string;
-  issue_date: string | null;
-  status: string;
-  currency: string;
-  gross_total: number | null;
-  vat_total: number | null;
-  net_total: number | null;
-  customer_tax_id: string | null;
-  customer_name: string | null;
-};
 
 function directionLabel(direction: string): string {
   return direction === "incoming" ? "Gelen" : "Giden";
@@ -177,17 +133,7 @@ export async function createInvoicesExcelExport(opts: {
     .order("issue_date", { ascending: false })
     .limit(INVOICE_EXPORT_MAX_ROWS + 1);
 
-  if (filters.customerName) {
-    query = query.ilike("customer_name", `%${filters.customerName}%`);
-  }
-  if (typeof filters.amountGte === "number") {
-    query = query.gte("gross_total", filters.amountGte);
-  }
-  if (typeof filters.amountEq === "number") {
-    const min = Math.max(0, filters.amountEq - 0.5);
-    const max = filters.amountEq + 0.5;
-    query = query.gte("gross_total", min).lte("gross_total", max);
-  }
+  query = applyFactFiltersToQuery(query, filters);
 
   const { data, error } = await query;
   if (error) throw error;

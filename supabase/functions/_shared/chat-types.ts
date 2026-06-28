@@ -1,4 +1,4 @@
-export interface ChatMessageAction {
+export interface ChatAction {
   type:
     | "open_invoices"
     | "open_invoice_detail"
@@ -12,7 +12,6 @@ export interface ChatMessageAction {
     customerName?: string;
     amountGte?: number;
     amountEq?: number;
-    /** outgoing = kestiğim; incoming = gelen (bana kesilen) */
     direction?: "outgoing" | "incoming";
   };
   invoice?: InvoiceDetailPayload;
@@ -21,17 +20,11 @@ export interface ChatMessageAction {
     html?: string;
     pdfBase64?: string;
     uuid?: string;
-    /** GİB fatura tarihi (MM/DD/YYYY) — invoice-html için */
     draftDate?: string;
-    /** true = kesilmiş fatura HTML (signed); false = taslak önizleme */
     issued?: boolean;
-    /** GİB önizleme başarısız — yerel özet HTML */
     local_fallback?: boolean;
   };
-  sign_otp?: {
-    draftUuid: string;
-    phoneMasked: string;
-  };
+  sign_otp?: { draftUuid: string; phoneMasked: string };
   excel_export?: {
     download_url: string;
     file_name: string;
@@ -40,7 +33,7 @@ export interface ChatMessageAction {
   };
 }
 
-export interface InvoiceDetailPayload {
+export type InvoiceDetailPayload = {
   invoice_uuid: string;
   issue_date: string | null;
   status: string;
@@ -50,13 +43,4 @@ export interface InvoiceDetailPayload {
   net_total: number | null;
   customer_tax_id: string | null;
   customer_name: string | null;
-}
-
-export interface ChatMessage {
-  id: string;
-  text: string;
-  role: "user" | "assistant";
-  action?: ChatMessageAction;
-}
-
-export type InvoiceDetail = InvoiceDetailPayload;
+};

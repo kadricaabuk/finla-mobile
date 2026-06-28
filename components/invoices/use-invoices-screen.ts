@@ -1,4 +1,4 @@
-import { useMainAppShell } from "@/contexts/main-app-shell-context";
+import { useDrawerChatNavigation } from "@/hooks/use-drawer-chat-navigation";
 import {
   invoiceRangeForPreset,
   type InvoiceDatePreset,
@@ -12,15 +12,14 @@ import {
 } from "@/lib/invoices-cache";
 import { getTokens } from "@/lib/session";
 import { callApi, userFacingApiError } from "@/lib/supabase";
-import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
-import { router, useLocalSearchParams } from "expo-router";
+import type { GIBInvoice } from "@/types/gib-invoice";
+import type { InvoicesListResponse } from "@/types/api-responses";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
-export function useInvoicesScreen(options?: {
-  invoiceDirection?: InvoiceListDirection;
-}) {
-  const invoiceDirection = options?.invoiceDirection ?? "outgoing";
-  const { closeMenu } = useMainAppShell();
+export function useInvoicesScreen() {
+  const { handleDrawerNewChat, handleDrawerOpenConversation } =
+    useDrawerChatNavigation();
 
   const params = useLocalSearchParams<{
     startDate?: string;
@@ -54,7 +53,7 @@ export function useInvoicesScreen(options?: {
       if (!tokens) return;
 
       const range = rangeOverride ?? invoiceRangeForPreset(p);
-      const cacheKey = `${invoiceDirection}|${range.startDate}|${range.endDate}`;
+      const cacheKey = `${range.startDate}|${range.endDate}`;
 
       await hydrateInvoiceCache(tokens.accessToken);
 
@@ -75,12 +74,9 @@ export function useInvoicesScreen(options?: {
       setError(null);
 
       try {
-        const res = await callApi<{
-          invoices: GIBInvoice[];
-          error?: string;
-        }>("invoices", {
+        const res = await callApi<InvoicesListResponse>("invoices", {
           ...range,
-          direction: invoiceDirection,
+          direction: "outgoing",
           customerName: chatFilters?.customerName,
           amountGte: chatFilters?.amountGte,
           amountEq: chatFilters?.amountEq,
@@ -98,7 +94,7 @@ export function useInvoicesScreen(options?: {
         setRefreshing(false);
       }
     },
-    [chatFilters, invoiceDirection],
+    [chatFilters],
   );
 
   useEffect(() => {
@@ -142,30 +138,7 @@ export function useInvoicesScreen(options?: {
     void fetchInvoices(preset, customRange ?? undefined);
   }, [preset, customRange, fetchInvoices]);
 
-  const handleDrawerNewChat = useCallback(() => {
-    closeMenu();
-    router.replace({
-      pathname: "/",
-      params: { resetKey: String(Date.now()) },
-    });
-  }, [closeMenu]);
-
-  const handleDrawerOpenConversation = useCallback(
-    (id: string) => {
-      closeMenu();
-      router.replace({
-        pathname: "/",
-        params: {
-          loadConversationId: id,
-          loadKey: String(Date.now()),
-        },
-      });
-    },
-    [closeMenu],
-  );
-
   return {
-    invoiceDirection,
     preset,
     setPreset,
     customRange,
@@ -183,5 +156,3 @@ export function useInvoicesScreen(options?: {
     handleDrawerOpenConversation,
   };
 }
-
-export type { InvoiceListDirection };

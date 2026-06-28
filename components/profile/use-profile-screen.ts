@@ -1,11 +1,10 @@
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
+import { useDrawerChatNavigation } from "@/hooks/use-drawer-chat-navigation";
 import {
-  getUserProfile,
   updateUserProfile,
   userFacingApiError,
   type UserProfile,
 } from "@/lib/supabase";
-import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
 export type ContactDraftKey = "phoneNumber" | "faxNumber" | "email" | "webSite";
@@ -44,9 +43,12 @@ function buildContactPatch(
 }
 
 export function useProfileScreen() {
-  const { closeMenu } = useMainAppShell();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { userProfile, refreshUserProfile } = useMainAppShell();
+  const { handleDrawerNewChat, handleDrawerOpenConversation } =
+    useDrawerChatNavigation();
+
+  const [profile, setProfile] = useState<UserProfile | null>(userProfile);
+  const [loading, setLoading] = useState(!userProfile);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,28 +60,25 @@ export function useProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const loadProfile = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
+  useEffect(() => {
+    if (userProfile) {
+      setProfile(userProfile);
+      setLoading(false);
+      setError(null);
     }
+  }, [userProfile]);
+
+  const refreshProfile = useCallback(async () => {
+    setRefreshing(true);
     setError(null);
     try {
-      const res = await getUserProfile();
-      setProfile(res.profile);
+      await refreshUserProfile();
     } catch (err) {
       setError(userFacingApiError(err));
-      setProfile(null);
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void loadProfile(false);
-  }, [loadProfile]);
+  }, [refreshUserProfile]);
 
   const beginEditContact = useCallback(() => {
     if (!profile) return;
@@ -116,41 +115,20 @@ export function useProfileScreen() {
       setProfile(res.profile);
       setEditingContact(false);
       setContactDraft(null);
+      await refreshUserProfile();
     } catch (err) {
       setSaveError(userFacingApiError(err));
     } finally {
       setSaving(false);
     }
-  }, [profile, contactDraft]);
-
-  const handleDrawerNewChat = useCallback(() => {
-    closeMenu();
-    router.replace({
-      pathname: "/",
-      params: { resetKey: String(Date.now()) },
-    });
-  }, [closeMenu]);
-
-  const handleDrawerOpenConversation = useCallback(
-    (id: string) => {
-      closeMenu();
-      router.replace({
-        pathname: "/",
-        params: {
-          loadConversationId: id,
-          loadKey: String(Date.now()),
-        },
-      });
-    },
-    [closeMenu],
-  );
+  }, [profile, contactDraft, refreshUserProfile]);
 
   return {
     profile,
     loading,
     refreshing,
     error,
-    refreshProfile: () => loadProfile(true),
+    refreshProfile,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
     editingContact,

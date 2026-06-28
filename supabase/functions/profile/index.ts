@@ -1,11 +1,8 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import {
-  extractGibUserDataStringPatch,
-  faturaGetUserData,
-  faturaUpdateUserData,
-  mergeGibUserDataPatch,
-  type UserData,
-} from '../_shared/gib.ts'
+  getUserProfile,
+  updateUserProfile,
+} from '../_shared/profile-service.ts'
 import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -27,18 +24,14 @@ Deno.serve(async (req) => {
     }
 
     const updates = isRecord(body) ? body['updates'] : undefined
-    const picked =
-      isRecord(updates) ? extractGibUserDataStringPatch(updates) : {}
+    const picked = isRecord(updates) ? updates : {}
 
     if (Object.keys(picked).length > 0) {
-      const current = (await faturaGetUserData(username)) as UserData
-      const merged = mergeGibUserDataPatch(current, picked)
-      await faturaUpdateUserData(username, merged)
-      const profile = (await faturaGetUserData(username)) as UserData
+      const profile = await updateUserProfile(username, picked)
       return Response.json({ profile }, { headers: corsHeaders })
     }
 
-    const profile = await faturaGetUserData(username)
+    const profile = await getUserProfile(username)
     return Response.json({ profile }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {

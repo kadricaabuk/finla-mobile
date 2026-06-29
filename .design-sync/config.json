@@ -1,0 +1,11 @@
+{
+  "projectId": "da61a5d0-d4e7-4f02-ba48-968f1044fcfb",
+  "pkg": "finla-web-ds",
+  "globalName": "FinlaDS",
+  "shape": "package",
+  "buildCmd": "cd finla-web-ds && node build.mjs",
+  "srcDir": "finla-web-ds/src",
+  "cssEntry": "src/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "runtimeFontPrefixes": ["SF Pro Display"]
+}

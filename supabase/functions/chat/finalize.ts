@@ -5,18 +5,23 @@ import { buildPendingDraftPreviewAction } from "../_shared/invoice-workflow.ts";
 import { getUserProfile } from "../_shared/profile-service.ts";
 import { normalizeTurkish } from "../_shared/turkish.ts";
 import type { AgentLoopAccumulator } from "./agent-loop.ts";
-import { persistLastInvoice, loadChatContext } from "./conversation-context.ts";
-import { resolveDateRange } from "./date-range.ts";
+import { persistLastInvoice } from "./conversation-context.ts";
 import {
   isBareInvoiceShowIntent,
+  isInvoiceListIntent,
   isUserProfileIntent,
   parseFiltersFromText,
+  sanitizeInvoiceSearchFilters,
   shouldOfferInvoicesAction,
   summarizeUserProfile,
   wantsInvoicePreviewOrDownload,
 } from "./intents.ts";
 import { assistantFallbackForAction } from "./persist-action.ts";
-import { buildOpenInvoicesAction } from "./list-format.ts";
+import {
+  buildPrimaryInvoicesAction,
+  formatInvoiceListChatSummary,
+  type InvoiceListToolResult,
+} from "./list-format.ts";
 import type { ChatAction, InvoiceDetailPayload, PendingInvoiceState } from "./types.ts";
 
 export async function finalizeAgentAssistant(
@@ -30,6 +35,7 @@ export async function finalizeAgentAssistant(
     usedToolNames: Set<string>;
     latestInvoiceActionPayload: InvoiceDetailPayload | null;
     lastListInvoicesInput: Record<string, unknown> | null;
+    lastListInvoicesResult: InvoiceListToolResult | null;
     lastExportExcelPayload: AgentLoopAccumulator["lastExportExcelPayload"];
   },
 ): Promise<{ finalAssistant: string; action: ChatAction | null }> {
@@ -42,6 +48,7 @@ export async function finalizeAgentAssistant(
     usedToolNames,
     latestInvoiceActionPayload,
     lastListInvoicesInput,
+    lastListInvoicesResult,
     lastExportExcelPayload,
   } = opts;
 
@@ -64,6 +71,15 @@ export async function finalizeAgentAssistant(
       .replace(/\n{3,}/g, "\n\n")
       .replace(/\*\*(İstek|Sonuç|Tarih Aralığı|Sonraki Adım):\*\*/g, "")
       .trim();
+  }
+
+  if (
+    usedToolNames.has("list_invoices") &&
+    lastListInvoicesResult &&
+    lastListInvoicesResult.count > 0 &&
+    (!trimmedAssistant.trim() || isInvoiceListIntent(userMessage))
+  ) {
+    trimmedAssistant = formatInvoiceListChatSummary(lastListInvoicesResult);
   }
 
   const latestInvSnap =
@@ -207,60 +223,46 @@ export async function finalizeAgentAssistant(
       label: "Detayi Gor",
       invoice: detail,
     };
-  } else if (!action && shouldOfferInvoicesAction(userMessage, usedToolNames)) {
+  } else if (
+    !action &&
+    shouldOfferInvoicesAction(userMessage, usedToolNames) &&
+    lastListInvoicesResult &&
+    lastListInvoicesResult.count > 0
+  ) {
     const listInput = lastListInvoicesInput ?? {};
-    const parsedRange = resolveDateRange(
-      listInput,
+    const msgFilters = sanitizeInvoiceSearchFilters(parseFiltersFromText(userMessage));
+    const base = buildPrimaryInvoicesAction(
       userMessage,
-      "month",
+      listInput,
+      lastListInvoicesResult,
     );
-    const msgFilters = parseFiltersFromText(userMessage);
-    const toolAmountGte =
-      typeof listInput.amount_gte === "number"
-        ? listInput.amount_gte
-        : typeof listInput.amount_gte === "string"
-          ? parseAmount(listInput.amount_gte as string)
-          : null;
-    const toolAmountEq =
-      typeof listInput.amount_eq === "number"
-        ? listInput.amount_eq
-        : typeof listInput.amount_eq === "string"
-          ? parseAmount(listInput.amount_eq as string)
-          : null;
-    const toolCustomerName =
-      typeof listInput.customer_name === "string" &&
-        listInput.customer_name.trim()
-        ? listInput.customer_name.trim()
-        : undefined;
-    const chatCtx = await loadChatContext(supabase, convId);
-    const direction =
-      listInput.direction === "incoming" || listInput.direction === "outgoing"
-        ? listInput.direction
-        : chatCtx?.last_direction ?? "outgoing";
-    if (parsedRange) {
-      const base = buildOpenInvoicesAction(
-        userMessage,
-        listInput,
-        {
-          count: 0,
-          start_date: parsedRange.startDate,
-          end_date: parsedRange.endDate,
-          direction,
-          invoices: [],
+    if (base?.filter) {
+      const toolAmountGte =
+        typeof listInput.amount_gte === "number"
+          ? listInput.amount_gte
+          : typeof listInput.amount_gte === "string"
+            ? parseAmount(listInput.amount_gte as string)
+            : null;
+      const toolAmountEq =
+        typeof listInput.amount_eq === "number"
+          ? listInput.amount_eq
+          : typeof listInput.amount_eq === "string"
+            ? parseAmount(listInput.amount_eq as string)
+            : null;
+      const toolCustomerName =
+        typeof listInput.customer_name === "string" &&
+          listInput.customer_name.trim()
+          ? listInput.customer_name.trim()
+          : undefined;
+      action = {
+        ...base,
+        filter: {
+          ...base.filter,
+          customerName: toolCustomerName ?? msgFilters.customerName,
+          amountGte: toolAmountGte ?? msgFilters.amountGte,
+          amountEq: toolAmountEq ?? msgFilters.amountEq,
         },
-        direction,
-      );
-      if (base?.filter) {
-        action = {
-          ...base,
-          filter: {
-            ...base.filter,
-            customerName: toolCustomerName ?? msgFilters.customerName,
-            amountGte: toolAmountGte ?? msgFilters.amountGte,
-            amountEq: toolAmountEq ?? msgFilters.amountEq,
-          },
-        };
-      }
+      };
     }
   }
 

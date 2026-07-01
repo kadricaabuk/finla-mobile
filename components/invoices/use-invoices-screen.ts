@@ -86,6 +86,7 @@ export function useInvoicesScreen(
         setRefreshing(true);
       } else {
         setLoading(true);
+        setInvoices([]);
       }
       setError(null);
 

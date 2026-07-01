@@ -94,6 +94,77 @@ export function resolvePendingDraftRef(
   return { uuid, date };
 }
 
+/** UI «Onayla ve Kes» fast-path — yalnızca önizlemeye hazır taslak varken. */
+export function canFastPathConfirmInvoiceIssue(
+  pending: PendingInvoiceState | null,
+): boolean {
+  if (pending?.status !== "preview_ready") return false;
+  return resolvePendingDraftRef(pending) !== null;
+}
+
+/** Fatura oluşturma / kur onayı devam ederken finans fast-path'lerini atla. */
+export function shouldSkipFinanceFastPaths(
+  pending: PendingInvoiceState | null,
+): boolean {
+  if (!pending) return false;
+  if (
+    pending.status === "exchange_rate_pending" ||
+    pending.status === "otp_pending"
+  ) {
+    return true;
+  }
+  if (pending.request && !pending.draft?.uuid?.trim()) return true;
+  return false;
+}
+
+/** Agent system prompt — bekleyen fatura adımı özeti. */
+export function formatPendingInvoiceForPrompt(
+  pending: PendingInvoiceState | null,
+): string {
+  if (!pending?.status) return "";
+
+  const lines: string[] = [];
+  switch (pending.status) {
+    case "exchange_rate_pending": {
+      const q = pending.exchange_rate_quote;
+      const buyer = pending.request?.buyer_name?.trim();
+      if (q) {
+        lines.push(
+          `Döviz kuru onayı bekleniyor: 1 ${q.currency} = ${q.rate} TL (${q.rate_date}, ${q.source}).`,
+        );
+      } else {
+        lines.push("Döviz kuru onayı bekleniyor.");
+      }
+      if (buyer) lines.push(`Alıcı: ${buyer}.`);
+      lines.push(
+        "Kullanıcı onaylarsa create_invoice aracını pending.request ile aynı parametreler + onaylanan exchange_rate ile tekrar çağır.",
+      );
+      break;
+    }
+    case "preview_ready": {
+      const ref = resolvePendingDraftRef(pending);
+      const buyer = pending.request?.buyer_name?.trim();
+      lines.push("Taslak fatura önizlemeye hazır; kesim onayı bekleniyor.");
+      if (buyer) lines.push(`Alıcı: ${buyer}.`);
+      if (ref) lines.push(`Taslak ETTN: ${ref.uuid}.`);
+      lines.push(
+        "Metin onayı gelirse confirm_invoice_issue çağır; UI «Onayla ve Kes» zaten sunucu fast-path kullanır.",
+      );
+      break;
+    }
+    case "otp_pending":
+      lines.push(
+        "Eski SMS imza adımı (Mysoft'ta gerekmez); confirm_invoice_issue kullan.",
+      );
+      break;
+    default:
+      break;
+  }
+
+  if (lines.length === 0) return "";
+  return `\n\nBekleyen fatura işlemi: ${lines.join(" ")}`;
+}
+
 /** pending_invoice.request → Mysoft yeniden gönderim için CreateInvoiceInput */
 export function pendingRequestToCreateInput(
   pending: PendingInvoiceState | null,

@@ -57,23 +57,33 @@ export function useChatScreen() {
   const [confirmingDraftUuid, setConfirmingDraftUuid] = useState<string | null>(
     null,
   );
-  const [signOtpAction, setSignOtpAction] = useState<ChatMessageAction | null>(
-    null,
-  );
-  const [signOtpCode, setSignOtpCode] = useState("");
-  const [signOtpPhone, setSignOtpPhone] = useState("");
-  const [verifyingSignOtp, setVerifyingSignOtp] = useState(false);
-  const [requestingSignOtp, setRequestingSignOtp] = useState(false);
   const [openingConversationId, setOpeningConversationId] = useState<
     string | null
   >(null);
   const scrollRef = useRef<ScrollView>(null);
   const sendingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const STREAM_IDLE_MS = 60_000;
+
+  const clearStreamIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  const armStreamIdleTimer = useCallback(() => {
+    clearStreamIdleTimer();
+    idleTimerRef.current = setTimeout(() => {
+      abortRef.current?.abort();
+    }, STREAM_IDLE_MS);
+  }, [clearStreamIdleTimer]);
 
   const {
     scrollToBottom,
     stopDeltaDrain,
-    waitUntilDeltaQueueEmpty,
     startDeltaDrain,
     resetStreamBuffers,
     pushDelta,
@@ -109,9 +119,6 @@ export function useChatScreen() {
     setPreviewAction(null);
     setDetailAction(null);
     setDetailInvoice(null);
-    setSignOtpAction(null);
-    setSignOtpCode("");
-    setSignOtpPhone("");
     setConfirmingDraftUuid(null);
   }, []);
 
@@ -187,10 +194,17 @@ export function useChatScreen() {
       const trimmed = text.trim();
       if (!trimmed || sendingRef.current) return;
 
+      const tokens = await getTokens();
+      if (!tokens) {
+        throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+      }
+
+      sendingRef.current = true;
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      const streamSignal = abortRef.current.signal;
+
       try {
-        const tokens = await getTokens();
-        if (!tokens) return;
-        sendingRef.current = true;
 
         const userMsg: ChatMessage = {
           id: newChatMessageId(),
@@ -206,6 +220,7 @@ export function useChatScreen() {
         setStreamingMessageId(assistId);
         resetStreamBuffers();
         startDeltaDrain(assistId);
+        armStreamIdleTimer();
         setMessages((prev) => [
           ...prev,
           { id: assistId, text: "", role: "assistant" },
@@ -221,17 +236,20 @@ export function useChatScreen() {
               },
               onDelta: (t) => {
                 pushDelta(t);
+                armStreamIdleTimer();
               },
               onTool: async (phase, name) => {
                 const label = await onToolPhase(phase, name);
                 if (label) setStreamingStatus(label);
+                armStreamIdleTimer();
               },
             },
+            { signal: streamSignal },
           );
 
           setConversationId((prev) => prev ?? res.conversationId);
-          const finalText = finalizeStreamedText(res.message);
-          await waitUntilDeltaQueueEmpty();
+          stopDeltaDrain();
+          const finalText = finalizeStreamedText(res.message ?? "");
 
           setMessages((prev) =>
             prev.map((m) =>
@@ -246,12 +264,6 @@ export function useChatScreen() {
           );
 
           if (
-            res.action?.type === "open_sign_otp" &&
-            res.action.sign_otp?.draftUuid
-          ) {
-            setSignOtpAction(res.action);
-          }
-          if (
             res.action?.type === "open_invoice_preview" &&
             (res.action.preview?.uuid || res.action.preview?.html)
           ) {
@@ -260,16 +272,24 @@ export function useChatScreen() {
           if (isNewThread && res.conversationId)
             void refreshConversationList("none");
         } catch (err) {
+          const aborted =
+            err instanceof Error &&
+            (err.name === "AbortError" || /aborted|abort/i.test(err.message));
           setMessages((prev) => [
             ...prev.filter((m) => m.id !== assistId),
             {
               id: newChatMessageId(),
-              text: userFacingApiError(err),
+              text: aborted
+                ? "Yanıt durduruldu."
+                : userFacingApiError(err),
               role: "assistant",
             },
           ]);
+          throw err;
         }
       } finally {
+        clearStreamIdleTimer();
+        abortRef.current = null;
         stopDeltaDrain();
         sendingRef.current = false;
         setStreaming(false);
@@ -279,6 +299,8 @@ export function useChatScreen() {
       }
     },
     [
+      armStreamIdleTimer,
+      clearStreamIdleTimer,
       conversationId,
       finalizeStreamedText,
       onToolPhase,
@@ -288,9 +310,12 @@ export function useChatScreen() {
       scrollToBottom,
       startDeltaDrain,
       stopDeltaDrain,
-      waitUntilDeltaQueueEmpty,
     ],
   );
+
+  const handleCancelStream = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const handleConfirmFromPreview = useCallback(
     async (draftUuid?: string) => {
@@ -304,12 +329,6 @@ export function useChatScreen() {
           draftUuid,
         });
         setMessages((prev) => [...prev, aiMsg]);
-        if (
-          aiMsg.action?.type === "open_sign_otp" &&
-          aiMsg.action.sign_otp?.draftUuid
-        ) {
-          setSignOtpAction(aiMsg.action);
-        }
       } catch (err) {
         setMessages((prev) => [
           ...prev,
@@ -326,88 +345,6 @@ export function useChatScreen() {
       }
     },
     [conversationId, confirmingDraftUuid, scrollToBottom],
-  );
-
-  const handleVerifySignOtp = useCallback(async () => {
-    if (
-      !(await getTokens()) ||
-      !conversationId ||
-      !signOtpAction?.sign_otp?.draftUuid
-    )
-      return;
-    const code = signOtpCode.trim();
-    if (!code || verifyingSignOtp) return;
-    setVerifyingSignOtp(true);
-    setLoading(true);
-    try {
-      const aiMsg = await appendChatActionResponse(conversationId, {
-        type: "verify_sign_otp",
-        draftUuid: signOtpAction.sign_otp.draftUuid,
-        smsCode: code,
-      });
-      setMessages((prev) => [...prev, aiMsg]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: newChatMessageId(),
-          text: userFacingApiError(err),
-          role: "assistant",
-        },
-      ]);
-    } finally {
-      setVerifyingSignOtp(false);
-      setLoading(false);
-      setSignOtpAction(null);
-      setSignOtpCode("");
-      setSignOtpPhone("");
-      scrollToBottom();
-    }
-  }, [conversationId, signOtpAction, signOtpCode, verifyingSignOtp, scrollToBottom]);
-
-  const handleRequestSignOtp = useCallback(
-    async (withPhoneUpdate: boolean) => {
-      if (
-        !(await getTokens()) ||
-        !conversationId ||
-        !signOtpAction?.sign_otp?.draftUuid
-      )
-        return;
-      if (requestingSignOtp) return;
-      const phone = signOtpPhone.trim();
-      if (withPhoneUpdate && !phone) return;
-      setRequestingSignOtp(true);
-      setLoading(true);
-      try {
-        const aiMsg = await appendChatActionResponse(conversationId, {
-          type: "request_sign_otp",
-          draftUuid: signOtpAction.sign_otp.draftUuid,
-          phone: withPhoneUpdate ? phone : undefined,
-        });
-        setMessages((prev) => [...prev, aiMsg]);
-        if (
-          aiMsg.action?.type === "open_sign_otp" &&
-          aiMsg.action.sign_otp?.draftUuid
-        ) {
-          setSignOtpAction(aiMsg.action);
-        }
-        if (withPhoneUpdate) setSignOtpPhone("");
-      } catch (err) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: newChatMessageId(),
-            text: userFacingApiError(err),
-            role: "assistant",
-          },
-        ]);
-      } finally {
-        setRequestingSignOtp(false);
-        setLoading(false);
-        scrollToBottom();
-      }
-    },
-    [conversationId, requestingSignOtp, signOtpAction, signOtpPhone, scrollToBottom],
   );
 
   const handleNewChat = useCallback(() => {
@@ -434,12 +371,6 @@ export function useChatScreen() {
     [openingConversationId, hydrateConversationById, closeMenu, scrollToBottom],
   );
 
-  const dismissSignOtp = useCallback(() => {
-    setSignOtpAction(null);
-    setSignOtpCode("");
-    setSignOtpPhone("");
-  }, []);
-
   return {
     scrollRef,
     messages,
@@ -452,22 +383,13 @@ export function useChatScreen() {
     detailInvoice,
     previewAction,
     confirmingDraftUuid,
-    signOtpAction,
-    signOtpCode,
-    signOtpPhone,
-    verifyingSignOtp,
-    requestingSignOtp,
     openingConversationId,
     setDetailAction,
     setPreviewAction,
-    setSignOtpCode,
-    setSignOtpPhone,
     handleSend,
+    handleCancelStream,
     handleConfirmFromPreview,
-    handleVerifySignOtp,
-    handleRequestSignOtp,
     handleNewChat,
     handleOpenConversation,
-    dismissSignOtp,
   };
 }

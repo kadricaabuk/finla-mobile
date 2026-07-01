@@ -6,7 +6,7 @@ import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface ChatInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | Promise<void>;
   disabled?: boolean;
   placeholder?: string;
   onAttach?: () => void;
@@ -24,12 +24,16 @@ export default function ChatInput({
   const insets = useSafeAreaInsets();
   const animatedContainerStyle = useAnimatedChatInputPadding(insets.bottom);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (disabled) return;
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSend(trimmed);
-    setText("");
+    try {
+      await onSend(trimmed);
+      setText("");
+    } catch {
+      /* parent hata gösterir; metin input'ta kalır */
+    }
   };
 
   const hasText = text.trim().length > 0;

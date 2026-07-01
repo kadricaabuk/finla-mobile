@@ -1,6 +1,16 @@
-import { parseAmount } from "../_shared/invoice-facts.ts";
+import { parseAmount } from "../_shared/amount-parse.ts";
 import { normalizeTurkish } from "../_shared/turkish.ts";
 import type { InvoiceSearchFilters } from "./types.ts";
+
+/** Onay niyeti — fast-path dışında diğer intent'lerin tetiklenmesini engeller. */
+export function isConfirmLikeMessage(message: string): boolean {
+  const normalized = normalizeTurkish(message.trim());
+  return (
+    /\bonayliyorum\b/.test(normalized) ||
+    /\bevet\s+onay\b/.test(normalized) ||
+    /^(evet|onayla|onayliyorum)[.!]?$/.test(normalized)
+  );
+}
 
 export function maskPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
@@ -10,11 +20,39 @@ export function maskPhone(phone: string): string {
 
 export function wantsInvoicePreviewOrDownload(message: string): boolean {
   const msgNorm = normalizeTurkish(message);
+  if (/\bexcel\b/.test(msgNorm) || /\bxlsx\b/.test(msgNorm)) return false;
   return (
     /\bfatura(yi)?\s*(gor|goster|goruntule|ac)\b/i.test(msgNorm) ||
-    /\b(taslak|taslagi|onizle|pdf|indir|goster|goruntule|gormek|gor|tam\s*fatura|paylas)\b/i
-      .test(msgNorm)
+    /\b(taslak|taslagi|onizle|pdf|goster|goruntule|gormek|gor|tam\s*fatura|paylas)\b/i
+      .test(msgNorm) ||
+    /\b(pdf\s+indir|faturayi?\s+indir|indir.*\bpdf\b|\bpdf\b.*\bindir)\b/i.test(msgNorm)
   );
+}
+
+/** Excel / dışa aktarma niyeti — fatura PDF önizlemesinden ayrı tutulur. */
+export function isExcelExportIntent(message: string): boolean {
+  const lower = normalizeTurkish(message);
+  if (
+    /\bexcel\b/.test(lower) ||
+    /\bxlsx\b/.test(lower) ||
+    /\bcsv\b/.test(lower) ||
+    /\bdisari\s+aktar\b/.test(lower) ||
+    /\bdışa\s+aktar\b/.test(message.toLocaleLowerCase("tr-TR"))
+  ) {
+    return true;
+  }
+  if (/\bindir\b/.test(lower) && /\bexcel\b/.test(lower)) return true;
+  if (/\bexcel\b/.test(lower) && /\b(fatura|aktar|indir|yukle|çıktı|cikti)\b/.test(lower)) {
+    return true;
+  }
+  if (
+    /\brapor\s+(olustur|hazirla|indir|getir|ver|yap|cikar)\b/.test(lower) ||
+    (/\b(bir\s+)?rapor\b/.test(lower) &&
+      /\b(olustur|hazirla|indir|getir|ver|yap|cikar)\b/.test(lower))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Mevcut taslağı gösterme niyeti (yeni taslak oluşturma / onay değil). */
@@ -28,6 +66,7 @@ export function isDraftPreviewIntent(message: string): boolean {
 
 /** Tek faturayı göster/önizle (liste değil): "faturayı göster", "pdf aç" vb. */
 export function isBareInvoiceShowIntent(message: string): boolean {
+  if (isExcelExportIntent(message)) return false;
   if (!wantsInvoicePreviewOrDownload(message)) return false;
   const lower = normalizeTurkish(message);
   if (isLatestInvoiceIntent(message)) return false;
@@ -44,6 +83,7 @@ export function shouldOfferInvoicesAction(
   userMessage: string,
   usedTools: Set<string>,
 ): boolean {
+  if (isExcelExportIntent(userMessage)) return false;
   if (isLatestInvoiceIntent(userMessage)) return false;
   if (isBareInvoiceShowIntent(userMessage)) return false;
   if (isFinancialTotalsIntent(userMessage)) return false;
@@ -113,6 +153,18 @@ export function parseFinancialDirection(
   if (incoming && !outgoing) return "incoming";
   if (outgoing && !incoming) return "outgoing";
   return "both";
+}
+
+/** Liste aracı yönü — belirtilmediyse her iki yön. */
+export function parseInvoiceListDirection(
+  input: Record<string, unknown>,
+  userMessage: string,
+): "outgoing" | "incoming" | "both" {
+  if (input.direction === "incoming") return "incoming";
+  if (input.direction === "outgoing") return "outgoing";
+  if (input.direction === "both") return "both";
+  const fromMsg = parseInvoiceDirectionFromMessage(userMessage);
+  return fromMsg ?? "both";
 }
 
 /** Mesajdan fatura yönü çıkarımı (list/latest için). */
@@ -186,6 +238,7 @@ export function isInvoiceListIntent(userMessage: string): boolean {
     lower.includes("faturalarim") || lower.includes("faturalari");
   return (
     lower.includes("listele") ||
+    (/\b(getir|goster)\b/.test(lower) && /\bfatura/.test(lower)) ||
     (lower.includes("hangi") && lower.includes("fatura")) ||
     lower.includes("neler") ||
     (/\b(kac|say)\b/.test(lower) && lower.includes("fatura")) ||
@@ -195,11 +248,26 @@ export function isInvoiceListIntent(userMessage: string): boolean {
 }
 
 /** Belirsiz müşteri sorusuna kısa tam ad yanıtı: "Ege Durmaz" */
+const CLARIFICATION_COMMAND_WORDS =
+  /\b(tamam|tamamd|hayir|anladim|peki|kabul|olur|oldu|tesekkur|tesekkurler|merhaba|sagol|evet|tabii|super|guzel|okay|ok|hm+|hmm|yok|iptal|evet\s+olur)\b/;
+
 export function isCustomerClarificationIntent(message: string): boolean {
   const t = message.trim();
   if (t.length < 5 || t.length > 80) return false;
-  if (/\bfatura/.test(normalizeTurkish(t))) return false;
-  return /^[A-Za-zÇĞİÖŞÜçğıöşü]+(?:\s+[A-Za-zÇĞİÖŞÜçğıöşü]+){1,3}$/.test(t);
+  const norm = normalizeTurkish(t);
+  if (/\bfatura/.test(norm)) return false;
+  if (/\brapor\b/.test(norm)) return false;
+  if (
+    /\b(olustur|hazirla|indir|aktar|cikar)\b/.test(norm) &&
+    !/\bfatura\b/.test(norm)
+  ) {
+    return false;
+  }
+  if (CLARIFICATION_COMMAND_WORDS.test(norm)) return false;
+  if (!/^[A-Za-zÇĞİÖŞÜçğıöşü]+(?:\s+[A-Za-zÇĞİÖŞÜçğıöşü]+){1,3}$/.test(t)) {
+    return false;
+  }
+  return isLikelyInvoiceCustomerName(t);
 }
 
 export function isUserProfileIntent(userMessage: string): boolean {
@@ -236,6 +304,61 @@ export function summarizeUserProfile(profile: {
   return `GİB profil bilgilerin:\n${rows.join("\n")}`;
 }
 
+const INVOICE_CUSTOMER_FILTER_STOPWORDS = new Set([
+  "bir",
+  "bu",
+  "gecen",
+  "son",
+  "ay",
+  "ayki",
+  "aylik",
+  "onceki",
+  "yil",
+  "yili",
+  "gelen",
+  "giden",
+  "fatura",
+  "faturalari",
+  "faturalarim",
+  "listele",
+  "getir",
+  "goster",
+  "gor",
+  "hazirla",
+  "olustur",
+  "rapor",
+  "raporu",
+]);
+
+/** "Bu ayki", "Geçen ayki" gibi tarih ifadelerini müşteri adı sayma. */
+export function isLikelyInvoiceCustomerName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 3) return false;
+  const norm = normalizeTurkish(trimmed).replace(/\s+/g, " ");
+  if (
+    /^(bu|gecen|son|onceki)(\s+(ay(ki)?|yil(ki)?))?$/.test(norm) ||
+    /^(bu ayki|gecen ayki|son ayki|bu ay|gecen ay|bu yil|gecen yil)$/.test(norm)
+  ) {
+    return false;
+  }
+  const words = norm.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return false;
+  const meaningful = words.filter(
+    (w) => !INVOICE_CUSTOMER_FILTER_STOPWORDS.has(w) && w.length >= 3,
+  );
+  return meaningful.length > 0;
+}
+
+export function sanitizeInvoiceSearchFilters(
+  filters: InvoiceSearchFilters,
+): InvoiceSearchFilters {
+  const out = { ...filters };
+  if (out.customerName && !isLikelyInvoiceCustomerName(out.customerName)) {
+    delete out.customerName;
+  }
+  return out;
+}
+
 export function parseFiltersFromText(text: string): InvoiceSearchFilters {
   const filters: InvoiceSearchFilters = {};
   const lower = normalizeTurkish(text);
@@ -258,7 +381,10 @@ export function parseFiltersFromText(text: string): InvoiceSearchFilters {
     /([A-Za-zÇĞİÖŞÜçğıöşü][A-Za-zÇĞİÖŞÜçğıöşü\s.'-]{1,40}?)\s*(?:firmasindan|firmasından|den|dan|'ten|'tan)\s+gelen/i,
   );
   if (fromVendor?.[1]) {
-    filters.customerName = fromVendor[1].trim().replace(/\s+/g, " ");
+    const candidate = fromVendor[1].trim().replace(/\s+/g, " ");
+    if (isLikelyInvoiceCustomerName(candidate)) {
+      filters.customerName = candidate;
+    }
   }
 
   const beyeKesti = text.match(
@@ -273,22 +399,26 @@ export function parseFiltersFromText(text: string): InvoiceSearchFilters {
     text.match(/([A-Za-zÇĞİÖŞÜçğıöşü\s]+?)\s+(?:adına|adina)/i);
 
   if (beyeKesti?.[1]) {
-    filters.customerName = beyeKesti[1].trim();
-  } else if (customerMatch?.[1]) {
+    const candidate = beyeKesti[1].trim();
+    if (isLikelyInvoiceCustomerName(candidate)) {
+      filters.customerName = candidate;
+    }
+  } else if (!filters.customerName && customerMatch?.[1]) {
     const raw = customerMatch[1].trim().replace(/\s+/g, " ");
     const cleaned = raw.split(" ").slice(-2).join(" ");
-    if (cleaned.length >= 2) filters.customerName = cleaned;
+    if (cleaned.length >= 2 && isLikelyInvoiceCustomerName(cleaned)) {
+      filters.customerName = cleaned;
+    }
   }
 
   const fullNameInFatura = text.match(
     /\b([A-Za-zÇĞİÖŞÜçğıöşü]{2,}\s+[A-Za-zÇĞİÖŞÜçğıöşü]{2,})\b.*\bfatura/i,
   );
   if (fullNameInFatura?.[1] && !filters.customerName) {
-    filters.customerName = fullNameInFatura[1].trim();
-  }
-
-  if (!filters.customerName && isCustomerClarificationIntent(text)) {
-    filters.customerName = text.trim();
+    const candidate = fullNameInFatura[1].trim();
+    if (isLikelyInvoiceCustomerName(candidate)) {
+      filters.customerName = candidate;
+    }
   }
 
   return filters;

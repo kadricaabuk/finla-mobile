@@ -33,7 +33,6 @@ export function toolStatusText(rawName: string): string {
       return "Fatura iptali işleniyor…";
     case "confirm_invoice_issue":
       return "Fatura GİB'e gönderiliyor…";
-      return "Fatura kesiliyor…";
     case "export_invoices_excel":
       return "Excel dosyası oluşturuluyor…";
     default:
@@ -82,9 +81,11 @@ export function useChatStreamDisplay(
       deltaDrainTimerRef.current = setInterval(() => {
         const queue = deltaQueueRef.current;
         if (queue.length === 0) return;
+        const backlog = queue.reduce((n, s) => n + s.length, 0);
+        const chunkSize = backlog > 400 ? 48 : backlog > 120 ? 24 : 6;
         const current = queue[0] ?? "";
-        const chunk = current.slice(0, 6);
-        const rest = current.slice(6);
+        const chunk = current.slice(0, chunkSize);
+        const rest = current.slice(chunkSize);
         if (rest.length > 0) queue[0] = rest;
         else queue.shift();
 
@@ -137,14 +138,22 @@ export function useChatStreamDisplay(
     [],
   );
 
-  const finalizeStreamedText = useCallback((fallbackMessage: string) => {
-    if (!receivedDeltaRef.current && fallbackMessage) {
-      streamedAssistantTextRef.current = fallbackMessage;
-      deltaQueueRef.current.push(fallbackMessage);
+  const finalizeStreamedText = useCallback((doneMessage: string) => {
+    const authoritative =
+      typeof doneMessage === "string" ? doneMessage.trim() : "";
+    if (authoritative) {
+      streamedAssistantTextRef.current = authoritative;
+      receivedDeltaRef.current = true;
+      deltaQueueRef.current = [];
+      return authoritative;
+    }
+    if (!receivedDeltaRef.current && doneMessage) {
+      streamedAssistantTextRef.current = doneMessage;
+      deltaQueueRef.current.push(doneMessage);
     }
     return streamedAssistantTextRef.current.trim().length > 0
       ? streamedAssistantTextRef.current
-      : fallbackMessage;
+      : doneMessage;
   }, []);
 
   return {

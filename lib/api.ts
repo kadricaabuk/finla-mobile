@@ -11,20 +11,22 @@ import {
   type ChatStreamEventToolLog,
 } from "@/types/chat-stream";
 import type { UserProfile } from "@/lib/api";
+import { resolvePublicApiUrls } from "@/lib/dev-api-host";
+import { sanitizeForDevLog as sanitizeForApiDevLog } from "@/shared/log-sanitize";
 
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(
-  /\/$/,
-  "",
-);
+const { apiBaseUrl: API_BASE_URL, devHost } = resolvePublicApiUrls();
 const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+if (__DEV__ && devHost) {
+  console.log("[finla api] yerel gateway host", {
+    devHost,
+    apiBaseUrl: API_BASE_URL,
+  });
+}
 
 /** Chat NDJSON ile birlikte aynı uç için JSON düşüşü (Accept). */
 export const CHAT_STREAM_ACCEPT_HEADER =
   "application/x-ndjson, application/json;q=0.9";
-
-const API_DEV_LOG_MAX_STRING = 2_000;
-const API_DEV_LOG_MAX_ARRAY = 20;
-const API_DEV_LOG_MAX_DEPTH = 6;
 
 function newApiDevRequestId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -36,44 +38,6 @@ function devLogApi(payload: Record<string, unknown>): void {
     ts: new Date().toISOString(),
     ...payload,
   });
-}
-
-function sanitizeForApiDevLog(value: unknown, depth = 0): unknown {
-  if (depth > API_DEV_LOG_MAX_DEPTH) return "[max_depth]";
-  if (value === null || value === undefined) return value;
-  if (typeof value === "string") {
-    if (value.length <= API_DEV_LOG_MAX_STRING) return value;
-    return `${value.slice(0, API_DEV_LOG_MAX_STRING)}…[+${value.length - API_DEV_LOG_MAX_STRING} chars]`;
-  }
-  if (typeof value !== "object") return value;
-  if (Array.isArray(value)) {
-    const sliced = value
-      .slice(0, API_DEV_LOG_MAX_ARRAY)
-      .map((item) => sanitizeForApiDevLog(item, depth + 1));
-    if (value.length > API_DEV_LOG_MAX_ARRAY) {
-      sliced.push(`…[+${value.length - API_DEV_LOG_MAX_ARRAY} items]`);
-    }
-    return sliced;
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (
-      /password|sms_code|token|cred|secret|refresh/i.test(key) ||
-      key === "code"
-    ) {
-      out[key] = "[redacted]";
-      continue;
-    }
-    if (
-      (key === "preview_html" || key === "html") &&
-      typeof raw === "string"
-    ) {
-      out[key] = `[html ${raw.length} chars]`;
-      continue;
-    }
-    out[key] = sanitizeForApiDevLog(raw, depth + 1);
-  }
-  return out;
 }
 
 function assertConfig(): void {
@@ -222,6 +186,15 @@ async function parseJsonOrThrow(res: Response): Promise<unknown> {
   }
 
   return body;
+}
+
+/** Sunucu 200 döndürüp yalnızca { error } gönderirse gerçek mesajı kaybetme. */
+function rejectApiErrorBody(body: unknown): void {
+  if (!body || typeof body !== "object") return;
+  const obj = body as Record<string, unknown>;
+  const err = typeof obj.error === "string" ? obj.error.trim() : "";
+  const msg = typeof obj.message === "string" ? obj.message.trim() : "";
+  if (err && !msg) throw new Error(err);
 }
 
 let refreshPromise: Promise<StoredTokens> | null = null;
@@ -532,6 +505,7 @@ export async function callApi<T>(
       res = await doFetch(refreshed.accessToken);
     }
     const parsed = (await parseJsonOrThrow(res)) as T;
+    rejectApiErrorBody(parsed);
     devLogApi({
       request_id: requestId,
       phase: "response",
@@ -769,7 +743,9 @@ export async function streamChat(
       message?: string;
       conversationId?: string;
       action?: ChatMessageAction;
+      error?: string;
     };
+    rejectApiErrorBody(json);
     if (
       typeof json.message !== "string" ||
       typeof json.conversationId !== "string"

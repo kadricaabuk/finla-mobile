@@ -12,8 +12,6 @@ export function newChatMessageId(): string {
 const HIDDEN_USER_ACTION_CONTENT = new Set([
   "[action]",
   "confirm_pending_invoice",
-  "request_sign_otp",
-  "verify_sign_otp",
 ]);
 
 /** UI aksiyon istekleri — sohbet balonunda gösterilmez. */
@@ -32,9 +30,16 @@ export async function appendChatActionResponse(
     conversationId,
     action,
   });
+  const message =
+    typeof res.message === "string" && res.message.trim().length > 0
+      ? res.message
+      : "";
+  if (!message) {
+    throw new Error("Sunucudan geçerli bir yanıt alınamadı.");
+  }
   return {
     id: newChatMessageId(),
-    text: res.message,
+    text: message,
     role: "assistant",
     action: res.action,
   };

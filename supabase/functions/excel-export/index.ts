@@ -9,7 +9,6 @@ import {
   requireFinlaSession,
   SessionAuthError,
 } from '../_shared/session-auth.ts'
-import { isMockMode } from '../_shared/invoice-provider/mock-provider.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -22,7 +21,6 @@ Deno.serve(async (req: Request) => {
 
   try {
     const session = await requireFinlaSession(req)
-    const scopeKey = session.userId
     const body = await req.json() as {
       startDate?: string
       endDate?: string
@@ -50,7 +48,7 @@ Deno.serve(async (req: Request) => {
 
     const result = await createInvoicesExcelExport({
       supabase,
-      username: scopeKey,
+      session,
       startDateTr: startDate,
       endDateTr: endDate,
       direction: 'outgoing',

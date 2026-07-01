@@ -1,5 +1,9 @@
 import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import {
+  conversationOwnedByUser,
+  isValidConversationId,
+} from '../_shared/conversation-access.ts'
 import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
@@ -10,20 +14,6 @@ const supabase = createClient(
 type Body = {
   action?: string
   conversationId?: string
-}
-
-async function conversationOwnedByUser(
-  conversationId: string,
-  userId: string,
-): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('id', conversationId)
-    .eq('user_id', userId)
-    .maybeSingle()
-  if (error) throw error
-  return !!data?.id
 }
 
 Deno.serve(async (req: Request) => {
@@ -56,14 +46,16 @@ Deno.serve(async (req: Request) => {
         typeof body.conversationId === 'string' ? body.conversationId.trim() : ''
       if (
         !conversationId ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          conversationId,
-        )
+        !isValidConversationId(conversationId)
       ) {
         throw new SessionAuthError('conversationId geçersiz.', 400)
       }
 
-      const owned = await conversationOwnedByUser(conversationId, session.userId)
+      const owned = await conversationOwnedByUser(
+        supabase,
+        conversationId,
+        session.userId,
+      )
       if (!owned) {
         throw new SessionAuthError('Sohbet bulunamadı.', 404)
       }

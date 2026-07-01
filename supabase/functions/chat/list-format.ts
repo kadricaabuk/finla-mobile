@@ -20,60 +20,26 @@ export type LatestInvoiceToolResult = {
   reference_date?: string;
 };
 
+export type InvoiceListSlice = {
+  count: number;
+  invoices: unknown[];
+};
+
 export type InvoiceListToolResult = {
   count: number;
   start_date: string;
   end_date: string;
-  direction?: InvoiceDirection;
+  direction?: InvoiceDirection | "both";
   invoices: unknown[];
+  incoming?: InvoiceListSlice;
+  outgoing?: InvoiceListSlice;
 };
 
-export function normalizeInvoiceListToolResult(
-  result: unknown,
-): InvoiceListToolResult {
-  if (Array.isArray(result)) {
-    return {
-      count: result.length,
-      start_date: "",
-      end_date: "",
-      invoices: result,
-    };
-  }
-  if (result && typeof result === "object") {
-    const row = result as Record<string, unknown>;
-    const invoices = Array.isArray(row.invoices) ? row.invoices : [];
-    return {
-      count: typeof row.count === "number" ? row.count : invoices.length,
-      start_date: typeof row.start_date === "string" ? row.start_date : "",
-      end_date: typeof row.end_date === "string" ? row.end_date : "",
-      direction:
-        row.direction === "incoming" || row.direction === "outgoing"
-          ? row.direction
-          : undefined,
-      invoices,
-    };
-  }
-  return { count: 0, start_date: "", end_date: "", invoices: [] };
-}
-
-export function formatInvoiceListChatSummary(
-  list: InvoiceListToolResult,
-  direction: InvoiceDirection = list.direction ?? "outgoing",
-): string {
-  const { invoices, count, start_date, end_date } = list;
-  const rangeLabel =
-    start_date && end_date
-      ? start_date === end_date
-        ? start_date
-        : `${start_date} – ${end_date}`
-      : "seçilen dönem";
-  const dirLabel = direction === "incoming" ? "gelen" : "giden";
-
-  if (count === 0 || invoices.length === 0) {
-    return `${rangeLabel} için ${dirLabel} fatura bulunamadı.`;
-  }
-
-  const lines = invoices.slice(0, 12).map((raw) => {
+function formatInvoiceLines(
+  invoices: unknown[],
+  direction: InvoiceDirection,
+): string[] {
+  return invoices.slice(0, 12).map((raw) => {
     const r = raw as Record<string, unknown>;
     const name = String(
       direction === "incoming"
@@ -91,7 +57,100 @@ export function formatInvoiceListChatSummary(
           : "—";
     return `• ${name} — ${no} · ${date || "—"} · ${amtStr}`;
   });
+}
 
+export function normalizeInvoiceListToolResult(
+  result: unknown,
+): InvoiceListToolResult {
+  if (Array.isArray(result)) {
+    return {
+      count: result.length,
+      start_date: "",
+      end_date: "",
+      invoices: result,
+    };
+  }
+  if (result && typeof result === "object") {
+    const row = result as Record<string, unknown>;
+    const invoices = Array.isArray(row.invoices) ? row.invoices : [];
+    const normalizeSlice = (key: "incoming" | "outgoing"): InvoiceListSlice | undefined => {
+      const slice = row[key];
+      if (!slice || typeof slice !== "object") return undefined;
+      const s = slice as Record<string, unknown>;
+      const sliceInvoices = Array.isArray(s.invoices) ? s.invoices : [];
+      return {
+        count: typeof s.count === "number" ? s.count : sliceInvoices.length,
+        invoices: sliceInvoices,
+      };
+    };
+    return {
+      count: typeof row.count === "number" ? row.count : invoices.length,
+      start_date: typeof row.start_date === "string" ? row.start_date : "",
+      end_date: typeof row.end_date === "string" ? row.end_date : "",
+      direction:
+        row.direction === "incoming" || row.direction === "outgoing" ||
+          row.direction === "both"
+          ? row.direction
+          : undefined,
+      invoices,
+      incoming: normalizeSlice("incoming"),
+      outgoing: normalizeSlice("outgoing"),
+    };
+  }
+  return { count: 0, start_date: "", end_date: "", invoices: [] };
+}
+
+export function formatInvoiceListChatSummary(
+  list: InvoiceListToolResult,
+  direction: InvoiceDirection = list.direction === "incoming" ||
+      list.direction === "outgoing"
+    ? list.direction
+    : "outgoing",
+): string {
+  const { start_date, end_date } = list;
+  const rangeLabel = formatRangeLabel(start_date, end_date);
+
+  if (
+    list.direction === "both"
+  ) {
+    const incoming = list.incoming ?? { count: 0, invoices: [] };
+    const outgoing = list.outgoing ?? { count: 0, invoices: [] };
+    const incomingCount = incoming.count;
+    const outgoingCount = outgoing.count;
+    const total = incomingCount + outgoingCount;
+    if (total === 0) {
+      return `${rangeLabel} için fatura bulunamadı.`;
+    }
+
+    const parts: string[] = [
+      `${rangeLabel} için ${total} fatura (${outgoingCount} giden, ${incomingCount} gelen):`,
+    ];
+
+    if (outgoingCount > 0) {
+      const lines = formatInvoiceLines(outgoing.invoices, "outgoing");
+      const tail = outgoing.invoices.length > 12
+        ? `\n…ve ${outgoing.invoices.length - 12} giden fatura daha.`
+        : "";
+      parts.push(`\n**Giden (${outgoingCount})**\n${lines.join("\n")}${tail}`);
+    }
+    if (incomingCount > 0) {
+      const lines = formatInvoiceLines(incoming.invoices, "incoming");
+      const tail = incoming.invoices.length > 12
+        ? `\n…ve ${incoming.invoices.length - 12} gelen fatura daha.`
+        : "";
+      parts.push(`\n**Gelen (${incomingCount})**\n${lines.join("\n")}${tail}`);
+    }
+    return parts.join("\n");
+  }
+
+  const { invoices, count } = list;
+  const dirLabel = direction === "incoming" ? "gelen" : "giden";
+
+  if (count === 0 || invoices.length === 0) {
+    return `${rangeLabel} için ${dirLabel} fatura bulunamadı.`;
+  }
+
+  const lines = formatInvoiceLines(invoices, direction);
   const tail =
     invoices.length > 12
       ? `\n…ve ${invoices.length - 12} fatura daha.`
@@ -280,6 +339,7 @@ export function buildOpenInvoicesAction(
       ? { startDate: list.start_date, endDate: list.end_date }
       : null);
   if (!range) return null;
+  if (list.count === 0) return null;
 
   return {
     type: "open_invoices",
@@ -308,4 +368,55 @@ export function buildOpenIncomingInvoicesAction(
   list: InvoiceListToolResult,
 ): ChatAction | null {
   return buildOpenInvoicesAction(userMessage, listInput, list, "incoming");
+}
+
+/** Liste sonucundan tek düğme — yalnızca dolu yönü açar. */
+export function buildPrimaryInvoicesAction(
+  userMessage: string,
+  listInput: Record<string, unknown> | null,
+  list: InvoiceListToolResult,
+): ChatAction | null {
+  const inputWithDates = {
+    ...(listInput ?? {}),
+    start_date: list.start_date,
+    end_date: list.end_date,
+  };
+
+  if (list.direction === "both" && list.incoming && list.outgoing) {
+    const { incoming, outgoing } = list;
+    if (incoming.count === 0 && outgoing.count === 0) return null;
+    if (incoming.count > 0 && outgoing.count === 0) {
+      return buildOpenInvoicesAction(
+        userMessage,
+        inputWithDates,
+        { ...list, count: incoming.count, invoices: incoming.invoices },
+        "incoming",
+      );
+    }
+    if (outgoing.count > 0 && incoming.count === 0) {
+      return buildOpenInvoicesAction(
+        userMessage,
+        inputWithDates,
+        { ...list, count: outgoing.count, invoices: outgoing.invoices },
+        "outgoing",
+      );
+    }
+    const direction = outgoing.count >= incoming.count ? "outgoing" : "incoming";
+    const slice = direction === "outgoing" ? outgoing : incoming;
+    return buildOpenInvoicesAction(
+      userMessage,
+      inputWithDates,
+      { ...list, count: slice.count, invoices: slice.invoices },
+      direction,
+    );
+  }
+
+  const direction = list.direction === "incoming" ? "incoming" : "outgoing";
+  if (list.count === 0) return null;
+  return buildOpenInvoicesAction(
+    userMessage,
+    inputWithDates,
+    list,
+    direction,
+  );
 }

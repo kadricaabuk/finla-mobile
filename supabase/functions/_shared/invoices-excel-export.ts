@@ -3,11 +3,12 @@ import * as XLSX from "npm:xlsx@0.18.5";
 import { sha256Hex } from "./crypto.ts";
 import {
   applyFactFiltersToQuery,
-  syncFactsForRange,
+  syncFactsForSession,
   toIsoDate,
   type InvoiceExportFilters,
   type InvoiceFactRow,
 } from "./invoice-facts.ts";
+import type { FinlaSession } from "./session-auth.ts";
 
 /**
  * Yerelde `kong:8000` gibi dahili adresler dönebilir. İstemciler için dış adres (ör.
@@ -99,7 +100,7 @@ function exportFileBasename(direction: "outgoing" | "incoming"): string {
 
 export async function createInvoicesExcelExport(opts: {
   supabase: SupabaseClient;
-  username: string;
+  session: FinlaSession;
   startDateTr: string;
   endDateTr: string;
   direction: "outgoing" | "incoming";
@@ -110,12 +111,13 @@ export async function createInvoicesExcelExport(opts: {
   row_count: number;
   expires_in_seconds: number;
 }> {
-  const { supabase, username, startDateTr, endDateTr, direction, filters } =
+  const { supabase, session, startDateTr, endDateTr, direction, filters } =
     opts;
+  const username = session.userId;
 
-  await syncFactsForRange(
+  await syncFactsForSession(
     supabase,
-    username,
+    session,
     startDateTr,
     endDateTr,
     direction,

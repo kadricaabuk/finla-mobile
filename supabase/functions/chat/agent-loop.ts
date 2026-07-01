@@ -11,8 +11,13 @@ import {
 } from "./gib-tool-errors.ts";
 import { encodeNdjsonEvent } from "./ndjson-stream.ts";
 import { executeTool } from "./tools/index.ts";
+import { normalizeInvoiceListToolResult } from "./list-format.ts";
 import type { FinlaSession } from "../_shared/session-auth.ts";
 import type { InvoiceDetailPayload } from "./types.ts";
+import {
+  formatPendingInvoiceForPrompt,
+  loadPendingInvoice,
+} from "../_shared/invoice-workflow.ts";
 import {
   formatChatContextForPrompt,
   loadChatContext,
@@ -22,6 +27,8 @@ import {
 import type { InvoiceDirection } from "../_shared/invoice-facts.ts";
 
 export const MAX_AGENT_ROUNDS = 8;
+
+export { CHAT_HISTORY_MESSAGE_LIMIT } from "./chat-history.ts";
 
 const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
@@ -36,11 +43,14 @@ export async function buildDynamicSystemPromptForAgent(
   supabase: SupabaseClient,
   conversationId: string,
 ): Promise<string> {
-  const ctx = await loadChatContext(supabase, conversationId);
+  const [ctx, pending] = await Promise.all([
+    loadChatContext(supabase, conversationId),
+    loadPendingInvoice(supabase, conversationId),
+  ]);
   return `${assembleSystemPrompt()}
 
 Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
-Saat dilimi: ${ISTANBUL_TZ}${formatChatContextForPrompt(ctx)}`;
+Saat dilimi: ${ISTANBUL_TZ}${formatChatContextForPrompt(ctx)}${formatPendingInvoiceForPrompt(pending)}`;
 }
 
 function chatContextFromTool(
@@ -96,6 +106,7 @@ export type AgentLoopAccumulator = {
   usedToolNames: Set<string>;
   latestInvoiceActionPayload: InvoiceDetailPayload | null;
   lastListInvoicesInput: Record<string, unknown> | null;
+  lastListInvoicesResult: ReturnType<typeof normalizeInvoiceListToolResult> | null;
   lastExportExcelPayload: {
     download_url: string;
     file_name: string;
@@ -118,6 +129,7 @@ export async function runAnthropicToolLoop(
   const usedToolNames = new Set<string>();
   let latestInvoiceActionPayload: InvoiceDetailPayload | null = null;
   let lastListInvoicesInput: Record<string, unknown> | null = null;
+  let lastListInvoicesResult: ReturnType<typeof normalizeInvoiceListToolResult> | null = null;
   let lastExportExcelPayload: AgentLoopAccumulator["lastExportExcelPayload"] =
     null;
 
@@ -139,20 +151,36 @@ export async function runAnthropicToolLoop(
 
   for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
     const params = anthropicRoundParams();
-    const roundPieces: string[] = [];
     let response: Anthropic.Message;
 
     if (ndjsonWriter) {
       const stream = anthropic.messages.stream(params);
+      let streamedTextLen = 0;
       for await (const event of stream) {
         if (
           event.type === "content_block_delta" &&
           event.delta.type === "text_delta"
         ) {
-          roundPieces.push(event.delta.text);
+          const chunk = event.delta.text;
+          streamedTextLen += chunk.length;
+          await ndjsonWriter.write(
+            encodeNdjsonEvent({ type: "delta", text: chunk }),
+          );
         }
       }
       response = await stream.finalMessage();
+      if (response.stop_reason === "tool_use") {
+        const fullText = response.content
+          .filter((b: Anthropic.ContentBlock) => b.type === "text")
+          .map((b: Anthropic.ContentBlock) => (b as Anthropic.TextBlock).text)
+          .join("");
+        const unsent = fullText.slice(streamedTextLen);
+        if (unsent) {
+          await ndjsonWriter.write(
+            encodeNdjsonEvent({ type: "delta", text: unsent }),
+          );
+        }
+      }
     } else {
       response = await anthropic.messages.create(params);
     }
@@ -160,21 +188,25 @@ export async function runAnthropicToolLoop(
     const textParts = response.content
       .filter((b: Anthropic.ContentBlock) => b.type === "text")
       .map((b: Anthropic.ContentBlock) => (b as Anthropic.TextBlock).text);
-    if (textParts.length) assistantText = textParts.join("");
+    const roundText = textParts.join("");
+    if (roundText) {
+      assistantText = assistantText
+        ? `${assistantText}\n\n${roundText}`
+        : roundText;
+    }
+
+    if (response.stop_reason === "max_tokens") {
+      const suffix = "\n\n(Cevap uzunluğu sınırına ulaştı; kısaltıldı.)";
+      assistantText += suffix;
+      if (ndjsonWriter) {
+        await ndjsonWriter.write(
+          encodeNdjsonEvent({ type: "delta", text: suffix }),
+        );
+      }
+      break;
+    }
 
     if (response.stop_reason === "end_turn") {
-      if (ndjsonWriter && roundPieces.length > 0) {
-        const full = roundPieces.join("");
-        const step = 96;
-        for (let i = 0; i < full.length; i += step) {
-          await ndjsonWriter.write(
-            encodeNdjsonEvent({
-              type: "delta",
-              text: full.slice(i, i + step),
-            }),
-          );
-        }
-      }
       break;
     }
 
@@ -192,6 +224,7 @@ export async function runAnthropicToolLoop(
 
       claudeMessages.push({ role: "assistant", content: response.content });
 
+      const ctxPatches: ChatContext[] = [];
       const toolResults = await Promise.all(
         toolUseBlocks.map(async (block) => {
           let content: string;
@@ -233,6 +266,7 @@ export async function runAnthropicToolLoop(
             }
             if (block.name === "list_invoices") {
               lastListInvoicesInput = block.input as Record<string, unknown>;
+              lastListInvoicesResult = normalizeInvoiceListToolResult(result);
             }
             if (
               block.name === "export_invoices_excel" && result !== null &&
@@ -266,7 +300,7 @@ export async function runAnthropicToolLoop(
               result,
             );
             if (ctxPatch) {
-              await persistChatContext(supabase, convId, ctxPatch);
+              ctxPatches.push(ctxPatch);
             }
             content = JSON.stringify(result);
           } catch (err) {
@@ -283,6 +317,14 @@ export async function runAnthropicToolLoop(
           };
         }),
       );
+
+      if (ctxPatches.length > 0) {
+        const merged = ctxPatches.reduce(
+          (acc, patch) => ({ ...acc, ...patch }),
+          {} as ChatContext,
+        );
+        await persistChatContext(supabase, convId, merged);
+      }
 
       claudeMessages.push({ role: "user", content: toolResults });
 
@@ -304,6 +346,7 @@ export async function runAnthropicToolLoop(
     usedToolNames,
     latestInvoiceActionPayload,
     lastListInvoicesInput,
+    lastListInvoicesResult,
     lastExportExcelPayload,
   };
 }

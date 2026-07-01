@@ -4,7 +4,7 @@ export const NDJSON_CONTENT_TYPE = "application/x-ndjson";
 
 export type NdjsonToolLogPhase = "start" | "success" | "error";
 
-/** Sanitized tool call log — streamed to client in __DEV__ for Chrome DevTools. */
+/** Sanitized tool call log — yalnızca FINLA_STREAM_TOOL_LOGS=true iken client'a gider. */
 export type NdjsonToolLogEvent = {
   type: "tool_log";
   ts: string;

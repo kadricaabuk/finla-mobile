@@ -254,22 +254,8 @@ export default function LoginScreen() {
                     flexDirection: "row",
                   }}
                 >
-                  <View
-                    style={{
-                      justifyContent: "center",
-                      alignItems: "center",
-                      backgroundColor: "#E0E0E0",
-                      borderRadius: 12,
-                      borderTopRightRadius: 0,
-                      borderBottomRightRadius: 0,
-                      paddingHorizontal: 16,
-                    }}
-                  >
-                    <Text
-                      style={{ fontSize: 16, fontWeight: "500", color: "#000" }}
-                    >
-                      +90
-                    </Text>
+                  <View style={styles.phonePrefix}>
+                    <Text style={styles.phonePrefixText}>+90</Text>
                   </View>
                   <TextInput
                     testID="login-phone"
@@ -474,4 +460,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
   },
+  phonePrefix: {
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#000",
+    borderWidth: 1.5,
+    borderRadius: 12,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    paddingHorizontal: 16,
+    height: 50,
+  },
+  phonePrefixText: { fontSize: 16, fontWeight: "500", color: "#FFFFFF" },
 });

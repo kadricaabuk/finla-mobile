@@ -51,7 +51,7 @@ import {
   sanitizeForToolLog,
   type ToolCallLogMeta,
 } from "../gib-tool-errors.ts";
-import { maskPhone, parseFiltersFromText } from "../intents.ts";
+import { maskPhone, parseFiltersFromText, parseInvoiceListDirection, sanitizeInvoiceSearchFilters } from "../intents.ts";
 import type { InvoiceDetailPayload, InvoiceSearchFilters } from "../types.ts";
 
 function factRowToInvoiceDetail(
@@ -135,14 +135,14 @@ export async function executeToolImpl(
       : typeof input.amount_eq === "string"
         ? parseAmount(input.amount_eq as string)
         : null;
-  const filters: InvoiceSearchFilters = {
+  const filters: InvoiceSearchFilters = sanitizeInvoiceSearchFilters({
     customerName:
       typeof input.customer_name === "string"
         ? input.customer_name
         : parsedFromText.customerName,
     amountGte: amountGteFromInput ?? parsedFromText.amountGte,
     amountEq: amountEqFromInput ?? parsedFromText.amountEq,
-  };
+  });
 
   switch (toolName) {
     case "get_user_profile":
@@ -404,11 +404,43 @@ export async function executeToolImpl(
     case "list_invoices": {
       const range = resolveDateRange(input, userMessage, "month");
       if (!range) throw new Error("Tarih aralığı belirlenemedi.");
-      const direction = parseToolDirection(input);
+      const listDirection = parseInvoiceListDirection(input, userMessage);
       const hasFilters =
         !!filters.customerName ||
         typeof filters.amountGte === "number" ||
         typeof filters.amountEq === "number";
+
+      if (listDirection === "both" && !hasFilters) {
+        const [incomingInvoices, outgoingInvoices] = await Promise.all([
+          provider.listIncomingInvoices(
+            providerCtx,
+            range.startDate,
+            range.endDate,
+          ),
+          provider.listOutgoingInvoices(
+            providerCtx,
+            range.startDate,
+            range.endDate,
+          ),
+        ]);
+        return {
+          direction: "both",
+          count: incomingInvoices.length + outgoingInvoices.length,
+          start_date: range.startDate,
+          end_date: range.endDate,
+          invoices: [],
+          incoming: {
+            count: incomingInvoices.length,
+            invoices: incomingInvoices,
+          },
+          outgoing: {
+            count: outgoingInvoices.length,
+            invoices: outgoingInvoices,
+          },
+        };
+      }
+
+      const direction = listDirection === "both" ? "outgoing" : listDirection;
       if (!hasFilters) {
         const invoices =
           direction === "incoming"
@@ -592,7 +624,7 @@ export async function executeToolImpl(
       const direction = parseToolDirection(input);
       return await createInvoicesExcelExport({
         supabase,
-        username: scopeKey,
+        session,
         startDateTr: range.startDate,
         endDateTr: range.endDate,
         direction,

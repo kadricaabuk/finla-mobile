@@ -5,7 +5,6 @@ export function persistableAction(
   action: ChatAction | null,
 ): Record<string, unknown> | null {
   if (!action) return null;
-  if (action.type === "open_sign_otp") return null;
   if (action.type === "open_invoice_preview") {
     return {
       type: action.type,

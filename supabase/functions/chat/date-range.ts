@@ -25,6 +25,19 @@ export function istanbulMonthEndUtc(today: Date = istanbulTodayUtc()): Date {
   return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
 }
 
+/** Bir önceki takvim ayı (İstanbul). */
+export function istanbulPreviousMonthRange(
+  today: Date = istanbulTodayUtc(),
+): { startDate: string; endDate: string } {
+  const month = today.getUTCMonth();
+  const year = today.getUTCFullYear();
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const start = new Date(Date.UTC(prevYear, prevMonth, 1));
+  const end = new Date(Date.UTC(prevYear, prevMonth + 1, 0));
+  return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
+}
+
 export function parseTrDate(value: string): Date | null {
   const m = value.trim().match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/);
   if (!m) return null;
@@ -72,6 +85,35 @@ export function resolveDateRangeFromText(
     const start = new Date(today);
     start.setUTCMonth(start.getUTCMonth() - 1);
     return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
+  }
+
+  const sonAyMatch = lower.match(/son\s+(\d{1,2})\s+ay(?:lık|lik)?\b/);
+  if (sonAyMatch) {
+    const months = Number(sonAyMatch[1]);
+    if (months > 1 && months <= 24) {
+      const start = new Date(today);
+      start.setUTCMonth(start.getUTCMonth() - months);
+      return { startDate: formatTrDate(start), endDate: formatTrDate(today) };
+    }
+  }
+
+  const sonGunMatch = lower.match(/son\s+(\d{1,3})\s+g[uü]n(?:l[uü]k|luk)?\b/);
+  if (sonGunMatch) {
+    const days = Number(sonGunMatch[1]);
+    if (days > 0 && days <= 365) {
+      const start = new Date(today);
+      start.setUTCDate(start.getUTCDate() - days);
+      return { startDate: formatTrDate(start), endDate: formatTrDate(today) };
+    }
+  }
+
+  if (
+    lower.includes("geçen ay") ||
+    lower.includes("gecen ay") ||
+    lower.includes("önceki ay") ||
+    lower.includes("onceki ay")
+  ) {
+    return istanbulPreviousMonthRange(today);
   }
 
   if (
@@ -122,6 +164,35 @@ export function resolveDateRangeFromText(
       startDate: formatTrDate(startOfLastWeek),
       endDate: formatTrDate(endOfLastWeek),
     };
+  }
+
+  if (
+    lower.includes("bu hafta") ||
+    lower.includes("bu haftaki") ||
+    lower.includes("bu haftanın") ||
+    lower.includes("bu haftanin")
+  ) {
+    const currentWeekday = (today.getUTCDay() + 6) % 7;
+    const startOfThisWeek = new Date(today);
+    startOfThisWeek.setUTCDate(today.getUTCDate() - currentWeekday);
+    return {
+      startDate: formatTrDate(startOfThisWeek),
+      endDate: formatTrDate(today),
+    };
+  }
+
+  if (
+    lower.includes("geçen yıl") ||
+    lower.includes("gecen yil") ||
+    lower.includes("geçen sene") ||
+    lower.includes("gecen sene") ||
+    lower.includes("önceki yıl") ||
+    lower.includes("onceki yil")
+  ) {
+    const year = today.getUTCFullYear() - 1;
+    const start = new Date(Date.UTC(year, 0, 1));
+    const end = new Date(Date.UTC(year, 11, 31));
+    return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
   }
 
   if (lower.includes("bu yıl") || lower.includes("bu yil")) {

@@ -3,7 +3,6 @@ export interface ChatAction {
     | "open_invoices"
     | "open_invoice_detail"
     | "open_invoice_preview"
-    | "open_sign_otp"
     | "open_excel_export";
   label: string;
   filter?: {
@@ -25,7 +24,6 @@ export interface ChatAction {
     local_fallback?: boolean;
     direction?: "outgoing" | "incoming";
   };
-  sign_otp?: { draftUuid: string; phoneMasked: string };
   excel_export?: {
     download_url: string;
     file_name: string;

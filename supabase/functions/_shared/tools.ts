@@ -161,7 +161,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_invoices',
     description:
-      'Giden veya gelen faturaları listeler (direction ile). Tarih verilmezse kullanıcı ifadesinden (bugün, bu ay, dün) aralık belirlenir. Yanıt: { count, start_date, end_date, direction, invoices }.',
+      'Giden ve/veya gelen faturaları listeler. direction belirtilmezse her iki yön sorgulanır. Tarih: bugün, bu ay, geçen ay, dün vb. Yanıt: { count, start_date, end_date, direction, invoices } veya direction=both iken incoming/outgoing dilimleri.',
     input_schema: {
       type: 'object',
       properties: {
@@ -367,13 +367,13 @@ export function assembleSystemPrompt(): string {
     '- Fatura oluşturma (create_invoice)',
     '- TCMB döviz kuru (get_exchange_rate)',
     '- Fatura kesim onayı (confirm_invoice_issue — Mysoft sendDraftInvoiceToGIB)',
-    '- Fatura listeleme — giden veya gelen (list_invoices, direction parametresi)',
+    '- Fatura listeleme — yön belirtilmediyse her iki yön (list_invoices, direction opsiyonel; geçen ay / bu ay / bugün)',
     '- Toplam satış/gider özeti (invoice_totals, direction: outgoing veya incoming)',
     '- Gider + gelir + net özeti (invoice_financial_summary): kar/zarar, gider-gelir özeti',
     '- Son faturayı bulma (latest_invoice): giden veya gelen; list_invoices değil',
     '- Fatura iptal etme (cancel_invoice)',
     '- Alıcı bilgisi sorgulama (lookup_recipient)',
-    '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv veya dışarı aktarma isterse bu araçla .xlsx üret',
+    '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv, rapor veya dışarı aktarma isterse bu araçla .xlsx üret',
     '- Kullanıcı profil bilgisi (get_user_profile)',
     '- GİB profil kaydı güncelleme (update_user_profile)',
   ]
@@ -412,6 +412,8 @@ export function assembleSystemPrompt(): string {
     `- "kazanç", "gelir", "satış", "kestiğim" → invoice_totals direction=outgoing.`,
     `- "özet", "kar zarar", "gider ve gelir" → invoice_financial_summary.`,
     `- "gelen fatura", "bana kesilen" → list_invoices direction=incoming.`,
+    `- Yön belirtilmeden "faturaları getir/listele" → list_invoices direction=both (giden+gelen).`,
+    `- "geçen ay" → bir önceki takvim ayı; "bu ay" → içinde bulunulan ay.`,
     `- "son fatura", "en son fatura", "X'e son kestiğimiz fatura" → latest_invoice direction=outgoing; "gelen son fatura", "X'ten gelen" → direction=incoming.`,
     `- Gelen fatura kabul/red işlemi chat'ten yapılmaz; kullanıcıyı Gelen Faturalar ekranına yönlendir.`,
     `- Kullanıcı az önce konuşulan faturayı "göster", "pdf", "önizle" derse yeni liste açma; sohbet bağlamındaki son faturayı aç.`,
@@ -423,7 +425,7 @@ export function assembleSystemPrompt(): string {
     `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR ÇAĞIRMA; kullanıcıya mevcut taslağı önizle.`,
     `- Kullanıcı "taslağı gör", "önizle", "pdf" derse yeni taslak oluşturma; mevcut pending taslak varsa onu aç.`,
     `- list_invoices aracından boş sonuç gelirse, kullanılan tarih ve filtre kriterlerini kullanıcıya bildir (örnek: "Ahmet için bu ay fatura bulunamadı").`,
-    `- Kullanıcı excel, csv, xlsx veya "dışarı aktar" isterse export_invoices_excel aracını çağır.`,
+    `- Kullanıcı excel, csv, xlsx, "rapor oluştur" veya "dışarı aktar" isterse export_invoices_excel aracını çağır.`,
     `- Fatura listesi getirince kullanılan tarih aralığını ve varsa filtreleri doğal şekilde belirt.`,
     ``,
     `Hata yönetimi (araç sonucunda "error_code" varsa):`,

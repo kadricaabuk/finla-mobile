@@ -3,7 +3,6 @@ export interface ChatMessageAction {
     | "open_invoices"
     | "open_invoice_detail"
     | "open_invoice_preview"
-    | "open_sign_otp"
     | "open_excel_export";
   label: string;
   filter?: {
@@ -29,10 +28,6 @@ export interface ChatMessageAction {
     direction?: "outgoing" | "incoming";
     /** GİB önizleme başarısız — yerel özet HTML */
     local_fallback?: boolean;
-  };
-  sign_otp?: {
-    draftUuid: string;
-    phoneMasked: string;
   };
   excel_export?: {
     download_url: string;

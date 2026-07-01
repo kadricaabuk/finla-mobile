@@ -37,10 +37,11 @@ export function ChatMessageBubble({
   onShareExcelExport,
 }: ChatMessageBubbleProps) {
   const pending = Boolean(streamPending && msg.role === "assistant");
+  const messageText = msg.text ?? "";
   const showStreamStatusBubble =
     msg.role === "assistant" &&
     pending &&
-    msg.text.trim().length === 0;
+    messageText.trim().length === 0;
 
   if (showStreamStatusBubble) {
     const label =
@@ -75,16 +76,16 @@ export function ChatMessageBubble({
       style={bubbleStyles}
     >
       {msg.role === "user" ? (
-        <Text style={[styles.bubbleText, styles.userText]}>{msg.text}</Text>
-      ) : hasMarkdownTable(msg.text) ? (
+        <Text style={[styles.bubbleText, styles.userText]}>{messageText}</Text>
+      ) : hasMarkdownTable(messageText) ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={markdownWrap}>
-            <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+            <Markdown style={chatMarkdownStyles}>{messageText}</Markdown>
           </View>
         </ScrollView>
       ) : (
         <View style={markdownWrap}>
-          <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+          <Markdown style={chatMarkdownStyles}>{messageText || " "}</Markdown>
         </View>
       )}
       {msg.role === "assistant" && msg.action?.type === "open_invoices" && (

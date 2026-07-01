@@ -1,8 +1,12 @@
 import { encodeNdjsonEvent } from "./ndjson-stream.ts";
 
-const TOOL_LOG_MAX_STRING = 2_000;
-const TOOL_LOG_MAX_ARRAY = 20;
-const TOOL_LOG_MAX_DEPTH = 6;
+export { sanitizeForDevLog as sanitizeForToolLog } from "../../../shared/log-sanitize.ts";
+
+/** Production'da kapalı; FINLA_STREAM_TOOL_LOGS=true ile açılır. */
+export function shouldStreamToolLogsToClient(): boolean {
+  const flag = Deno.env.get("FINLA_STREAM_TOOL_LOGS")?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
 
 export type ToolCallLogMeta = {
   source?: "agent" | "fast_path";
@@ -137,45 +141,6 @@ export function classifyGibOperationError(
   return { code: "GIB_ERROR", message: raw };
 }
 
-export function sanitizeForToolLog(value: unknown, depth = 0): unknown {
-  if (depth > TOOL_LOG_MAX_DEPTH) return "[max_depth]";
-  if (value === null || value === undefined) return value;
-  if (typeof value === "string") {
-    if (value.length <= TOOL_LOG_MAX_STRING) return value;
-    return `${value.slice(0, TOOL_LOG_MAX_STRING)}…[+${value.length - TOOL_LOG_MAX_STRING} chars]`;
-  }
-  if (typeof value !== "object") return value;
-  if (Array.isArray(value)) {
-    const sliced = value
-      .slice(0, TOOL_LOG_MAX_ARRAY)
-      .map((item) => sanitizeForToolLog(item, depth + 1));
-    if (value.length > TOOL_LOG_MAX_ARRAY) {
-      sliced.push(`…[+${value.length - TOOL_LOG_MAX_ARRAY} items]`);
-    }
-    return sliced;
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (/password|sms_code|token|cred|secret|refresh/i.test(key)) {
-      out[key] = "[redacted]";
-      continue;
-    }
-    if (key === "code" && typeof raw === "string") {
-      out[key] = "[redacted]";
-      continue;
-    }
-    if (
-      (key === "preview_html" || key === "html") &&
-      typeof raw === "string"
-    ) {
-      out[key] = `[html ${raw.length} chars]`;
-      continue;
-    }
-    out[key] = sanitizeForToolLog(raw, depth + 1);
-  }
-  return out;
-}
-
 export async function logToolCallJson(
   payload: Record<string, unknown>,
   ndjsonWriter?: WritableStreamDefaultWriter<Uint8Array> | null,
@@ -189,6 +154,7 @@ export async function logToolCallJson(
     }),
   );
   if (!ndjsonWriter) return;
+  if (!shouldStreamToolLogsToClient()) return;
   const phase = payload.phase;
   if (phase !== "start" && phase !== "success" && phase !== "error") return;
   const tool = payload.tool;

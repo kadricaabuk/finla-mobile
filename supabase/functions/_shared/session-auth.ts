@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js'
 import { SignJWT, jwtVerify } from 'npm:jose'
 import { sha256Hex } from './crypto.ts'
+import { buildSessionClaims } from './user-service.ts'
 
 const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -28,6 +29,29 @@ async function hashRefreshToken(token: string): Promise<string> {
   return sha256Hex(`${getRefreshPepper()}:${token}`)
 }
 
+export type OnboardingStatus =
+  | 'pending'
+  | 'tenant_linked'
+  | 'active'
+  | 'activation_complete'
+
+export interface FinlaSessionClaims {
+  sub: string
+  typ?: string
+  phone?: string
+  tenant_vkn?: string
+  onboarding_status?: OnboardingStatus
+  tenant_name?: string
+}
+
+export interface FinlaSession {
+  userId: string
+  phone?: string
+  tenantVkn?: string
+  onboardingStatus: OnboardingStatus
+  tenantName?: string
+}
+
 export interface AuthTokens {
   accessToken: string
   refreshToken: string
@@ -44,9 +68,27 @@ export class SessionAuthError extends Error {
   }
 }
 
+function buildAccessJwtPayload(claims: FinlaSessionClaims): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    sub: claims.sub,
+    typ: 'access',
+  }
+  if (claims.phone) payload.phone = claims.phone
+  if (claims.tenant_vkn) payload.tenant_vkn = claims.tenant_vkn
+  if (claims.onboarding_status) payload.onboarding_status = claims.onboarding_status
+  if (claims.tenant_name) payload.tenant_name = claims.tenant_name
+  return payload
+}
+
 export async function issueAuthTokens(subject: string): Promise<AuthTokens> {
+  return issueAuthTokensWithClaims({ sub: subject, onboarding_status: 'pending' })
+}
+
+export async function issueAuthTokensWithClaims(
+  claims: FinlaSessionClaims,
+): Promise<AuthTokens> {
   const now = Math.floor(Date.now() / 1000)
-  const accessToken = await new SignJWT({ sub: subject, typ: 'access' })
+  const accessToken = await new SignJWT(buildAccessJwtPayload(claims))
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
     .setExpirationTime(now + ACCESS_TTL_SECONDS)
@@ -58,7 +100,7 @@ export async function issueAuthTokens(subject: string): Promise<AuthTokens> {
   const familyId = crypto.randomUUID()
 
   const { error } = await supabase.from('auth_sessions').insert({
-    subject,
+    subject: claims.sub,
     family_id: familyId,
     refresh_token_hash: refreshTokenHash,
     expires_at: expiresAt,
@@ -80,8 +122,9 @@ export async function rotateRefreshToken(refreshToken: string): Promise<AuthToke
   if (row.revoked_at) throw new Error('Refresh token iptal edilmis.')
   if (new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Refresh token suresi dolmus.')
 
+  const claims = await buildSessionClaims(row.subject)
   const now = Math.floor(Date.now() / 1000)
-  const accessToken = await new SignJWT({ sub: row.subject, typ: 'access' })
+  const accessToken = await new SignJWT(buildAccessJwtPayload(claims))
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
     .setExpirationTime(now + ACCESS_TTL_SECONDS)
@@ -117,29 +160,56 @@ export async function revokeSubjectSessions(subject: string): Promise<void> {
   if (error) throw error
 }
 
-export async function verifyAccessToken(accessToken: string): Promise<{ subject: string }> {
-  let payload: { sub?: string; typ?: string }
+export async function verifyAccessTokenClaims(
+  accessToken: string,
+): Promise<FinlaSessionClaims> {
+  let payload: FinlaSessionClaims & { typ?: string }
   try {
     const verified = await jwtVerify(accessToken, getJwtSecret())
-    payload = verified.payload as { sub?: string; typ?: string }
+    payload = verified.payload as FinlaSessionClaims & { typ?: string }
   } catch {
     throw new SessionAuthError('Access token gecersiz veya suresi dolmus.', 401)
   }
   if (payload.typ !== 'access' || typeof payload.sub !== 'string') {
     throw new SessionAuthError('Access token gecersiz.', 401)
   }
-  return { subject: payload.sub }
+  return {
+    sub: payload.sub,
+    phone: payload.phone,
+    tenant_vkn: payload.tenant_vkn,
+    onboarding_status: payload.onboarding_status ?? 'pending',
+    tenant_name: payload.tenant_name,
+  }
 }
 
-export async function getSubjectFromAuthHeader(req: Request): Promise<string> {
+export async function verifyAccessToken(accessToken: string): Promise<{ subject: string }> {
+  const claims = await verifyAccessTokenClaims(accessToken)
+  return { subject: claims.sub }
+}
+
+function extractAccessToken(req: Request): string {
   const direct = req.headers.get('x-finla-access-token')
-  if (direct && direct.trim().length > 0) {
-    const { subject } = await verifyAccessToken(direct.trim())
-    return subject
-  }
+  if (direct && direct.trim().length > 0) return direct.trim()
   const raw = req.headers.get('authorization') ?? ''
   const [, token] = raw.match(/^Bearer\s+(.+)$/i) ?? []
   if (!token) throw new SessionAuthError('Authorization Bearer token gerekli.', 401)
+  return token
+}
+
+export async function requireFinlaSession(req: Request): Promise<FinlaSession> {
+  const token = extractAccessToken(req)
+  const claims = await verifyAccessTokenClaims(token)
+  return {
+    userId: claims.sub,
+    phone: claims.phone,
+    tenantVkn: claims.tenant_vkn,
+    onboardingStatus: claims.onboarding_status ?? 'pending',
+    tenantName: claims.tenant_name,
+  }
+}
+
+export async function getSubjectFromAuthHeader(req: Request): Promise<string> {
+  const token = extractAccessToken(req)
   const { subject } = await verifyAccessToken(token)
   return subject
 }

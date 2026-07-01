@@ -31,11 +31,8 @@ export function toolStatusText(rawName: string): string {
       return "Taslak fatura hazırlanıyor…";
     case "cancel_invoice":
       return "Fatura iptali işleniyor…";
-    case "request_invoice_sign_otp":
-      return "SMS doğrulama başlatılıyor…";
-    case "verify_invoice_sign_otp":
-      return "SMS kodu doğrulanıyor…";
     case "confirm_invoice_issue":
+      return "Fatura GİB'e gönderiliyor…";
       return "Fatura kesiliyor…";
     case "export_invoices_excel":
       return "Excel dosyası oluşturuluyor…";

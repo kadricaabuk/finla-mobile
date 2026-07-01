@@ -44,9 +44,9 @@ export function assistantFallbackForAction(action: ChatAction | null): string {
   if (!action) return "";
   switch (action.type) {
     case "open_invoice_preview":
-      return "Taslak hazır — önizlemeyi kontrol edebilirsin. Uygunsa onaylayıp imzalamaya geçebilirsin.";
+      return "Taslak hazır — önizlemeyi kontrol edebilirsin. Uygunsa «Onayla ve Kes» ile GİB'e gönderebilirsin.";
     case "open_invoices":
-      return "Fatura listesi hazır — alttaki düğmeyle ekranı açabilirsin.";
+      return "Giden fatura listesi hazır — alttaki düğmeyle ekranı açabilirsin.";
     case "open_invoice_detail":
       return "Seçilen fatura için detay düğmesine dokunabilirsin.";
     case "open_excel_export":

@@ -1,5 +1,6 @@
-import InvoicesScreen from "@/components/invoices/invoices-screen";
+import { Redirect } from "expo-router";
 
+/** Eski rota — giden faturalara yönlendir. */
 export default function InvoicesRoute() {
-  return <InvoicesScreen />;
+  return <Redirect href="/outgoing-invoices" />;
 }

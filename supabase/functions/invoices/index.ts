@@ -3,11 +3,16 @@ import { createClient } from 'npm:@supabase/supabase-js'
 import {
   filterGibInvoicesByFacts,
   filterInvoiceFacts,
-  syncFactsForRange,
+  syncFactsForSession,
   type InvoiceFactRow,
 } from '../_shared/invoice-facts.ts'
-import { gibListInvoices, mapInvoicesToFacts } from '../_shared/gib.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+import { mapInvoicesToFacts } from '../_shared/gib.ts'
+import {
+  getInvoiceProvider,
+  providerContextFromSession,
+} from '../_shared/invoice-provider/index.ts'
+import { sortInvoicesByDate } from '../_shared/invoice-list-sort.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -19,7 +24,7 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
     const body = await req.json() as {
       startDate?: string
       endDate?: string
@@ -29,7 +34,8 @@ Deno.serve(async (req: Request) => {
       direction?: 'outgoing' | 'incoming'
     }
     const { startDate, endDate, customerName, amountGte, amountEq } = body
-    const direction = 'outgoing' as const
+    const direction =
+      body.direction === 'incoming' ? 'incoming' : 'outgoing'
 
     if (!startDate || !endDate) {
       return Response.json(
@@ -38,8 +44,18 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const invoices = (await gibListInvoices(username, startDate, endDate)) as unknown[]
-    const facts = mapInvoicesToFacts(username, invoices, direction)
+    const provider = getInvoiceProvider()
+    const ctx = providerContextFromSession(session)
+    const scopeKey = session.userId
+    const invoices =
+      direction === 'incoming'
+        ? await provider.listIncomingInvoices(ctx, startDate, endDate)
+        : await provider.listOutgoingInvoices(ctx, startDate, endDate)
+    const facts = mapInvoicesToFacts(scopeKey, invoices, direction).map((row) => ({
+      ...row,
+      user_id: session.userId,
+      tenant_vkn: session.tenantVkn ?? null,
+    }))
     if (facts.length > 0) {
       const { error: upsertError } = await supabase
         .from('invoice_facts')
@@ -61,7 +77,12 @@ Deno.serve(async (req: Request) => {
       ? filterGibInvoicesByFacts(invoices, matchedFacts)
       : invoices
 
-    return Response.json({ invoices: filteredInvoices, synced: facts.length }, { headers: corsHeaders })
+    return Response.json({
+      invoices: sortInvoicesByDate(
+        filteredInvoices as Record<string, unknown>[],
+      ),
+      synced: facts.length,
+    }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {
       return Response.json({ error: err.message }, { status: err.status, headers: corsHeaders })

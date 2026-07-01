@@ -6,22 +6,25 @@ import {
   type SupportedExchangeCurrency,
 } from "../../_shared/exchange-rate.ts";
 import {
-  faturaCancelInvoice,
-  faturaConfirmInvoiceIssue,
-  faturaCreateInvoicePreview,
-  faturaListInvoices,
-  faturaLookupRecipient,
-  faturaSendSignSMSCode,
-  faturaVerifySignSMSCode,
-} from "../../_shared/gib.ts";
+  getInvoiceProvider,
+  providerContextFromSession,
+} from "../../_shared/invoice-provider/index.ts";
 import {
   applyFactFiltersToQuery,
   parseAmount,
-  syncFactsForRange,
+  syncFactsForSession,
   toIsoDate,
+  type InvoiceDirection,
 } from "../../_shared/invoice-facts.ts";
 import {
+  parseToolDirection,
+  queryFinancialSummary,
+  queryInvoiceTotals,
+} from "../../_shared/invoice-totals-query.ts";
+import {
   loadPendingInvoice,
+  pendingRequestToCreateInput,
+  resolvePendingDraftRef,
   savePendingInvoice,
   type PendingInvoiceState,
 } from "../../_shared/invoice-workflow.ts";
@@ -34,11 +37,13 @@ import {
   getUserProfile,
   updateUserProfile,
 } from "../../_shared/profile-service.ts";
+import type { FinlaSession } from "../../_shared/session-auth.ts";
 import { normalizeTurkish } from "../../_shared/turkish.ts";
 import {
   formatTrDate,
   istanbulTodayUtc,
   resolveDateRange,
+  resolveLatestInvoiceSyncRange,
 } from "../date-range.ts";
 import {
   classifyGibOperationError,
@@ -47,7 +52,27 @@ import {
   type ToolCallLogMeta,
 } from "../gib-tool-errors.ts";
 import { maskPhone, parseFiltersFromText } from "../intents.ts";
-import type { InvoiceSearchFilters } from "../types.ts";
+import type { InvoiceDetailPayload, InvoiceSearchFilters } from "../types.ts";
+
+function factRowToInvoiceDetail(
+  row: Record<string, unknown>,
+  direction: InvoiceDirection,
+): InvoiceDetailPayload {
+  return {
+    invoice_uuid: String(row.invoice_uuid ?? ""),
+    issue_date: typeof row.issue_date === "string" ? row.issue_date : null,
+    status: typeof row.status === "string" ? row.status : "unknown",
+    currency: typeof row.currency === "string" ? row.currency : "TRY",
+    gross_total: typeof row.gross_total === "number" ? row.gross_total : null,
+    vat_total: typeof row.vat_total === "number" ? row.vat_total : null,
+    net_total: typeof row.net_total === "number" ? row.net_total : null,
+    customer_tax_id:
+      typeof row.customer_tax_id === "string" ? row.customer_tax_id : null,
+    customer_name:
+      typeof row.customer_name === "string" ? row.customer_name : null,
+    direction,
+  };
+}
 
 export function createInvoiceInputFromToolInput(
   input: Record<string, unknown>,
@@ -90,10 +115,13 @@ export async function executeToolImpl(
   supabase: SupabaseClient,
   toolName: string,
   input: Record<string, unknown>,
-  username: string,
+  session: FinlaSession,
   userMessage: string,
   conversationId: string,
 ): Promise<unknown> {
+  const provider = getInvoiceProvider();
+  const providerCtx = providerContextFromSession(session);
+  const scopeKey = session.userId;
   const parsedFromText = parseFiltersFromText(userMessage);
   const amountGteFromInput =
     typeof input.amount_gte === "number"
@@ -118,13 +146,16 @@ export async function executeToolImpl(
 
   switch (toolName) {
     case "get_user_profile":
-      return getUserProfile(username);
+      return getUserProfile(session);
 
     case "update_user_profile":
-      return updateUserProfile(username, input);
+      return updateUserProfile(session, input);
 
     case "lookup_recipient":
-      return faturaLookupRecipient(username, input.tax_id as string);
+      return provider.lookupRecipient(
+        providerCtx,
+        input.tax_id as string,
+      );
 
     case "get_exchange_rate": {
       const currency = input.currency as string;
@@ -236,7 +267,10 @@ export async function executeToolImpl(
         currencyRate: resolvedRate || undefined,
       };
 
-      const preview = await faturaCreateInvoicePreview(username, invoiceInput);
+      const preview = await provider.createInvoicePreview(
+        providerCtx,
+        invoiceInput,
+      );
 
       await savePendingInvoice(supabase, conversationId, {
         status: "preview_ready",
@@ -265,105 +299,35 @@ export async function executeToolImpl(
           : {}),
         ...(preview.html.length > 0 ? {} : { preview_html_pending: true }),
         message: preview.html.length > 0
-          ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve imzalamaya geç."
-          : "Taslak GİB'de oluşturuldu. Önizleme açılacak; uygunsa onayla ve imzalamaya geç.",
+          ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve GİB'e gönderelim."
+          : "Taslak Mysoft'ta oluşturuldu. Önizleme açılacak; uygunsa onayla ve GİB'e gönderelim.",
       };
     }
 
-    case "request_invoice_sign_otp": {
-      const pending = await loadPendingInvoice(supabase, conversationId) ?? {};
-      const draft = pending?.draft;
-      if (!draft?.uuid) {
-        throw new Error("İmzalanacak taslak fatura bulunamadı.");
-      }
-
-      const phoneCandidate =
-        (typeof input.phone === "string" && input.phone.trim()) ||
-        pending.signing?.phone ||
-        (await getUserProfile(username))?.phoneNumber;
-      const phone =
-        typeof phoneCandidate === "string" ? phoneCandidate.trim() : "";
-      if (!phone) {
-        return {
-          status: "phone_required",
-          draft_uuid: draft.uuid,
-          phone_masked: "Numara gerekli",
-        };
-      }
-
-      const operationId = await faturaSendSignSMSCode(username, phone);
-      if (!operationId) {
-        throw new Error("SMS doğrulama başlatılamadı. Lütfen tekrar dene.");
-      }
-
-      const nextPending: PendingInvoiceState = {
-        ...pending,
-        signing: {
-          status: "otp_sent",
-          phone,
-          phone_masked: maskPhone(phone),
-          operation_id: operationId,
-          otp_requested_at: new Date().toISOString(),
-          otp_verified_at: undefined,
-        },
-      };
-      await savePendingInvoice(supabase, conversationId, nextPending);
-
-      return {
-        status: "otp_sent",
-        draft_uuid: draft.uuid,
-        phone_masked: nextPending.signing?.phone_masked ?? maskPhone(phone),
-        operation_id: operationId,
-      };
-    }
-
+    case "request_invoice_sign_otp":
     case "verify_invoice_sign_otp": {
-      const pending = await loadPendingInvoice(supabase, conversationId);
-      const draft = pending?.draft;
-      if (!draft?.uuid) {
-        throw new Error("Doğrulanacak taslak fatura bulunamadı.");
-      }
-      const operationId = pending?.signing?.operation_id;
-      if (!operationId) {
-        throw new Error("Doğrulama işlemi bulunamadı. Önce SMS kodu iste.");
-      }
-      const code =
-        typeof input.code === "string"
-          ? input.code.trim()
-          : typeof input.sms_code === "string"
-            ? (input.sms_code as string).trim()
-            : "";
-      if (!code) throw new Error("SMS doğrulama kodu gerekli.");
-
-      await faturaVerifySignSMSCode(username, code, operationId);
-
-      const nextPending: PendingInvoiceState = {
-        ...pending,
-        signing: {
-          ...(pending?.signing ?? {}),
-          status: "otp_verified",
-          otp_verified_at: new Date().toISOString(),
-        },
+      return {
+        status: "deprecated",
+        message:
+          "Mysoft akışında SMS imza gerekmez. Kullanıcı önizlemeyi onayladıysa confirm_invoice_issue çağır.",
       };
-      await savePendingInvoice(supabase, conversationId, nextPending);
-
-      return { status: "otp_verified", draft_uuid: draft.uuid };
     }
 
     case "confirm_invoice_issue": {
       const pending = await loadPendingInvoice(supabase, conversationId);
-      const draft = pending?.draft;
-      if (!draft?.date || !draft?.uuid) {
+      const draftRef = resolvePendingDraftRef(pending);
+      if (!draftRef) {
         throw new Error("Onay bekleyen bir fatura taslağı bulunamadı.");
       }
-      if (pending?.signing?.status !== "otp_verified") {
-        throw new Error("İmzalama için SMS doğrulama tamamlanmadı.");
-      }
 
-      const issued = await faturaConfirmInvoiceIssue(username, {
-        date: draft.date,
-        uuid: draft.uuid,
-      });
+      const issued = await provider.confirmInvoiceIssue(
+        providerCtx,
+        {
+          date: draftRef.date,
+          uuid: draftRef.uuid,
+        },
+        { resendInput: pendingRequestToCreateInput(pending) ?? undefined },
+      );
       const items = Array.isArray(pending?.request?.items)
         ? pending.request.items
         : [];
@@ -391,7 +355,7 @@ export async function executeToolImpl(
           last_invoice: {
             uuid: issued.uuid,
             html: issued.html,
-            issue_date: draft.date,
+            issue_date: draftRef.date,
             status: "approved",
             currency: pending?.request?.currency ?? "TRY",
             gross_total: grossTotal,
@@ -407,10 +371,12 @@ export async function executeToolImpl(
 
       await supabase.from("invoice_facts").upsert(
         {
-          gib_username: username,
+          gib_username: scopeKey,
+          user_id: session.userId,
+          tenant_vkn: session.tenantVkn ?? null,
           invoice_uuid: issued.uuid,
           direction: "outgoing",
-          issue_date: draft.date.split("/").reverse().join("-"),
+          issue_date: draftRef.date.split("/").reverse().join("-"),
           status: "approved",
           currency: pending?.request?.currency ?? "TRY",
           gross_total: grossTotal,
@@ -420,7 +386,7 @@ export async function executeToolImpl(
           customer_name: pending?.request?.buyer_name ?? null,
           raw_payload: {
             source: "confirm_invoice_issue",
-            draft,
+            draft: draftRef,
             request: pending?.request ?? null,
           },
           synced_at: new Date().toISOString(),
@@ -438,26 +404,45 @@ export async function executeToolImpl(
     case "list_invoices": {
       const range = resolveDateRange(input, userMessage, "month");
       if (!range) throw new Error("Tarih aralığı belirlenemedi.");
+      const direction = parseToolDirection(input);
       const hasFilters =
         !!filters.customerName ||
         typeof filters.amountGte === "number" ||
         typeof filters.amountEq === "number";
       if (!hasFilters) {
-        return faturaListInvoices(username, range.startDate, range.endDate);
+        const invoices =
+          direction === "incoming"
+            ? await provider.listIncomingInvoices(
+              providerCtx,
+              range.startDate,
+              range.endDate,
+            )
+            : await provider.listOutgoingInvoices(
+              providerCtx,
+              range.startDate,
+              range.endDate,
+            );
+        return {
+          count: invoices.length,
+          start_date: range.startDate,
+          end_date: range.endDate,
+          direction,
+          invoices,
+        };
       }
 
-      await syncFactsForRange(
+      await syncFactsForSession(
         supabase,
-        username,
+        session,
         range.startDate,
         range.endDate,
-        "outgoing",
+        direction,
       );
       let query = supabase
         .from("invoice_facts")
         .select("raw_payload")
-        .eq("gib_username", username)
-        .eq("direction", "outgoing")
+        .eq("gib_username", scopeKey)
+        .eq("direction", direction)
         .gte("issue_date", toIsoDate(range.startDate))
         .lte("issue_date", toIsoDate(range.endDate))
         .order("issue_date", { ascending: false })
@@ -465,116 +450,152 @@ export async function executeToolImpl(
       query = applyFactFiltersToQuery(query, filters);
       const { data, error } = await query;
       if (error) throw error;
-      return (data ?? []).map(
+      const invoices = (data ?? []).map(
         (row: { raw_payload: unknown }) => row.raw_payload,
       );
+      return {
+        count: invoices.length,
+        start_date: range.startDate,
+        end_date: range.endDate,
+        direction,
+        invoices,
+      };
     }
 
     case "invoice_totals": {
       const range = resolveDateRange(input, userMessage, "month");
       if (!range) throw new Error("Tarih aralığı belirlenemedi.");
-      await syncFactsForRange(
+      const direction = parseToolDirection(input);
+      const totals = await queryInvoiceTotals(
         supabase,
-        username,
+        session,
+        scopeKey,
         range.startDate,
         range.endDate,
-        "outgoing",
+        direction,
+        filters,
       );
-      let query = supabase
-        .from("invoice_facts")
-        .select("gross_total, vat_total, net_total")
-        .eq("gib_username", username)
-        .eq("direction", "outgoing")
-        .eq("status", "approved")
-        .gte("issue_date", toIsoDate(range.startDate))
-        .lte("issue_date", toIsoDate(range.endDate));
-      query = applyFactFiltersToQuery(query, filters);
-      const { data, error } = await query;
-      if (error) throw error;
-      const totals = (data ?? []).reduce(
-        (
-          acc: {
-            count_total: number;
-            sum_gross_total: number;
-            sum_vat_total: number;
-            sum_net_total: number;
-          },
-          row: {
-            gross_total: number | null;
-            vat_total: number | null;
-            net_total: number | null;
-          },
-        ) => {
-          acc.count_total += 1;
-          acc.sum_gross_total += row.gross_total ?? 0;
-          acc.sum_vat_total += row.vat_total ?? 0;
-          acc.sum_net_total += row.net_total ?? 0;
-          return acc;
-        },
-        {
-          count_total: 0,
-          sum_gross_total: 0,
-          sum_vat_total: 0,
-          sum_net_total: 0,
-        },
+      return {
+        start_date: range.startDate,
+        end_date: range.endDate,
+        direction,
+        totals,
+      };
+    }
+
+    case "invoice_financial_summary": {
+      const range = resolveDateRange(input, userMessage, "month");
+      if (!range) throw new Error("Tarih aralığı belirlenemedi.");
+      return await queryFinancialSummary(
+        supabase,
+        session,
+        scopeKey,
+        range.startDate,
+        range.endDate,
+        filters,
       );
-      return { start_date: range.startDate, end_date: range.endDate, totals };
     }
 
     case "latest_invoice": {
-      const range = resolveDateRange(input, userMessage, "none");
-      if (range) {
-        await syncFactsForRange(
-          supabase,
-          username,
-          range.startDate,
-          range.endDate,
-          "outgoing",
-        );
-      } else {
-        const month = resolveDateRange({}, userMessage, "month")!;
-        await syncFactsForRange(
-          supabase,
-          username,
-          month.startDate,
-          month.endDate,
-          "outgoing",
-        );
-      }
+      const direction = parseToolDirection(input);
+      const explicitRange = resolveDateRange(input, userMessage, "none");
+      const syncRange = explicitRange ?? resolveLatestInvoiceSyncRange();
+      await syncFactsForSession(
+        supabase,
+        session,
+        syncRange.startDate,
+        syncRange.endDate,
+        direction,
+      );
+
+      const hasCustomerFilter = !!filters.customerName?.trim();
+      const queryLimit = hasCustomerFilter ? 40 : 1;
 
       let query = supabase
         .from("invoice_facts")
         .select(
-          "invoice_uuid, issue_date, status, currency, gross_total, vat_total, net_total, customer_tax_id, customer_name",
+          "invoice_uuid, issue_date, status, currency, gross_total, vat_total, net_total, customer_tax_id, customer_name, direction",
         )
-        .eq("gib_username", username)
-        .eq("direction", "outgoing")
+        .eq("gib_username", scopeKey)
+        .eq("direction", direction)
         .order("issue_date", { ascending: false })
         .order("updated_at", { ascending: false })
-        .limit(1);
-      if (range) {
+        .limit(queryLimit);
+      if (explicitRange) {
         query = query
-          .gte("issue_date", toIsoDate(range.startDate))
-          .lte("issue_date", toIsoDate(range.endDate));
+          .gte("issue_date", toIsoDate(explicitRange.startDate))
+          .lte("issue_date", toIsoDate(explicitRange.endDate));
       }
       query = applyFactFiltersToQuery(query, filters);
       const { data, error } = await query;
       if (error) throw error;
+      const rows = Array.isArray(data) ? data : [];
+
+      const reference_date = formatTrDate(istanbulTodayUtc());
+
+      if (hasCustomerFilter && rows.length > 0) {
+        const byCustomer = new Map<string, (typeof rows)[0]>();
+        for (const row of rows) {
+          const name = typeof row.customer_name === "string"
+            ? row.customer_name.trim()
+            : "";
+          if (!name) continue;
+          const key = normalizeTurkish(name);
+          if (!byCustomer.has(key)) byCustomer.set(key, row);
+        }
+        const groups = [...byCustomer.values()];
+        if (groups.length > 1) {
+          return {
+            status: "ambiguous_customer",
+            customer_query: filters.customerName,
+            reference_date,
+            direction,
+            sync_start_date: syncRange.startDate,
+            sync_end_date: syncRange.endDate,
+            candidates: groups.map((r) => ({
+              invoice_uuid: r.invoice_uuid,
+              customer_name: r.customer_name,
+              issue_date: r.issue_date,
+              gross_total: r.gross_total,
+              currency: r.currency ?? "TRY",
+              status: r.status ?? "unknown",
+            })),
+            invoice: null,
+          };
+        }
+        const picked = groups[0] ?? rows[0];
+        return {
+          reference_date,
+          sync_start_date: syncRange.startDate,
+          sync_end_date: syncRange.endDate,
+          direction,
+          invoice: picked
+            ? factRowToInvoiceDetail(picked, direction)
+            : null,
+        };
+      }
+
       return {
-        reference_date: formatTrDate(istanbulTodayUtc()),
-        invoice: Array.isArray(data) ? (data[0] ?? null) : null,
+        reference_date,
+        sync_start_date: syncRange.startDate,
+        sync_end_date: syncRange.endDate,
+        direction,
+        invoice: rows[0]
+          ? factRowToInvoiceDetail(rows[0], direction)
+          : null,
       };
     }
 
     case "export_invoices_excel": {
       const range = resolveDateRange(input, userMessage, "month");
       if (!range) throw new Error("Tarih aralığı belirlenemedi.");
+      const direction = parseToolDirection(input);
       return await createInvoicesExcelExport({
         supabase,
-        username,
+        username: scopeKey,
         startDateTr: range.startDate,
         endDateTr: range.endDate,
-        direction: "outgoing",
+        direction,
         filters: {
           customerName: filters.customerName,
           amountGte: filters.amountGte,
@@ -584,8 +605,8 @@ export async function executeToolImpl(
     }
 
     case "cancel_invoice":
-      return faturaCancelInvoice(
-        username,
+      return provider.cancelInvoice(
+        providerCtx,
         input.ettn as string,
         (input.reason as string) || "İptal",
       );
@@ -599,7 +620,7 @@ export async function executeTool(
   supabase: SupabaseClient,
   toolName: string,
   input: Record<string, unknown>,
-  username: string,
+  session: FinlaSession,
   userMessage: string,
   conversationId: string,
   logMeta?: ToolCallLogMeta,
@@ -609,7 +630,7 @@ export async function executeTool(
   const logBase = {
     tool: toolName,
     conversation_id: conversationId,
-    gib_username: username,
+    user_id: session.userId,
     ...metaRest,
   };
   await logToolCallJson(
@@ -630,7 +651,7 @@ export async function executeTool(
       supabase,
       toolName,
       input,
-      username,
+      session,
       userMessage,
       conversationId,
     );

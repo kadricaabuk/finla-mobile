@@ -34,8 +34,8 @@ interface SideMenuProps {
   openingConversationId?: string | null;
   activeConversationId?: string | null;
   logoutLoading?: boolean;
-  /** Faturalarım ekranındayken liste satırı yalnızca menüyü kapatır. */
-  activeScreen?: "chat" | "invoices" | "profile";
+  /** Giden / gelen fatura ekranındayken liste satırı yalnızca menüyü kapatır. */
+  activeScreen?: "chat" | "invoices" | "incoming-invoices" | "profile";
   userProfile?: {
     taxIDOrTRID?: string;
     title?: string;
@@ -193,12 +193,32 @@ export default function SideMenu({
                 return;
               }
               onClose();
-              router.push("/invoices");
+              router.push("/outgoing-invoices");
             }}
             activeOpacity={0.7}
           >
-            <Ionicons name="document-text-outline" size={18} color="#000" />
-            <Text style={styles.navBtnLabel}>Faturalarım</Text>
+            <Ionicons name="arrow-up-circle-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Giden Faturalar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            testID="side-menu-incoming-invoices"
+            style={[
+              styles.navBtn,
+              activeScreen === "incoming-invoices" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "incoming-invoices") {
+                onClose();
+                return;
+              }
+              onClose();
+              router.push("/incoming-invoices");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-down-circle-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Gelen Faturalar</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

@@ -23,6 +23,7 @@ export interface ChatAction {
     draftDate?: string;
     issued?: boolean;
     local_fallback?: boolean;
+    direction?: "outgoing" | "incoming";
   };
   sign_otp?: { draftUuid: string; phoneMasked: string };
   excel_export?: {
@@ -43,4 +44,5 @@ export type InvoiceDetailPayload = {
   net_total: number | null;
   customer_tax_id: string | null;
   customer_name: string | null;
+  direction?: "outgoing" | "incoming";
 };

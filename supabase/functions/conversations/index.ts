@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -12,6 +12,20 @@ type Body = {
   conversationId?: string
 }
 
+async function conversationOwnedByUser(
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw error
+  return !!data?.id
+}
+
 Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
@@ -21,7 +35,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
     const body = (await req.json().catch(() => ({}))) as Body
     const action = typeof body.action === 'string' ? body.action.trim() : ''
 
@@ -29,7 +43,7 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await supabase
         .from('conversations')
         .select('id,title,created_at')
-        .eq('gib_username', username)
+        .eq('user_id', session.userId)
         .order('created_at', { ascending: false })
         .limit(80)
 
@@ -49,15 +63,8 @@ Deno.serve(async (req: Request) => {
         throw new SessionAuthError('conversationId geçersiz.', 400)
       }
 
-      const { data: conv, error: convErr } = await supabase
-        .from('conversations')
-        .select('id')
-        .eq('id', conversationId)
-        .eq('gib_username', username)
-        .maybeSingle()
-
-      if (convErr) throw convErr
-      if (!conv?.id) {
+      const owned = await conversationOwnedByUser(conversationId, session.userId)
+      if (!owned) {
         throw new SessionAuthError('Sohbet bulunamadı.', 404)
       }
 

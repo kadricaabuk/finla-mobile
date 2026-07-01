@@ -1,9 +1,15 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import {
+  getInvoiceProvider,
+  providerContextFromSession,
+} from "./invoice-provider/index.ts";
+import {
   gibGetInvoicesIssuedToMe,
   gibListInvoices,
   mapInvoicesToFacts,
 } from "./gib.ts";
+import type { FinlaSession } from "./session-auth.ts";
+import { isMockMode } from "./invoice-provider/mock-provider.ts";
 import { normalizeTurkish } from "./turkish.ts";
 
 export type InvoiceDirection = "outgoing" | "incoming";
@@ -65,6 +71,40 @@ export async function syncFactsForRange(
     onConflict: "gib_username,invoice_uuid,direction",
   });
   if (error) throw error;
+}
+
+export async function syncFactsForSession(
+  supabase: SupabaseClient,
+  session: FinlaSession,
+  startDate: string,
+  endDate: string,
+  factDirection: InvoiceDirection,
+): Promise<void> {
+  const scopeKey = session.userId;
+  const provider = getInvoiceProvider();
+  const ctx = providerContextFromSession(session);
+  const invoices =
+    factDirection === "outgoing"
+      ? await provider.listOutgoingInvoices(ctx, startDate, endDate)
+      : await provider.listIncomingInvoices(ctx, startDate, endDate);
+  const facts = mapInvoicesToFacts(
+    scopeKey,
+    invoices as unknown[],
+    factDirection,
+  ).map((row) => ({
+    ...row,
+    user_id: session.userId,
+    tenant_vkn: session.tenantVkn ?? null,
+  }));
+  if (facts.length === 0) return;
+  const { error } = await supabase.from("invoice_facts").upsert(facts, {
+    onConflict: "gib_username,invoice_uuid,direction",
+  });
+  if (error) throw error;
+}
+
+export function shouldUseSessionFactsSync(): boolean {
+  return isMockMode();
 }
 
 /** Supabase query builder üzerinde ortak filtreler. */

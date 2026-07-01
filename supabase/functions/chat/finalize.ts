@@ -1,12 +1,14 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js";
-import { faturaGetInvoiceHtml } from "../_shared/gib.ts";
+import type { FinlaSession } from "../_shared/session-auth.ts";
 import { parseAmount } from "../_shared/invoice-facts.ts";
 import { buildPendingDraftPreviewAction } from "../_shared/invoice-workflow.ts";
 import { getUserProfile } from "../_shared/profile-service.ts";
 import { normalizeTurkish } from "../_shared/turkish.ts";
 import type { AgentLoopAccumulator } from "./agent-loop.ts";
+import { persistLastInvoice, loadChatContext } from "./conversation-context.ts";
 import { resolveDateRange } from "./date-range.ts";
 import {
+  isBareInvoiceShowIntent,
   isUserProfileIntent,
   parseFiltersFromText,
   shouldOfferInvoicesAction,
@@ -14,13 +16,14 @@ import {
   wantsInvoicePreviewOrDownload,
 } from "./intents.ts";
 import { assistantFallbackForAction } from "./persist-action.ts";
+import { buildOpenInvoicesAction } from "./list-format.ts";
 import type { ChatAction, InvoiceDetailPayload, PendingInvoiceState } from "./types.ts";
 
 export async function finalizeAgentAssistant(
   supabase: SupabaseClient,
   opts: {
     convId: string;
-    username: string;
+    session: FinlaSession;
     userMessage: string;
     assistantText: string;
     usedFinanceTool: boolean;
@@ -32,7 +35,7 @@ export async function finalizeAgentAssistant(
 ): Promise<{ finalAssistant: string; action: ChatAction | null }> {
   const {
     convId,
-    username,
+    session,
     userMessage,
     assistantText,
     usedFinanceTool,
@@ -48,7 +51,7 @@ export async function finalizeAgentAssistant(
     isUserProfileIntent(userMessage)
   ) {
     try {
-      const profile = await getUserProfile(username);
+      const profile = await getUserProfile(session);
       trimmedAssistant = summarizeUserProfile(profile);
       usedToolNames.add("get_user_profile");
     } catch {
@@ -66,22 +69,7 @@ export async function finalizeAgentAssistant(
   const latestInvSnap =
     latestInvoiceActionPayload as InvoiceDetailPayload | null;
   if (usedToolNames.has("latest_invoice") && latestInvSnap?.invoice_uuid) {
-    await supabase
-      .from("conversations")
-      .update({
-        last_invoice: {
-          uuid: latestInvSnap.invoice_uuid,
-          issue_date: latestInvSnap.issue_date,
-          status: latestInvSnap.status,
-          currency: latestInvSnap.currency,
-          gross_total: latestInvSnap.gross_total,
-          vat_total: latestInvSnap.vat_total,
-          net_total: latestInvSnap.net_total,
-          customer_tax_id: latestInvSnap.customer_tax_id,
-          customer_name: latestInvSnap.customer_name,
-        },
-      })
-      .eq("id", convId);
+    await persistLastInvoice(supabase, convId, latestInvSnap);
   }
 
   const { data: convState } = await supabase
@@ -92,6 +80,7 @@ export async function finalizeAgentAssistant(
   const pending = convState?.pending_invoice as PendingInvoiceState | null;
   const last = convState?.last_invoice as {
     uuid?: string;
+    direction?: "outgoing" | "incoming";
     html?: string;
     issue_date?: string;
     status?: string;
@@ -128,25 +117,37 @@ export async function finalizeAgentAssistant(
     (wantsPreviewOrDownload || usedToolNames.has("create_invoice"))
   ) {
     if (pending?.draft?.uuid) {
-      action = await buildPendingDraftPreviewAction(username, pending);
+      action = await buildPendingDraftPreviewAction(session, pending);
     } else if (last?.uuid) {
       try {
         const statusLower =
           typeof last.status === "string" ? last.status.toLowerCase() : "";
+        const lastDirection = last.direction ?? "outgoing";
         const useSignedHtml =
-          statusLower.includes("approved") || statusLower.includes("onay");
+          lastDirection === "incoming"
+            ? statusLower.includes("accepted") ||
+              statusLower.includes("kabul") ||
+              statusLower.includes("approved") ||
+              statusLower.includes("onay")
+            : statusLower.includes("approved") ||
+              statusLower.includes("onay") ||
+              statusLower.includes("issued") ||
+              statusLower.includes("kesil");
         const html =
           typeof last.html === "string" && last.html.length > 0
             ? last.html
-            : await faturaGetInvoiceHtml(username, last.uuid, useSignedHtml);
+            : pending?.preview_html ?? "";
         action = {
           type: "open_invoice_preview",
-          label: "Faturayi PDF Ac",
+          label: useSignedHtml ? "Faturayı Gör" : "Taslağı Gör",
           preview: {
-            title: useSignedHtml ? "Kesilmiş Fatura" : "Taslak / Önizleme",
+            title: useSignedHtml
+              ? (lastDirection === "incoming" ? "Gelen Fatura" : "Kesilmiş Fatura")
+              : "Taslak / Önizleme",
             html,
             uuid: last.uuid,
             issued: useSignedHtml,
+            direction: lastDirection,
           },
         };
       } catch (err) {
@@ -155,27 +156,33 @@ export async function finalizeAgentAssistant(
     } else if (latestInvSnap?.invoice_uuid) {
       try {
         const inv = latestInvSnap;
-        const issued = inv.status === "approved";
-        const html = await faturaGetInvoiceHtml(
-          username,
-          inv.invoice_uuid,
-          issued,
-        );
+        const invDirection = inv.direction ?? "outgoing";
+        const issued = invDirection === "incoming"
+          ? inv.status === "accepted" || inv.status === "approved"
+          : inv.status === "approved";
+        const html = pending?.preview_html ?? "";
         action = {
           type: "open_invoice_preview",
           label: issued ? "Faturayi Gor" : "Taslagi Gor",
           preview: {
-            title: issued ? "Kesilmiş Fatura" : "Taslak Fatura Önizleme",
+            title: issued
+              ? (invDirection === "incoming" ? "Gelen Fatura" : "Kesilmiş Fatura")
+              : "Taslak Fatura Önizleme",
             html,
             uuid: inv.invoice_uuid,
             issued,
+            direction: invDirection,
           },
         };
       } catch (err) {
         console.error("latest_invoice preview html failed", err);
       }
     }
-  } else if (!action && latestInvSnap?.invoice_uuid) {
+  } else if (
+    !action &&
+    latestInvSnap?.invoice_uuid &&
+    !isBareInvoiceShowIntent(userMessage)
+  ) {
     let detail: InvoiceDetailPayload = latestInvSnap;
     if (
       last?.uuid &&
@@ -225,18 +232,35 @@ export async function finalizeAgentAssistant(
         listInput.customer_name.trim()
         ? listInput.customer_name.trim()
         : undefined;
+    const chatCtx = await loadChatContext(supabase, convId);
+    const direction =
+      listInput.direction === "incoming" || listInput.direction === "outgoing"
+        ? listInput.direction
+        : chatCtx?.last_direction ?? "outgoing";
     if (parsedRange) {
-      action = {
-        type: "open_invoices",
-        label: "Faturalari Gor",
-        filter: {
-          ...parsedRange,
-          customerName: toolCustomerName ?? msgFilters.customerName,
-          amountGte: toolAmountGte ?? msgFilters.amountGte,
-          amountEq: toolAmountEq ?? msgFilters.amountEq,
-          direction: "outgoing",
+      const base = buildOpenInvoicesAction(
+        userMessage,
+        listInput,
+        {
+          count: 0,
+          start_date: parsedRange.startDate,
+          end_date: parsedRange.endDate,
+          direction,
+          invoices: [],
         },
-      };
+        direction,
+      );
+      if (base?.filter) {
+        action = {
+          ...base,
+          filter: {
+            ...base.filter,
+            customerName: toolCustomerName ?? msgFilters.customerName,
+            amountGte: toolAmountGte ?? msgFilters.amountGte,
+            amountEq: toolAmountEq ?? msgFilters.amountEq,
+          },
+        };
+      }
     }
   }
 

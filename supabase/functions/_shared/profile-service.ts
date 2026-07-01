@@ -1,27 +1,22 @@
 import {
-  extractGibUserDataStringPatch,
-  gibGetUserData,
-  gibUpdateUserData,
-  mergeGibUserDataPatch,
-  type UserData,
-} from "./gib.ts";
+  getInvoiceProvider,
+  providerContextFromSession,
+} from './invoice-provider/index.ts'
+import type { FinlaSession } from './session-auth.ts'
+import type { UserData } from './gib.ts'
 
-export async function getUserProfile(username: string): Promise<UserData> {
-  return gibGetUserData(username);
+export async function getUserProfile(session: FinlaSession): Promise<UserData> {
+  const provider = getInvoiceProvider()
+  const ctx = providerContextFromSession(session)
+  const profile = await provider.getUserProfile(ctx)
+  return profile as UserData
 }
 
 export async function updateUserProfile(
-  username: string,
-  patch: Record<string, unknown>,
+  _session: FinlaSession,
+  _patch: Record<string, unknown>,
 ): Promise<UserData> {
-  const picked = extractGibUserDataStringPatch(patch);
-  if (Object.keys(picked).length === 0) {
-    throw new Error(
-      "Güncellenecek alan belirtilmedi. Hangi bilgiyi değiştirmek istediğini yaz.",
-    );
-  }
-  const current = await gibGetUserData(username);
-  const merged = mergeGibUserDataPatch(current, picked);
-  await gibUpdateUserData(username, merged);
-  return gibGetUserData(username);
+  throw new Error(
+    'Profil güncelleme henüz desteklenmiyor. Mysoft entegrasyonu sonrası açılacak.',
+  )
 }

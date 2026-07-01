@@ -151,7 +151,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'confirm_invoice_issue',
     description:
-      'Hazır bekleyen fatura taslağını onaylayıp resmen keser. Sadece kullanıcı açıkça onay verdiyse çağır.',
+      'Hazır bekleyen fatura taslağını onaylayıp Mysoft üzerinden GİB\'e gönderir (sendDraftInvoiceToGIB). Kullanıcı açıkça onay verdiyse çağır; SMS doğrulama gerekmez.',
     input_schema: {
       type: 'object',
       properties: {},
@@ -159,39 +159,9 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'request_invoice_sign_otp',
-    description:
-      'Onay bekleyen taslak fatura için GİB imzalama SMS kodu gönderir. Telefon belirtilmezse kullanıcı profilindeki numarayı kullanır.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        phone: {
-          type: 'string',
-          description: 'Opsiyonel telefon numarası (başında 0 veya ülke koduyla olabilir)',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'verify_invoice_sign_otp',
-    description:
-      'İmzalama için gelen SMS OTP kodunu doğrular. Başarılı doğrulamadan sonra fatura kesimi yapılabilir.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description: 'Kullanıcının SMS ile aldığı doğrulama kodu',
-        },
-      },
-      required: ['code'],
-    },
-  },
-  {
     name: 'list_invoices',
     description:
-      'fatura.js (GİB e-Arşiv) sistemindeki faturaları listeler. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, dün) aralık belirlenir.',
+      'Giden veya gelen faturaları listeler (direction ile). Tarih verilmezse kullanıcı ifadesinden (bugün, bu ay, dün) aralık belirlenir. Yanıt: { count, start_date, end_date, direction, invoices }.',
     input_schema: {
       type: 'object',
       properties: {
@@ -214,6 +184,12 @@ export const TOOLS: Anthropic.Tool[] = [
         amount_eq: {
           type: 'number',
           description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: kestiğin giden faturalar; incoming: sana gelen (gider) faturalar. Varsayılan: outgoing',
         },
       },
       required: [],
@@ -246,6 +222,12 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'number',
           description: 'Opsiyonel yaklaşık eşit tutar filtresi',
         },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: kestiğin giden faturalar; incoming: sana gelen faturalar. Varsayılan: outgoing',
+        },
       },
       required: [],
     },
@@ -253,7 +235,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'invoice_totals',
     description:
-      'Onaylı faturalar için toplam satış, toplam KDV ve net tutar özetini getirir. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
+      'Belirtilen yönde onaylı/kabul edilmiş faturalar için toplam tutar, KDV ve net özetini getirir. outgoing = satış/gelir; incoming = gider/borç. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
     input_schema: {
       type: 'object',
       properties: {
@@ -268,6 +250,43 @@ export const TOOLS: Anthropic.Tool[] = [
         customer_name: {
           type: 'string',
           description: 'Opsiyonel müşteri adı/unvan filtresi',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: satış toplamı; incoming: gider/borç toplamı. Varsayılan: outgoing',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'invoice_financial_summary',
+    description:
+      'Tek çağrıda gelen (gider) ve giden (gelir) fatura toplamlarını ve net farkı getirir. Kar/zarar veya gider-gelir özeti istendiğinde kullan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel cari adı/unvan filtresi',
         },
         amount_gte: {
           type: 'number',
@@ -308,6 +327,12 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'number',
           description: 'Opsiyonel yaklaşık eşit tutar filtresi',
         },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: en son kestiğin fatura; incoming: sana gelen en son fatura. Varsayılan: outgoing',
+        },
       },
       required: [],
     },
@@ -341,12 +366,11 @@ export function assembleSystemPrompt(): string {
   const capabilityLines = [
     '- Fatura oluşturma (create_invoice)',
     '- TCMB döviz kuru (get_exchange_rate)',
-    '- Fatura kesim onayı (confirm_invoice_issue)',
-    '- İmzalama SMS gönderimi (request_invoice_sign_otp)',
-    '- İmzalama SMS doğrulaması (verify_invoice_sign_otp)',
-    '- Fatura listeleme — kestiğin faturalar (list_invoices)',
-    '- Toplam satış/KDV özeti (invoice_totals)',
-    '- Son faturayı bulma (latest_invoice)',
+    '- Fatura kesim onayı (confirm_invoice_issue — Mysoft sendDraftInvoiceToGIB)',
+    '- Fatura listeleme — giden veya gelen (list_invoices, direction parametresi)',
+    '- Toplam satış/gider özeti (invoice_totals, direction: outgoing veya incoming)',
+    '- Gider + gelir + net özeti (invoice_financial_summary): kar/zarar, gider-gelir özeti',
+    '- Son faturayı bulma (latest_invoice): giden veya gelen; list_invoices değil',
     '- Fatura iptal etme (cancel_invoice)',
     '- Alıcı bilgisi sorgulama (lookup_recipient)',
     '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv veya dışarı aktarma isterse bu araçla .xlsx üret',
@@ -359,7 +383,7 @@ export function assembleSystemPrompt(): string {
     '- Kısa ve doğal konuşma dili kullan',
     `- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.`,
     `- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder`,
-    `- Fatura akışı: (1) create_invoice → taslak, (2) uygulama önizlemeyi açar, (3) kullanıcı onaylar → SMS imza`,
+    `- Fatura akışı: (1) create_invoice → Mysoft taslak (isSaveAsDraft), (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (Mysoft imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
     `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
     `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al`,
     `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
@@ -369,7 +393,7 @@ export function assembleSystemPrompt(): string {
     `- lookup_recipient boş dönerse bu TEST ortamında normal olabilir; TCKN/VKN kayıtlı değil diye create_invoice hatasını açıklama`,
     `- create_invoice başarılı (preview_ready) ise taslak oluşmuştur; HTML önizleme alınamasa bile kullanıcı onaylayıp kesebilir`,
     `- create_invoice INVALID_INVOICE_DATA hatasında birim kodu veya tarih formatı sorunudur; alıcı kimlik numarasını suçlama`,
-    `- confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı`,
+    `- confirm_invoice_issue: kullanıcı onayladıysa doğrudan çağır; Mysoft sunucuda mali mühür imzasını yapar`,
     '- Eksik bilgi varsa soru sor',
     '- Mali toplamları kendin tahmin etme; mümkünse araç çağrısı sonucu kullan',
     '- Markdown tablo kullanma; sade cümleler veya kısa maddeler kullan',
@@ -384,10 +408,18 @@ export function assembleSystemPrompt(): string {
     `- Tutar/KDV gibi sayısal değerleri sadece araç sonucundan kullan; tahmin etme.`,
     `- Markdown tablo kullanma; gerekiyorsa kısa madde listesi kullan.`,
     `- Kullanıcı "bu ay", "ayın başından beri", "dün", "geçen hafta" derse tarih sormadan ilgili aracı çağır.`,
+    `- "gider", "borç", "harcama", "alış" → invoice_totals direction=incoming veya invoice_financial_summary.`,
+    `- "kazanç", "gelir", "satış", "kestiğim" → invoice_totals direction=outgoing.`,
+    `- "özet", "kar zarar", "gider ve gelir" → invoice_financial_summary.`,
+    `- "gelen fatura", "bana kesilen" → list_invoices direction=incoming.`,
+    `- "son fatura", "en son fatura", "X'e son kestiğimiz fatura" → latest_invoice direction=outgoing; "gelen son fatura", "X'ten gelen" → direction=incoming.`,
+    `- Gelen fatura kabul/red işlemi chat'ten yapılmaz; kullanıcıyı Gelen Faturalar ekranına yönlendir.`,
+    `- Kullanıcı az önce konuşulan faturayı "göster", "pdf", "önizle" derse yeni liste açma; sohbet bağlamındaki son faturayı aç.`,
+    `- Müşteri adı birden fazla kişiye denk gelirse (ör. iki farklı "Ege") adayları listele ve hangisini istediğini sor.`,
     `- Cevabı kısa tut (genelde 2-5 cümle).`,
     ``,
     `Fatura arama/filtreleme:`,
-    `- Fatura kesim akışı: (1) create_invoice ile taslak oluştur, (2) kullanıcı önizlemeyi görür, (3) onay + SMS imza.`,
+    `- Fatura kesim akışı: (1) create_invoice ile Mysoft taslağı, (2) önizleme, (3) confirm_invoice_issue ile GİB'e gönderim.`,
     `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR ÇAĞIRMA; kullanıcıya mevcut taslağı önizle.`,
     `- Kullanıcı "taslağı gör", "önizle", "pdf" derse yeni taslak oluşturma; mevcut pending taslak varsa onu aç.`,
     `- list_invoices aracından boş sonuç gelirse, kullanılan tarih ve filtre kriterlerini kullanıcıya bildir (örnek: "Ahmet için bu ay fatura bulunamadı").`,
@@ -408,7 +440,7 @@ export function assembleSystemPrompt(): string {
   ]
 
   const intro =
-    `Sen "finla" uygulamasının yapay zeka asistanısın. fatura.js entegrasyonu üzerinden GİB e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.`
+    `Sen "finla" uygulamasının yapay zeka asistanısın. Mysoft EDocument API (sandbox) üzerinden e-Fatura / e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.`
 
   return `${intro}
 

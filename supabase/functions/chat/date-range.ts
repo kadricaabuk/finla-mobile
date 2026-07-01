@@ -20,6 +20,11 @@ export function formatTrDate(dateUtc: Date): string {
   return `${day}/${month}/${year}`;
 }
 
+/** Ayın son günü (İstanbul takvim günü, UTC date). */
+export function istanbulMonthEndUtc(today: Date = istanbulTodayUtc()): Date {
+  return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+}
+
 export function parseTrDate(value: string): Date | null {
   const m = value.trim().match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/);
   if (!m) return null;
@@ -71,16 +76,28 @@ export function resolveDateRangeFromText(
 
   if (
     lower.includes("bu ay") ||
+    lower.includes("aylık") ||
+    lower.includes("aylik") ||
     lower.includes("ayın başından") ||
-    lower.includes("ay başından")
+    lower.includes("ay başından") ||
+    lower.includes("ayin basindan") ||
+    lower.includes("ay basindan")
   ) {
     const start = new Date(
       Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1),
     );
-    return { startDate: formatTrDate(start), endDate: formatTrDate(today) };
+    return {
+      startDate: formatTrDate(start),
+      endDate: formatTrDate(istanbulMonthEndUtc(today)),
+    };
   }
 
-  if (lower.includes("bugün")) {
+  if (
+    lower.includes("bugün") ||
+    lower.includes("bugun") ||
+    lower.includes("bugünkü") ||
+    lower.includes("bugunku")
+  ) {
     return { startDate: formatTrDate(today), endDate: formatTrDate(today) };
   }
 
@@ -133,5 +150,19 @@ export function resolveDateRange(
   const start = new Date(
     Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1),
   );
+  return {
+    startDate: formatTrDate(start),
+    endDate: formatTrDate(istanbulMonthEndUtc(today)),
+  };
+}
+
+/** `latest_invoice` — kullanıcı tarih vermediyse son 12 ayı senkronize et. */
+export function resolveLatestInvoiceSyncRange(): {
+  startDate: string;
+  endDate: string;
+} {
+  const today = istanbulTodayUtc();
+  const start = new Date(today);
+  start.setUTCFullYear(start.getUTCFullYear() - 1);
   return { startDate: formatTrDate(start), endDate: formatTrDate(today) };
 }

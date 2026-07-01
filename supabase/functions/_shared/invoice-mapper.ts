@@ -1,4 +1,8 @@
 import { normalizeGibUnit } from './gib-unit-codes.ts'
+import {
+  inboxDisplayToFactStatus,
+  normalizeInboxDisplayStatus,
+} from './incoming-invoice-status.ts'
 
 export interface InvoiceLineItem {
   name: string
@@ -197,21 +201,44 @@ function parseMaybeNumber(value: unknown): number | null {
 
 function parseIssueDate(value: unknown): string | null {
   if (typeof value !== 'string') return null
-  const m = value.trim().match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/)
+  const trimmed = value.trim()
+  const iso = trimmed.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+  const m = trimmed.match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/)
   if (!m) return null
   const year = m[3].length === 2 ? `20${m[3]}` : m[3]
-  // GİB faturaTarihi alanı MM/DD/YYYY döner
-  const month = m[1]
-  const day = m[2]
+  // Mysoft / TR: GG/AA/YYYY
+  const day = m[1]
+  const month = m[2]
   return `${year}-${month}-${day}`
 }
 
-function normalizeStatus(value: unknown): string {
+function normalizeOutgoingFactStatus(value: unknown): string {
   const raw = typeof value === 'string' ? value.toLocaleLowerCase('tr-TR') : ''
   if (raw.includes('iptal') || raw.includes('sil')) return 'cancelled'
-  if (raw.includes('onay')) return 'approved'
+  if (
+    raw.includes('onay') ||
+    raw.includes('kabul') ||
+    raw.includes('gibe_gonderildi') ||
+    raw.includes('basariyla')
+  ) {
+    return 'approved'
+  }
   if (raw.includes('taslak') || raw.includes('onaylanmad')) return 'draft'
   return 'unknown'
+}
+
+function normalizeFactStatus(
+  value: unknown,
+  direction: InvoiceDirection,
+): string {
+  if (direction === 'incoming') {
+    const display = normalizeInboxDisplayStatus(
+      typeof value === 'string' ? value : '',
+    )
+    return inboxDisplayToFactStatus(display)
+  }
+  return normalizeOutgoingFactStatus(value)
 }
 
 function readInvoiceUuid(invoice: Record<string, unknown>): string | null {
@@ -293,7 +320,7 @@ export function mapInvoicesToFacts(
         invoice_uuid: invoiceUuid,
         direction,
         issue_date: parseIssueDate(invoice.belgeTarihi ?? invoice.faturaTarihi),
-        status: normalizeStatus(invoice.onayDurumu),
+        status: normalizeFactStatus(invoice.onayDurumu, direction),
         currency: typeof invoice.paraBirimi === 'string' ? invoice.paraBirimi : 'TRY',
         gross_total: grossTotal,
         vat_total: vatTotal,

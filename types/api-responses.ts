@@ -1,5 +1,20 @@
 import type { ChatMessageAction } from "@/types/chat-actions";
 
+import type { InvoiceFactStatus } from "@/types/incoming-invoice";
+
+export type ChatClientAction =
+  | { type: "confirm_pending_invoice"; draftUuid: string }
+  | {
+      type: "request_sign_otp";
+      draftUuid: string;
+      phone?: string;
+    }
+  | {
+      type: "verify_sign_otp";
+      draftUuid: string;
+      smsCode: string;
+    };
+
 export type ChatTurnResponse = {
   message: string;
   conversationId: string;
@@ -25,7 +40,7 @@ export type InvoiceDetailResponse = {
   invoice: {
     invoice_uuid: string;
     issue_date: string | null;
-    status: string;
+    status: InvoiceFactStatus | string;
     currency: string;
     gross_total: number | null;
     vat_total: number | null;

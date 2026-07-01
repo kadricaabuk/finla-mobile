@@ -1,21 +1,30 @@
+import type { InvoicePreviewRequest } from "@/components/chat/invoice-preview-modal";
+import type { IncomingInvoiceResponseRequest } from "@/components/invoices/incoming-invoice-response-modal";
 import { formatGibAmount, gibStatusColor } from "@/lib/format-gib-invoice";
+import {
+  canRespondToIncomingInvoice,
+  normalizeIncomingDisplayStatus,
+} from "@/lib/incoming-invoice-status";
 import { prettyInvoiceStatus } from "@/lib/pretty-invoice-status";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { InvoiceDetail } from "@/types/chat-actions";
 import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 
 interface InvoiceRowCardProps {
   item: GIBInvoice;
   listDirection?: InvoiceListDirection;
+  onOpenPreview?: (request: InvoicePreviewRequest) => void;
+  onOpenIncomingResponse?: (request: IncomingInvoiceResponseRequest) => void;
 }
 
 function counterpartyTitle(
@@ -23,10 +32,7 @@ function counterpartyTitle(
   listDirection: InvoiceListDirection,
 ): string {
   if (listDirection === "incoming") {
-    const raw =
-      item.gondericiUnvanAdSoyad ??
-      item.gondericiUnvan ??
-      item.aliciUnvanAdSoyad;
+    const raw = item.gondericiUnvanAdSoyad ?? item.gondericiUnvan;
     return typeof raw === "string" && raw.trim() ? raw.trim() : "—";
   }
   const raw = item.aliciUnvanAdSoyad ?? item.aliciUnvan;
@@ -36,10 +42,19 @@ function counterpartyTitle(
 export function InvoiceRowCard({
   item,
   listDirection = "outgoing",
+  onOpenPreview,
+  onOpenIncomingResponse,
 }: InvoiceRowCardProps) {
   const total =
     item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
-  const color = gibStatusColor(item.onayDurumu);
+  const statusLabel =
+    listDirection === "incoming"
+      ? normalizeIncomingDisplayStatus(item.onayDurumu ?? "")
+      : item.onayDurumu || "Bilinmiyor";
+  const color = gibStatusColor(String(statusLabel));
+  const incomingRespondable =
+    listDirection === "incoming" &&
+    canRespondToIncomingInvoice(item.onayDurumu);
 
   const [expanded, setExpanded] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -72,12 +87,51 @@ export function InvoiceRowCard({
   }, [item.ettn, listDirection]);
 
   const toggle = useCallback(() => {
-    setExpanded((was) => {
-      const next = !was;
-      if (next && !detail && !detailLoading) void loadDetail();
-      return next;
+    setExpanded((was) => !was);
+  }, []);
+
+  useEffect(() => {
+    if (!expanded) return;
+    setDetail(null);
+    setDetailError(null);
+    void loadDetail();
+  }, [expanded, item.ettn, item.onayDurumu, loadDetail]);
+
+  const openPreview = useCallback(() => {
+    const uuid =
+      typeof item.ettn === "string" && item.ettn.trim().length > 0
+        ? item.ettn.trim()
+        : null;
+    if (!uuid || !onOpenPreview) return;
+    const counterparty = counterpartyTitle(item, listDirection);
+    const docNo = item.belgeNumarasi?.trim();
+    onOpenPreview({
+      uuid,
+      direction: listDirection === "incoming" ? "incoming" : "outgoing",
+      title: docNo ? `Fatura ${docNo}` : counterparty,
+      issued: true,
     });
-  }, [detail, detailLoading, loadDetail]);
+  }, [item, listDirection, onOpenPreview]);
+
+  const openIncomingResponse = useCallback(() => {
+    const uuid =
+      typeof item.ettn === "string" && item.ettn.trim().length > 0
+        ? item.ettn.trim()
+        : null;
+    if (!uuid || !onOpenIncomingResponse) return;
+    const counterparty = counterpartyTitle(item, listDirection);
+    const docNo = item.belgeNumarasi?.trim();
+    onOpenIncomingResponse({
+      uuid,
+      title: docNo ? `Fatura ${docNo}` : counterparty,
+    });
+  }, [item, listDirection, onOpenIncomingResponse]);
+
+  const showPreviewOnly =
+    typeof item.ettn === "string" &&
+    item.ettn.trim().length > 0 &&
+    onOpenPreview &&
+    !incomingRespondable;
 
   return (
     <View style={styles.card}>
@@ -105,7 +159,7 @@ export function InvoiceRowCard({
           <View style={styles.cardBottomRight}>
             <View style={[styles.statusBadge, { backgroundColor: color + "20" }]}>
               <Text style={[styles.statusText, { color }]}>
-                {item.onayDurumu || "Bilinmiyor"}
+                {statusLabel}
               </Text>
             </View>
             <Ionicons
@@ -140,7 +194,7 @@ export function InvoiceRowCard({
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>Durum: </Text>
-                {prettyInvoiceStatus(detail.status)}
+                {prettyInvoiceStatus(detail.status, { direction: listDirection })}
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>VKN/TCKN: </Text>
@@ -169,6 +223,32 @@ export function InvoiceRowCard({
                 {detail.invoice_uuid || "—"}
               </Text>
             </View>
+          ) : null}
+
+          {incomingRespondable && onOpenIncomingResponse ? (
+            <TouchableOpacity
+              style={styles.respondBtn}
+              onPress={openIncomingResponse}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Faturayı onayla veya reddet"
+            >
+              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+              <Text style={styles.respondBtnText}>Yanıt Ver</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {showPreviewOnly ? (
+            <TouchableOpacity
+              style={styles.previewBtn}
+              onPress={openPreview}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Faturayı görüntüle"
+            >
+              <Ionicons name="document-text-outline" size={18} color="#fff" />
+              <Text style={styles.previewBtnText}>Faturayı Gör</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
       ) : null}
@@ -265,5 +345,37 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontWeight: "600",
     color: "#333",
+  },
+  respondBtn: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#000",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  respondBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  previewBtn: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#000",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  previewBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

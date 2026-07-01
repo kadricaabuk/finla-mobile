@@ -43,6 +43,12 @@ inspector_port = 8083
 [functions.login]
 verify_jwt = false
 
+[functions.auth]
+verify_jwt = false
+
+[functions.mysoft-smoke]
+verify_jwt = false
+
 [functions.refresh]
 verify_jwt = false
 

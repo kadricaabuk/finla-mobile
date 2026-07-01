@@ -7,17 +7,33 @@ import {
 import {
   getInvoiceCacheEntry,
   hydrateInvoiceCache,
+  invalidateInvoiceCacheEntry,
   INVOICES_CACHE_TTL_MS,
   putInvoiceCacheEntry,
 } from "@/lib/invoices-cache";
+import { sortGibInvoicesByDate } from "@/lib/sort-gib-invoices";
 import { getTokens } from "@/lib/session";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { GIBInvoice } from "@/types/gib-invoice";
 import type { InvoicesListResponse } from "@/types/api-responses";
+import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
-export function useInvoicesScreen() {
+export type IncomingInboxActionResult = {
+  invoiceUuid: string;
+  status: "accepted" | "rejected";
+  statusLabel?: string;
+};
+
+export type UseInvoicesScreenOptions = {
+  direction?: InvoiceListDirection;
+};
+
+export function useInvoicesScreen(
+  options: UseInvoicesScreenOptions = {},
+) {
+  const direction = options.direction ?? "outgoing";
   const { handleDrawerNewChat, handleDrawerOpenConversation } =
     useDrawerChatNavigation();
 
@@ -53,14 +69,14 @@ export function useInvoicesScreen() {
       if (!tokens) return;
 
       const range = rangeOverride ?? invoiceRangeForPreset(p);
-      const cacheKey = `${range.startDate}|${range.endDate}`;
+      const cacheKey = `${direction}|${range.startDate}|${range.endDate}`;
 
       await hydrateInvoiceCache(tokens.accessToken);
 
       if (!isRefresh && !chatFilters) {
         const cached = getInvoiceCacheEntry(cacheKey);
         if (cached && Date.now() - cached.fetchedAt < INVOICES_CACHE_TTL_MS) {
-          setInvoices(cached.data as GIBInvoice[]);
+          setInvoices(sortGibInvoicesByDate(cached.data as GIBInvoice[]));
           setError(null);
           return;
         }
@@ -76,13 +92,13 @@ export function useInvoicesScreen() {
       try {
         const res = await callApi<InvoicesListResponse>("invoices", {
           ...range,
-          direction: "outgoing",
+          direction,
           customerName: chatFilters?.customerName,
           amountGte: chatFilters?.amountGte,
           amountEq: chatFilters?.amountEq,
         });
         if (res.error) throw new Error(res.error);
-        const data = res.invoices ?? [];
+        const data = sortGibInvoicesByDate(res.invoices ?? []);
         setInvoices(data);
         if (!chatFilters)
           await putInvoiceCacheEntry(tokens.accessToken, cacheKey, data);
@@ -94,7 +110,39 @@ export function useInvoicesScreen() {
         setRefreshing(false);
       }
     },
-    [chatFilters],
+    [chatFilters, direction],
+  );
+
+  const patchInvoiceOnayDurumu = useCallback(
+    (invoiceUuid: string, onayDurumu: string) => {
+      setInvoices((prev) =>
+        sortGibInvoicesByDate(
+          prev.map((inv) =>
+            inv.ettn === invoiceUuid ? { ...inv, onayDurumu } : inv,
+          ),
+        ),
+      );
+    },
+    [],
+  );
+
+  const afterIncomingInboxAction = useCallback(
+    async (result: IncomingInboxActionResult) => {
+      const label =
+        result.statusLabel ??
+        (result.status === "accepted" ? "Kabul" : "Red");
+      patchInvoiceOnayDurumu(result.invoiceUuid, label);
+
+      const tokens = await getTokens();
+      if (tokens) {
+        const range = customRange ?? invoiceRangeForPreset(preset);
+        const cacheKey = `${direction}|${range.startDate}|${range.endDate}`;
+        await invalidateInvoiceCacheEntry(tokens.accessToken, cacheKey);
+      }
+
+      await fetchInvoices(preset, customRange ?? undefined, true);
+    },
+    [patchInvoiceOnayDurumu, preset, customRange, direction, fetchInvoices],
   );
 
   useEffect(() => {
@@ -152,6 +200,7 @@ export function useInvoicesScreen() {
     refreshing,
     error,
     fetchInvoices,
+    afterIncomingInboxAction,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
   };

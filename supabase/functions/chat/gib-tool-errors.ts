@@ -18,6 +18,17 @@ export function classifyGibOperationError(
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLocaleLowerCase("tr-TR");
 
+  if (
+    toolName === "confirm_invoice_issue" &&
+    (lower.includes("parameter 'g'") || lower.includes("gbalias"))
+  ) {
+    return {
+      code: "MYSOFT_SEND_CONFIG",
+      message:
+        "Mysoft gönderim ayarı eksik (gbAlias). Portalda firma GİB posta kutusu tanımlı mı kontrol et; sandbox tenant: 6271036106.",
+    };
+  }
+
   if (toolName === "lookup_recipient" || toolName === "create_invoice") {
     if (
       lower.includes("vkn") ||
@@ -30,6 +41,16 @@ export function classifyGibOperationError(
       return {
         code: "INVALID_TAX_ID",
         message: "VKN veya TCKN geçersiz ya da sistemde kayıtlı değil.",
+      };
+    }
+    if (
+      toolName === "create_invoice" &&
+      /\b1111111111\b/.test(raw)
+    ) {
+      return {
+        code: "INVALID_TAX_ID",
+        message:
+          "Alıcı TCKN 11 hane olmalı. Sandbox e-Arşiv testi için 11111111111 kullan.",
       };
     }
   }

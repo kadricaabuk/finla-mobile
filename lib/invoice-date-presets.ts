@@ -15,6 +15,10 @@ function fmt(d: Date) {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
+function lastDayOfMonth(year: number, monthIndex: number): Date {
+  return new Date(year, monthIndex + 1, 0);
+}
+
 export function invoiceRangeForPreset(
   preset: InvoiceDatePreset,
 ): InvoiceDateRange {
@@ -23,16 +27,22 @@ export function invoiceRangeForPreset(
   const m = now.getMonth();
 
   if (preset === "bu_ay") {
-    return { startDate: fmt(new Date(y, m, 1)), endDate: fmt(now) };
+    return {
+      startDate: fmt(new Date(y, m, 1)),
+      endDate: fmt(lastDayOfMonth(y, m)),
+    };
   }
   if (preset === "gecen_ay") {
+    const prevMonth = m - 1;
+    const prevYear = prevMonth < 0 ? y - 1 : y;
+    const prevMonthIndex = (prevMonth + 12) % 12;
     return {
-      startDate: fmt(new Date(y, m - 1, 1)),
-      endDate: fmt(new Date(y, m, 0)),
+      startDate: fmt(new Date(prevYear, prevMonthIndex, 1)),
+      endDate: fmt(lastDayOfMonth(prevYear, prevMonthIndex)),
     };
   }
   return {
     startDate: fmt(new Date(y, 0, 1)),
-    endDate: fmt(new Date(y, 11, 31)),
+    endDate: fmt(lastDayOfMonth(y, 11)),
   };
 }

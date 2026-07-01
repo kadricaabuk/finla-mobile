@@ -1,5 +1,5 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { gibGetInvoicePreview } from '../_shared/gib.ts'
+import { getInvoiceProvider, providerContextFromSession } from '../_shared/invoice-provider/index.ts'
 import {
   buildLocalPreviewFromRequest,
 } from '../_shared/invoice-preview.ts'
@@ -7,7 +7,7 @@ import {
   loadPendingInvoice,
   type PendingInvoiceState,
 } from '../_shared/invoice-workflow.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
 
 const supabase = createClient(
@@ -20,20 +20,21 @@ type Body = {
   signed?: boolean
   draftDate?: string
   conversationId?: string
+  direction?: 'outgoing' | 'incoming'
 }
 
 async function loadLocalPreviewFallback(
-  username: string,
+  userId: string,
   conversationId: string,
   invoiceUuid: string,
 ): Promise<string | null> {
   const { data, error } = await supabase
     .from('conversations')
-    .select('gib_username, pending_invoice')
+    .select('user_id, pending_invoice')
     .eq('id', conversationId)
     .single()
   if (error || !data) return null
-  if (data.gib_username !== username) return null
+  if (data.user_id !== userId) return null
 
   const pending = data.pending_invoice as PendingInvoiceState | null
   if (!pending?.request || pending.draft?.uuid !== invoiceUuid) return null
@@ -45,7 +46,7 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
     const body = ((await req.json().catch(() => ({}))) as Body) ?? {}
     const invoiceUuid = typeof body.invoiceUuid === 'string' ? body.invoiceUuid.trim() : ''
     const signed = Boolean(body.signed)
@@ -53,22 +54,27 @@ Deno.serve(async (req: Request) => {
       typeof body.draftDate === 'string' ? body.draftDate.trim() : undefined
     const conversationId =
       typeof body.conversationId === 'string' ? body.conversationId.trim() : ''
+    const direction =
+      body.direction === 'incoming' ? 'incoming' : 'outgoing'
     if (!invoiceUuid) {
       return Response.json({ error: 'invoiceUuid zorunludur.' }, { status: 400, headers: corsHeaders })
     }
 
+    const provider = getInvoiceProvider()
+    const ctx = providerContextFromSession(session)
+
     try {
-      const preview = await gibGetInvoicePreview(
-        username,
+      const preview = await provider.getInvoicePreview(ctx, {
         invoiceUuid,
         signed,
         draftDate,
-      )
+        direction,
+      })
       return Response.json(preview, { headers: corsHeaders })
     } catch (previewErr) {
-      if (conversationId) {
+      if (conversationId && direction === 'outgoing') {
         const localHtml = await loadLocalPreviewFallback(
-          username,
+          session.userId,
           conversationId,
           invoiceUuid,
         )

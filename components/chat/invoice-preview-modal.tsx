@@ -9,7 +9,7 @@ import {
 } from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -22,9 +22,20 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
 
+export type InvoicePreviewRequest = {
+  uuid: string;
+  direction?: "outgoing" | "incoming";
+  title?: string;
+  issued?: boolean;
+  draftDate?: string;
+  html?: string;
+  pdfBase64?: string;
+};
+
 interface InvoicePreviewModalProps {
-  action: ChatMessageAction | null;
-  conversationId: string | null;
+  action?: ChatMessageAction | null;
+  request?: InvoicePreviewRequest | null;
+  conversationId?: string | null;
   onClose: () => void;
 }
 
@@ -51,9 +62,27 @@ async function writePdfToCache(
   return path;
 }
 
+function previewFromAction(
+  action: ChatMessageAction | null | undefined,
+): InvoicePreviewRequest | null {
+  if (action?.type !== "open_invoice_preview" || !action.preview) return null;
+  const preview = action.preview;
+  if (!preview.uuid && !preview.html && !preview.pdfBase64) return null;
+  return {
+    uuid: preview.uuid ?? "",
+    direction: preview.direction ?? action.filter?.direction,
+    title: preview.title,
+    issued: preview.issued,
+    draftDate: preview.draftDate,
+    html: preview.html,
+    pdfBase64: preview.pdfBase64,
+  };
+}
+
 export function InvoicePreviewModal({
-  action,
-  conversationId,
+  action = null,
+  request = null,
+  conversationId = null,
   onClose,
 }: InvoicePreviewModalProps) {
   const [fetchedHtml, setFetchedHtml] = useState<string | null>(null);
@@ -62,15 +91,23 @@ export function InvoicePreviewModal({
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
-  const uuid = action?.preview?.uuid;
-  const propHtml = action?.preview?.html;
-  const propPdfBase64 = action?.preview?.pdfBase64;
-  const draftDate = action?.preview?.draftDate;
-  const issued = action?.preview?.issued ?? false;
+  const effective = useMemo(
+    () => request ?? previewFromAction(action),
+    [request, action],
+  );
 
-  const visible =
-    action?.type === "open_invoice_preview" &&
-    !!(action.preview?.uuid || action.preview?.html || action.preview?.pdfBase64);
+  const uuid = effective?.uuid?.trim() || undefined;
+  const propHtml = effective?.html;
+  const propPdfBase64 = effective?.pdfBase64;
+  const draftDate = effective?.draftDate;
+  const issued = effective?.issued ?? false;
+  const direction = effective?.direction ?? "outgoing";
+  const title = effective?.title ?? "Fatura Önizleme";
+
+  const visible = !!(
+    effective &&
+    (effective.uuid || effective.html || effective.pdfBase64)
+  );
 
   const html = propHtml ?? fetchedHtml;
   const pdfUri = fetchedPdfUri;
@@ -132,6 +169,7 @@ export function InvoicePreviewModal({
         callApi<InvoiceHtmlResponse>("invoice-html", {
           invoiceUuid: uuid,
           signed,
+          direction,
           ...(draftDate ? { draftDate } : {}),
           ...(conversationId ? { conversationId } : {}),
         });
@@ -173,6 +211,7 @@ export function InvoicePreviewModal({
     propPdfBase64,
     draftDate,
     issued,
+    direction,
     retryKey,
     conversationId,
   ]);
@@ -185,7 +224,7 @@ export function InvoicePreviewModal({
         <SafeAreaView style={styles.previewScreen} edges={["top", "bottom"]}>
           <View style={styles.previewHeader}>
             <Text style={styles.previewHeaderTitle} numberOfLines={1}>
-              {action?.preview?.title || "Fatura Önizleme"}
+              {title}
             </Text>
             <View style={styles.previewHeaderButtons}>
               {hasContent ? (

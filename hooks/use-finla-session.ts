@@ -1,4 +1,4 @@
-import { decodeJwtSub, getTokens } from "@/lib/session";
+import { decodeJwtClaims, getTokens } from "@/lib/session";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 
@@ -17,7 +17,14 @@ export function useFinlaSession() {
         setBootstrapped(true);
         return;
       }
-      setSessionLabel(decodeJwtSub(tokens.accessToken) ?? "Hesap");
+      const claims = decodeJwtClaims(tokens.accessToken);
+      const label =
+        claims?.tenant_name ??
+        (claims?.phone
+          ? `+${claims.phone.slice(0, 2)} ${claims.phone.slice(2)}`
+          : null) ??
+        "Hesap";
+      setSessionLabel(label);
       setBootstrapped(true);
     });
     return () => {

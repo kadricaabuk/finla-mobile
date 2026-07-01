@@ -3,7 +3,7 @@ import {
   getUserProfile,
   updateUserProfile,
 } from '../_shared/profile-service.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
 
     let body: unknown = {}
     try {
@@ -27,11 +27,11 @@ Deno.serve(async (req) => {
     const picked = isRecord(updates) ? updates : {}
 
     if (Object.keys(picked).length > 0) {
-      const profile = await updateUserProfile(username, picked)
+      const profile = await updateUserProfile(session, picked)
       return Response.json({ profile }, { headers: corsHeaders })
     }
 
-    const profile = await getUserProfile(username)
+    const profile = await getUserProfile(session)
     return Response.json({ profile }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {

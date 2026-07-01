@@ -1,6 +1,14 @@
-import { Redirect } from "expo-router";
+import InvoicesScreen from "@/components/invoices/invoices-screen";
 
-/** Gelen faturalar kaldırıldı — ana sohbete yönlendir. */
 export default function IncomingInvoicesRoute() {
-  return <Redirect href="/" />;
+  return (
+    <InvoicesScreen
+      direction="incoming"
+      title="Gelen Faturalar"
+      emptyHint="Bu dönemde gelen fatura bulunamadı."
+      activeScreen="incoming-invoices"
+      shellOwnerId="screen-incoming-invoices"
+      titleTestId="incoming-invoices-title"
+    />
+  );
 }

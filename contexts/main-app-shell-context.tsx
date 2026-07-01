@@ -15,12 +15,18 @@ import {
 } from "react";
 import { StyleSheet, View } from "react-native";
 
+export type MainShellActiveScreen =
+  | "chat"
+  | "invoices"
+  | "incoming-invoices"
+  | "profile";
+
 export interface MainShellSideMenuBindings {
   onNewChat: () => void;
   onOpenConversation?: (id: string) => void | Promise<void>;
   openingConversationId?: string | null;
   activeConversationId?: string | null;
-  activeScreen?: "chat" | "invoices" | "profile";
+  activeScreen?: MainShellActiveScreen;
 }
 
 interface MainAppShellContextValue {

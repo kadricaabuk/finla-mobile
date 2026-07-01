@@ -6,9 +6,10 @@ import {
 } from '../_shared/invoices-excel-export.ts'
 import { parseAmount } from '../_shared/invoice-facts.ts'
 import {
-  getSubjectFromAuthHeader,
+  requireFinlaSession,
   SessionAuthError,
 } from '../_shared/session-auth.ts'
+import { isMockMode } from '../_shared/invoice-provider/mock-provider.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -20,7 +21,8 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
+    const scopeKey = session.userId
     const body = await req.json() as {
       startDate?: string
       endDate?: string
@@ -48,7 +50,7 @@ Deno.serve(async (req: Request) => {
 
     const result = await createInvoicesExcelExport({
       supabase,
-      username,
+      username: scopeKey,
       startDateTr: startDate,
       endDateTr: endDate,
       direction: 'outgoing',

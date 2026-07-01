@@ -1,5 +1,6 @@
 import {
   appendChatActionResponse,
+  isHiddenUserActionContent,
   newChatMessageId,
 } from "@/components/chat/chat-action-response";
 import { useChatStreamDisplay } from "@/components/chat/use-chat-stream-display";
@@ -124,7 +125,13 @@ export function useChatScreen() {
       setConversationId(id);
       clearChatChrome();
       setMessages(
-        rows.map((m) => ({
+        rows
+          .filter(
+            (m) =>
+              m.role !== "user" ||
+              !isHiddenUserActionContent(String(m.content ?? "")),
+          )
+          .map((m) => ({
           id: m.id,
           text: m.content,
           role: m.role as "user" | "assistant",
@@ -292,11 +299,10 @@ export function useChatScreen() {
       setConfirmingDraftUuid(draftUuid);
       setLoading(true);
       try {
-        const aiMsg = await appendChatActionResponse(
-          conversationId,
-          "confirm_pending_invoice",
-          { type: "confirm_pending_invoice", draftUuid },
-        );
+        const aiMsg = await appendChatActionResponse(conversationId, {
+          type: "confirm_pending_invoice",
+          draftUuid,
+        });
         setMessages((prev) => [...prev, aiMsg]);
         if (
           aiMsg.action?.type === "open_sign_otp" &&
@@ -334,15 +340,11 @@ export function useChatScreen() {
     setVerifyingSignOtp(true);
     setLoading(true);
     try {
-      const aiMsg = await appendChatActionResponse(
-        conversationId,
-        "verify_sign_otp",
-        {
-          type: "verify_sign_otp",
-          draftUuid: signOtpAction.sign_otp.draftUuid,
-          smsCode: code,
-        },
-      );
+      const aiMsg = await appendChatActionResponse(conversationId, {
+        type: "verify_sign_otp",
+        draftUuid: signOtpAction.sign_otp.draftUuid,
+        smsCode: code,
+      });
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
       setMessages((prev) => [
@@ -377,15 +379,11 @@ export function useChatScreen() {
       setRequestingSignOtp(true);
       setLoading(true);
       try {
-        const aiMsg = await appendChatActionResponse(
-          conversationId,
-          "request_sign_otp",
-          {
-            type: "request_sign_otp",
-            draftUuid: signOtpAction.sign_otp.draftUuid,
-            phone: withPhoneUpdate ? phone : undefined,
-          },
-        );
+        const aiMsg = await appendChatActionResponse(conversationId, {
+          type: "request_sign_otp",
+          draftUuid: signOtpAction.sign_otp.draftUuid,
+          phone: withPhoneUpdate ? phone : undefined,
+        });
         setMessages((prev) => [...prev, aiMsg]);
         if (
           aiMsg.action?.type === "open_sign_otp" &&

@@ -25,6 +25,8 @@ export interface ChatMessageAction {
     draftDate?: string;
     /** true = kesilmiş fatura HTML (signed); false = taslak önizleme */
     issued?: boolean;
+    /** outgoing = giden; incoming = gelen (PDF önizleme) */
+    direction?: "outgoing" | "incoming";
     /** GİB önizleme başarısız — yerel özet HTML */
     local_fallback?: boolean;
   };

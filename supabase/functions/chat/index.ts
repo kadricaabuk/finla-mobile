@@ -1,9 +1,9 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { buildPendingDraftPreviewAction, loadPendingInvoice } from "../_shared/invoice-workflow.ts";
+import { buildPendingDraftPreviewAction, loadPendingInvoice, resolvePendingDraftRef } from "../_shared/invoice-workflow.ts";
 import {
-  getSubjectFromAuthHeader,
+  requireFinlaSession,
   SessionAuthError,
 } from "../_shared/session-auth.ts";
 import {
@@ -11,7 +11,34 @@ import {
   runAnthropicToolLoop,
 } from "./agent-loop.ts";
 import { finalizeAgentAssistant } from "./finalize.ts";
-import { isDraftPreviewIntent } from "./intents.ts";
+import {
+  buildIssuedInvoicePreviewAction,
+  loadStoredLastInvoice,
+  persistChatContext,
+  persistLastInvoice,
+} from "./conversation-context.ts";
+import {
+  isBareInvoiceShowIntent,
+  isCustomerClarificationIntent,
+  isFinancialTotalsIntent,
+  isIncomingInvoiceListIntent,
+  isInvoiceListIntent,
+  isLatestInvoiceIntent,
+  parseFinancialDirection,
+  parseFiltersFromText,
+  parseInvoiceDirectionFromMessage,
+} from "./intents.ts";
+import {
+  buildLatestInvoiceDetailAction,
+  buildOpenIncomingInvoicesAction,
+  buildOpenOutgoingInvoicesAction,
+  formatFinancialSummaryChatSummary,
+  formatInvoiceListChatSummary,
+  formatInvoiceTotalsChatSummary,
+  formatLatestInvoiceChatSummary,
+  normalizeInvoiceListToolResult,
+  normalizeLatestInvoiceToolResult,
+} from "./list-format.ts";
 import {
   clientWantsNdjsonStream,
   encodeNdjsonEvent,
@@ -39,7 +66,7 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse;
 
   try {
-    const username = await getSubjectFromAuthHeader(req);
+    const session = await requireFinlaSession(req);
     const body = await req.json() as {
       message?: string;
       conversationId?: string | null;
@@ -55,7 +82,7 @@ Deno.serve(async (req: Request) => {
 
     const hasMessage = typeof message === "string" && message.trim().length > 0;
     const hasAction = !!requestAction;
-    if (!username || (!hasMessage && !hasAction)) {
+    if (!session.userId || (!hasMessage && !hasAction)) {
       return Response.json(
         { error: "message zorunludur." },
         { headers: corsHeaders },
@@ -67,7 +94,8 @@ Deno.serve(async (req: Request) => {
       const { data: conv, error } = await supabase
         .from("conversations")
         .insert({
-          gib_username: username,
+          user_id: session.userId,
+          gib_username: session.phone ?? session.userId,
           title: String(message ?? "").slice(0, 60),
         })
         .select("id")
@@ -88,7 +116,7 @@ Deno.serve(async (req: Request) => {
     await supabase.from("messages").insert({
       conversation_id: cid,
       role: "user",
-      content: hasMessage ? message : "[action]",
+      content: hasAction ? "[action]" : (hasMessage ? message! : ""),
     });
 
     const normalizedMessage = String(message ?? "")
@@ -96,20 +124,52 @@ Deno.serve(async (req: Request) => {
       .trim();
     const isConfirmMessage =
       /\b(onayliyorum|onaylıyorum)\b/.test(normalizedMessage) ||
-      /\bevet\s+onay\b/.test(normalizedMessage);
+      /\bevet\s+onay\b/.test(normalizedMessage) ||
+      /^(evet|onayla|onaylıyorum|onayliyorum)[.!]?$/.test(normalizedMessage);
     const isConfirmAction = requestAction?.type === "confirm_pending_invoice";
     const isRequestOtpAction = requestAction?.type === "request_sign_otp";
     const isVerifyOtpAction = requestAction?.type === "verify_sign_otp";
 
-    if (isVerifyOtpAction) {
+    if (isRequestOtpAction || isVerifyOtpAction) {
+      const deprecatedMsg =
+        "Mysoft akışında SMS imza gerekmez. Önizlemedeki «Onayla ve Kes» ile devam edebilirsin.";
+      await supabase.from("messages").insert({
+        conversation_id: cid,
+        role: "assistant",
+        content: deprecatedMsg,
+      });
+      return Response.json(
+        { message: deprecatedMsg, conversationId: cid, action: null },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (isConfirmAction || (isConfirmMessage && !isVerifyOtpAction)) {
       const pending = await loadPendingInvoice(supabase, cid);
-      if (pending?.draft?.date && pending?.draft?.uuid) {
+      const draftRef = resolvePendingDraftRef(pending);
+
+      if (isConfirmAction && !draftRef) {
+        const noDraftMsg =
+          "Onay bekleyen taslak bulunamadı. Önce fatura taslağı oluşturmalıyız.";
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: noDraftMsg,
+        });
+        return Response.json(
+          { message: noDraftMsg, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
+      }
+
+      if (draftRef) {
         if (
+          isConfirmAction &&
           typeof requestAction?.draftUuid === "string" &&
-          requestAction.draftUuid !== pending.draft.uuid
+          requestAction.draftUuid !== draftRef.uuid
         ) {
           const mismatchMsg =
-            "Doğrulanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
+            "Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
           await supabase.from("messages").insert({
             conversation_id: cid,
             role: "assistant",
@@ -121,44 +181,31 @@ Deno.serve(async (req: Request) => {
           );
         }
         try {
-          await executeTool(
-            supabase,
-            "verify_invoice_sign_otp",
-            { code: requestAction?.smsCode },
-            username,
-            message ?? "",
-            cid,
-            { source: "fast_path" },
-          );
           const result = await executeTool(
             supabase,
             "confirm_invoice_issue",
             {},
-            username,
+            session,
             message ?? "",
             cid,
             { source: "fast_path" },
           );
           const payload = result as { uuid?: string; message?: string };
           const directMessage = payload?.uuid
-            ? `SMS doğrulaması tamamlandı, fatura başarıyla kesildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" veya "indir" diyebilirsin.`
-            : (payload?.message ??
-              "SMS doğrulaması tamamlandı, fatura kesildi.");
-
+            ? `Fatura Mysoft üzerinden GİB'e gönderildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" diyebilirsin.`
+            : (payload?.message ?? "Fatura kesildi.");
           await supabase.from("messages").insert({
             conversation_id: cid,
             role: "assistant",
             content: directMessage,
           });
-
           return Response.json(
             { message: directMessage, conversationId: cid, action: null },
             { headers: corsHeaders },
           );
         } catch (err) {
-          const msg =
-            err instanceof Error ? err.message : "SMS doğrulaması başarısız.";
-          const failText = `SMS doğrulaması başarısız oldu: ${msg}. Kodu kontrol edip tekrar deneyebilirsin.`;
+          const msg = err instanceof Error ? err.message : "Fatura kesilemedi.";
+          const failText = `Fatura kesimi başarısız: ${msg}`;
           await supabase.from("messages").insert({
             conversation_id: cid,
             role: "assistant",
@@ -176,18 +223,16 @@ Deno.serve(async (req: Request) => {
       hasMessage &&
       !isConfirmMessage &&
       !isConfirmAction &&
-      !isRequestOtpAction &&
-      !isVerifyOtpAction &&
-      isDraftPreviewIntent(message ?? "")
+      isBareInvoiceShowIntent(message ?? "")
     ) {
       const pending = await loadPendingInvoice(supabase, cid);
       if (pending?.draft?.uuid) {
         const previewAction = await buildPendingDraftPreviewAction(
-          username,
+          session,
           pending,
         );
         const directMessage = previewAction
-          ? "Taslak faturanı önizlemede açtım. Kontrol et; uygunsa onayla ve imzalamaya geç."
+          ? "Taslak faturanı önizlemede açtım. Kontrol et; uygunsa «Onayla ve Kes» ile GİB'e gönderebiliriz."
           : "Taslak bulunamadı. Önce fatura bilgilerini verip taslak oluşturalım.";
         await supabase.from("messages").insert({
           conversation_id: cid,
@@ -203,87 +248,296 @@ Deno.serve(async (req: Request) => {
           { headers: corsHeaders },
         );
       }
+
+      const last = await loadStoredLastInvoice(supabase, cid);
+      if (last?.uuid) {
+        const previewAction = buildIssuedInvoicePreviewAction(last);
+        const who = last.customer_name?.trim();
+        const directMessage = who
+          ? `${who} faturasını önizlemede açıyorum.`
+          : "Faturayı önizlemede açıyorum.";
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+          action_snapshot: persistableAction(previewAction),
+        });
+        return Response.json(
+          {
+            message: directMessage,
+            conversationId: cid,
+            action: previewAction,
+          },
+          { headers: corsHeaders },
+        );
+      }
     }
 
-    if (isConfirmMessage || isConfirmAction || isRequestOtpAction) {
-      const pending = await loadPendingInvoice(supabase, cid);
-      if (pending?.draft?.date && pending?.draft?.uuid) {
-        if (
-          (isConfirmAction || isRequestOtpAction) &&
-          typeof requestAction?.draftUuid === "string" &&
-          requestAction.draftUuid !== pending.draft.uuid
-        ) {
-          const mismatchMsg =
-            "Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
-          await supabase.from("messages").insert({
-            conversation_id: cid,
-            role: "assistant",
-            content: mismatchMsg,
-          });
-          return Response.json(
-            { message: mismatchMsg, conversationId: cid, action: null },
-            { headers: corsHeaders },
-          );
+    if (
+      hasMessage &&
+      !isConfirmMessage &&
+      !isConfirmAction &&
+      isFinancialTotalsIntent(message ?? "")
+    ) {
+      try {
+        const finDir = parseFinancialDirection(message ?? "");
+        const filters = parseFiltersFromText(message ?? "");
+        const toolInput: Record<string, unknown> = {};
+        if (filters.customerName) toolInput.customer_name = filters.customerName;
+        if (typeof filters.amountGte === "number") {
+          toolInput.amount_gte = filters.amountGte;
         }
-        try {
-          const result = await executeTool(
-            supabase,
-            "request_invoice_sign_otp",
-            { phone: requestAction?.phone },
-            username,
-            message ?? "",
-            cid,
-            { source: "fast_path" },
-          );
-          const payload = result as {
-            status?: string;
-            draft_uuid?: string;
-            phone_masked?: string;
-          };
-          const directMessage =
-            payload?.status === "phone_required"
-              ? "İmzalama için telefon numarası gerekli. Numaranı girip SMS kodunu isteyebilirsin."
-              : `İmzalama için SMS doğrulama bekleniyor.${payload?.phone_masked ? ` Kod ${payload.phone_masked} numarasına gönderildi.` : ""}`;
-
-          await supabase.from("messages").insert({
-            conversation_id: cid,
-            role: "assistant",
-            content: directMessage,
-          });
-
-          return Response.json(
-            {
-              message: directMessage,
-              conversationId: cid,
-              action: payload?.draft_uuid
-                ? {
-                    type: "open_sign_otp",
-                    label: "SMS Doğrulama",
-                    sign_otp: {
-                      draftUuid: payload.draft_uuid,
-                      phoneMasked: payload.phone_masked ?? "Kayıtlı numara",
-                    },
-                  } satisfies ChatAction
-                : null,
-            },
-            { headers: corsHeaders },
-          );
-        } catch (err) {
-          const msg =
-            err instanceof Error
-              ? err.message
-              : "SMS doğrulaması başlatılamadı.";
-          const failText = `İmzalama adımı başlatılamadı: ${msg}`;
-          await supabase.from("messages").insert({
-            conversation_id: cid,
-            role: "assistant",
-            content: failText,
-          });
-          return Response.json(
-            { message: failText, conversationId: cid, action: null },
-            { headers: corsHeaders },
-          );
+        if (typeof filters.amountEq === "number") {
+          toolInput.amount_eq = filters.amountEq;
         }
+
+        const toolName = finDir === "both"
+          ? "invoice_financial_summary"
+          : "invoice_totals";
+        if (finDir !== "both") toolInput.direction = finDir;
+
+        const result = await executeTool(
+          supabase,
+          toolName,
+          toolInput,
+          session,
+          message ?? "",
+          cid,
+          { source: "fast_path" },
+        );
+        const directMessage = finDir === "both"
+          ? formatFinancialSummaryChatSummary(result)
+          : formatInvoiceTotalsChatSummary(result, finDir);
+        await persistChatContext(supabase, cid, {
+          last_tool: toolName,
+          last_direction: finDir === "both" ? undefined : finDir,
+          last_date_range: (() => {
+            if (!result || typeof result !== "object") return undefined;
+            const s = (result as Record<string, unknown>).start_date;
+            const e = (result as Record<string, unknown>).end_date;
+            return typeof s === "string" && typeof e === "string" && s && e
+              ? { startDate: s, endDate: e }
+              : undefined;
+          })(),
+          last_counterparty: filters.customerName,
+        });
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+        });
+        return Response.json(
+          { message: directMessage, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
+      } catch (err) {
+        const msg = err instanceof Error
+          ? err.message
+          : "Finansal özet getirilemedi.";
+        const failText = `Finansal özet alınamadı: ${msg}`;
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: failText,
+        });
+        return Response.json(
+          { message: failText, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
+      }
+    }
+
+    if (
+      hasMessage &&
+      !isConfirmMessage &&
+      !isConfirmAction &&
+      isIncomingInvoiceListIntent(message ?? "")
+    ) {
+      try {
+        const result = await executeTool(
+          supabase,
+          "list_invoices",
+          { direction: "incoming" },
+          session,
+          message ?? "",
+          cid,
+          { source: "fast_path" },
+        );
+        const list = normalizeInvoiceListToolResult(result);
+        const directMessage = formatInvoiceListChatSummary(list, "incoming");
+        const action = buildOpenIncomingInvoicesAction(message ?? "", {
+          direction: "incoming",
+        }, list);
+        await persistChatContext(supabase, cid, {
+          last_tool: "list_invoices",
+          last_direction: "incoming",
+          last_date_range: list.start_date && list.end_date
+            ? { startDate: list.start_date, endDate: list.end_date }
+            : undefined,
+        });
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+          action_snapshot: persistableAction(action),
+        });
+        return Response.json(
+          { message: directMessage, conversationId: cid, action },
+          { headers: corsHeaders },
+        );
+      } catch (err) {
+        const msg = err instanceof Error
+          ? err.message
+          : "Gelen faturalar getirilemedi.";
+        const failText = `Gelen fatura listesi alınamadı: ${msg}`;
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: failText,
+        });
+        return Response.json(
+          { message: failText, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
+      }
+    }
+
+    if (
+      hasMessage &&
+      !isConfirmMessage &&
+      !isConfirmAction &&
+      (isLatestInvoiceIntent(message ?? "") ||
+        isCustomerClarificationIntent(message ?? ""))
+    ) {
+      try {
+        const filters = parseFiltersFromText(message ?? "");
+        const msgDir = parseInvoiceDirectionFromMessage(message ?? "");
+        const toolInput: Record<string, unknown> = {};
+        if (msgDir) toolInput.direction = msgDir;
+        if (filters.customerName) {
+          toolInput.customer_name = filters.customerName;
+        }
+        if (typeof filters.amountGte === "number") {
+          toolInput.amount_gte = filters.amountGte;
+        }
+        if (typeof filters.amountEq === "number") {
+          toolInput.amount_eq = filters.amountEq;
+        }
+        const result = await executeTool(
+          supabase,
+          "latest_invoice",
+          toolInput,
+          session,
+          message ?? "",
+          cid,
+          { source: "fast_path" },
+        );
+        const latest = normalizeLatestInvoiceToolResult(result);
+        const direction = latest.invoice?.direction ??
+          (msgDir ?? "outgoing");
+        const directMessage = formatLatestInvoiceChatSummary(
+          latest,
+          filters,
+          direction,
+        );
+        const action =
+          !latest.ambiguous && latest.invoice?.invoice_uuid
+            ? buildLatestInvoiceDetailAction(latest.invoice)
+            : null;
+        if (latest.invoice?.invoice_uuid) {
+          await persistLastInvoice(supabase, cid, latest.invoice);
+        }
+        await persistChatContext(supabase, cid, {
+          last_tool: "latest_invoice",
+          last_direction: direction,
+          last_counterparty: filters.customerName,
+        });
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+          action_snapshot: persistableAction(action),
+        });
+        return Response.json(
+          {
+            message: directMessage,
+            conversationId: cid,
+            action,
+          },
+          { headers: corsHeaders },
+        );
+      } catch (err) {
+        const msg = err instanceof Error
+          ? err.message
+          : "Son fatura getirilemedi.";
+        const failText = `Son fatura alınamadı: ${msg}`;
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: failText,
+        });
+        return Response.json(
+          { message: failText, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
+      }
+    }
+
+    if (
+      hasMessage &&
+      !isConfirmMessage &&
+      !isConfirmAction &&
+      isInvoiceListIntent(message ?? "")
+    ) {
+      try {
+        const result = await executeTool(
+          supabase,
+          "list_invoices",
+          {},
+          session,
+          message ?? "",
+          cid,
+          { source: "fast_path" },
+        );
+        const list = normalizeInvoiceListToolResult(result);
+        const directMessage = formatInvoiceListChatSummary(list, "outgoing");
+        const action = buildOpenOutgoingInvoicesAction(
+          message ?? "",
+          {},
+          list,
+        );
+        await persistChatContext(supabase, cid, {
+          last_tool: "list_invoices",
+          last_direction: "outgoing",
+          last_date_range: list.start_date && list.end_date
+            ? { startDate: list.start_date, endDate: list.end_date }
+            : undefined,
+        });
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: directMessage,
+        });
+        return Response.json(
+          {
+            message: directMessage,
+            conversationId: cid,
+            action,
+          },
+          { headers: corsHeaders },
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Faturalar getirilemedi.";
+        const failText = `Fatura listesi alınamadı: ${msg}`;
+        await supabase.from("messages").insert({
+          conversation_id: cid,
+          role: "assistant",
+          content: failText,
+        });
+        return Response.json(
+          { message: failText, conversationId: cid, action: null },
+          { headers: corsHeaders },
+        );
       }
     }
 
@@ -302,7 +556,10 @@ Deno.serve(async (req: Request) => {
     );
 
     const stableUserMsg = typeof message === "string" ? message : "";
-    const dynamicSystemPrompt = buildDynamicSystemPromptForAgent();
+    const dynamicSystemPrompt = await buildDynamicSystemPromptForAgent(
+      supabase,
+      cid,
+    );
 
     const wantsNdjson =
       clientWantsNdjsonStream(req, body) &&
@@ -315,7 +572,7 @@ Deno.serve(async (req: Request) => {
       const acc = await runAnthropicToolLoop(
         supabase,
         msgs,
-        username,
+        session,
         stableUserMsg,
         cid,
         dynamicSystemPrompt,
@@ -323,7 +580,7 @@ Deno.serve(async (req: Request) => {
       );
       const fin = await finalizeAgentAssistant(supabase, {
         convId: cid,
-        username,
+        session,
         userMessage: stableUserMsg,
         assistantText: acc.assistantText,
         usedFinanceTool: acc.usedFinanceTool,
@@ -369,7 +626,7 @@ Deno.serve(async (req: Request) => {
         const acc = await runAnthropicToolLoop(
           supabase,
           msgs,
-          username,
+          session,
           stableUserMsg,
           cid,
           dynamicSystemPrompt,
@@ -378,7 +635,7 @@ Deno.serve(async (req: Request) => {
 
         const fin = await finalizeAgentAssistant(supabase, {
           convId: cid,
-          username,
+          session,
           userMessage: stableUserMsg,
           assistantText: acc.assistantText,
           usedFinanceTool: acc.usedFinanceTool,

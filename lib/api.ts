@@ -306,15 +306,77 @@ async function refreshTokensLocked(): Promise<StoredTokens | null> {
 export interface LoginResponse {
   success: boolean;
   error?: string;
-  error_code?:
-    | "MULTI_SESSION_PERSISTED"
-    | "BAD_CREDENTIALS"
-    | "GIB_TEMPORARY"
-    | "UNKNOWN";
+  error_code?: string;
   trace?: unknown;
   accessToken?: string;
   refreshToken?: string;
   expiresIn?: number;
+  onboarding_status?: string;
+  tenant_vkn?: string;
+  tenant_name?: string;
+  debug_code?: string;
+  message?: string;
+}
+
+export type OnboardingStatus =
+  | "pending"
+  | "tenant_linked"
+  | "active"
+  | "activation_complete";
+
+async function authPost(
+  action: string,
+  body: Record<string, unknown>,
+  accessToken?: string,
+): Promise<LoginResponse> {
+  assertConfig();
+  const res = await fetch(`${API_BASE_URL}/auth`, {
+    method: "POST",
+    headers: accessToken ? authHeaders(accessToken) : publicHeaders(),
+    body: JSON.stringify({ action, ...body }),
+  });
+  return (await parseJsonOrThrow(res)) as LoginResponse;
+}
+
+export async function authRequestOtp(phone: string): Promise<LoginResponse> {
+  return authPost("request-otp", { phone });
+}
+
+export async function authVerifyOtp(
+  phone: string,
+  code: string,
+): Promise<LoginResponse> {
+  return authPost("verify-otp", { phone, code });
+}
+
+export async function authSetPassword(
+  phone: string,
+  password: string,
+): Promise<LoginResponse> {
+  return authPost("set-password", { phone, password });
+}
+
+/** Login — telefon + şifre */
+export async function loginRequest(
+  phone: string,
+  password: string,
+): Promise<LoginResponse> {
+  return authPost("login", { phone, password });
+}
+
+export async function authLinkTenant(
+  accessToken: string,
+  vknTckn: string,
+  displayName?: string,
+): Promise<LoginResponse> {
+  return authPost(
+    "link-tenant",
+    {
+      vkn_tckn: vknTckn,
+      ...(displayName ? { display_name: displayName } : {}),
+    },
+    accessToken,
+  );
 }
 
 export interface UserProfile {
@@ -345,47 +407,18 @@ export interface UserProfileResponse {
   profile: UserProfile;
 }
 
-/** Login — anon gateway + credentials body */
-export async function loginRequest(
+/** @deprecated GİB login kaldırıldı — loginRequest kullan */
+export async function legacyGibLoginRequest(
   username: string,
   password: string,
 ): Promise<LoginResponse> {
   assertConfig();
-  const requestId = newApiDevRequestId();
-  const startedAt = Date.now();
-  devLogApi({
-    request_id: requestId,
-    phase: "request",
-    function: "login",
+  const res = await fetch(`${API_BASE_URL}/login`, {
     method: "POST",
-    body: sanitizeForApiDevLog({ username, password }),
+    headers: publicHeaders(),
+    body: JSON.stringify({ username, password }),
   });
-  try {
-    const res = await fetch(`${API_BASE_URL}/login`, {
-      method: "POST",
-      headers: publicHeaders(),
-      body: JSON.stringify({ username, password }),
-    });
-    const body = (await parseJsonOrThrow(res)) as LoginResponse;
-    devLogApi({
-      request_id: requestId,
-      phase: "response",
-      function: "login",
-      status: res.status,
-      duration_ms: Date.now() - startedAt,
-      body: sanitizeForApiDevLog(body),
-    });
-    return body;
-  } catch (err) {
-    devLogApi({
-      request_id: requestId,
-      phase: "error",
-      function: "login",
-      duration_ms: Date.now() - startedAt,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+  return (await parseJsonOrThrow(res)) as LoginResponse;
 }
 
 /** Logout — Bearer access token */

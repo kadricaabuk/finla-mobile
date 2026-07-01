@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { assembleSystemPrompt, filterToolsWithEphemeralPromptCacheLast, TOOLS } from "../_shared/tools.ts";
 import {
@@ -10,8 +11,15 @@ import {
 } from "./gib-tool-errors.ts";
 import { encodeNdjsonEvent } from "./ndjson-stream.ts";
 import { executeTool } from "./tools/index.ts";
+import type { FinlaSession } from "../_shared/session-auth.ts";
 import type { InvoiceDetailPayload } from "./types.ts";
-import type { SupabaseClient } from "npm:@supabase/supabase-js";
+import {
+  formatChatContextForPrompt,
+  loadChatContext,
+  persistChatContext,
+  type ChatContext,
+} from "./conversation-context.ts";
+import type { InvoiceDirection } from "../_shared/invoice-facts.ts";
 
 export const MAX_AGENT_ROUNDS = 8;
 
@@ -24,11 +32,62 @@ function anthropicToolsForChat(): Anthropic.Tool[] {
   );
 }
 
-export function buildDynamicSystemPromptForAgent(): string {
+export async function buildDynamicSystemPromptForAgent(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<string> {
+  const ctx = await loadChatContext(supabase, conversationId);
   return `${assembleSystemPrompt()}
 
 Bugunun tarihi: ${formatTrDate(istanbulTodayUtc())}
-Saat dilimi: ${ISTANBUL_TZ}`;
+Saat dilimi: ${ISTANBUL_TZ}${formatChatContextForPrompt(ctx)}`;
+}
+
+function chatContextFromTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  result: unknown,
+): ChatContext | null {
+  const patch: ChatContext = { last_tool: toolName };
+  const direction =
+    input.direction === "incoming" || input.direction === "outgoing"
+      ? input.direction
+      : result && typeof result === "object" &&
+          ((result as Record<string, unknown>).direction === "incoming" ||
+            (result as Record<string, unknown>).direction === "outgoing")
+        ? (result as Record<string, unknown>).direction as InvoiceDirection
+        : undefined;
+  if (direction) patch.last_direction = direction;
+
+  const start =
+    typeof input.start_date === "string"
+      ? input.start_date
+      : result && typeof result === "object" &&
+          typeof (result as Record<string, unknown>).start_date === "string"
+        ? (result as Record<string, unknown>).start_date as string
+        : undefined;
+  const end =
+    typeof input.end_date === "string"
+      ? input.end_date
+      : result && typeof result === "object" &&
+          typeof (result as Record<string, unknown>).end_date === "string"
+        ? (result as Record<string, unknown>).end_date as string
+        : undefined;
+  if (start && end) {
+    patch.last_date_range = { startDate: start, endDate: end };
+  }
+
+  const counterparty =
+    typeof input.customer_name === "string" && input.customer_name.trim()
+      ? input.customer_name.trim()
+      : undefined;
+  if (counterparty) patch.last_counterparty = counterparty;
+
+  if (toolName === "invoice_financial_summary") {
+    patch.last_direction = undefined;
+  }
+
+  return patch;
 }
 
 export type AgentLoopAccumulator = {
@@ -48,7 +107,7 @@ export type AgentLoopAccumulator = {
 export async function runAnthropicToolLoop(
   supabase: SupabaseClient,
   claudeMessages: Anthropic.MessageParam[],
-  username: string,
+  session: FinlaSession,
   userMsg: string,
   convId: string,
   dynamicSystemPrompt: string,
@@ -141,7 +200,7 @@ export async function runAnthropicToolLoop(
               supabase,
               block.name,
               block.input as Record<string, unknown>,
-              username,
+              session,
               userMsg,
               convId,
               {
@@ -153,7 +212,9 @@ export async function runAnthropicToolLoop(
             );
             if (
               block.name === "invoice_totals" ||
+              block.name === "invoice_financial_summary" ||
               block.name === "latest_invoice" ||
+              block.name === "list_invoices" ||
               block.name === "export_invoices_excel"
             ) {
               usedFinanceTool = true;
@@ -161,12 +222,14 @@ export async function runAnthropicToolLoop(
             if (
               block.name === "latest_invoice" &&
               result &&
-              typeof result === "object" &&
-              (result as { invoice?: InvoiceDetailPayload }).invoice
+              typeof result === "object"
             ) {
-              latestInvoiceActionPayload = (
-                result as { invoice: InvoiceDetailPayload }
-              ).invoice;
+              const row = result as Record<string, unknown>;
+              if (row.status === "ambiguous_customer") {
+                // Tekil sonuç yok; model aday listesinden seçim isteyecek.
+              } else if ((row.invoice as InvoiceDetailPayload)?.invoice_uuid) {
+                latestInvoiceActionPayload = row.invoice as InvoiceDetailPayload;
+              }
             }
             if (block.name === "list_invoices") {
               lastListInvoicesInput = block.input as Record<string, unknown>;
@@ -197,6 +260,14 @@ export async function runAnthropicToolLoop(
               }
             }
             usedToolNames.add(block.name);
+            const ctxPatch = chatContextFromTool(
+              block.name,
+              block.input as Record<string, unknown>,
+              result,
+            );
+            if (ctxPatch) {
+              await persistChatContext(supabase, convId, ctxPatch);
+            }
             content = JSON.stringify(result);
           } catch (err) {
             const classified = classifyGibOperationError(err, block.name);

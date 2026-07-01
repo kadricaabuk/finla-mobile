@@ -1,7 +1,6 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
-import { faturaLogout } from '../_shared/gib.ts'
 import {
-  getSubjectFromAuthHeader,
+  requireFinlaSession,
   revokeSubjectSessions,
   SessionAuthError,
 } from '../_shared/session-auth.ts'
@@ -11,15 +10,14 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
-    await faturaLogout(username)
-    await revokeSubjectSessions(username)
+    const session = await requireFinlaSession(req)
+    await revokeSubjectSessions(session.userId)
     return Response.json({ success: true }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {
       return Response.json({ success: false, error: err.message }, { status: err.status, headers: corsHeaders })
     }
-    const message = err instanceof Error ? err.message : 'GIB oturumu kapatılamadı.'
+    const message = err instanceof Error ? err.message : 'Oturum kapatılamadı.'
     return Response.json({ success: false, error: message }, { headers: corsHeaders })
   }
 })

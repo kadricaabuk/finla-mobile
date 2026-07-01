@@ -1,12 +1,22 @@
+import {
+  IncomingInvoiceResponseModal,
+  type IncomingInvoiceResponseRequest,
+} from "@/components/invoices/incoming-invoice-response-modal";
 import { InvoiceFiltersBar } from "@/components/invoices/invoice-filters-bar";
 import { InvoiceRowCard } from "@/components/invoices/invoice-row-card";
 import { useInvoicesScreen } from "@/components/invoices/use-invoices-screen";
+import {
+  InvoicePreviewModal,
+  type InvoicePreviewRequest,
+} from "@/components/chat/invoice-preview-modal";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
+import type { MainShellActiveScreen } from "@/contexts/main-app-shell-context";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import type { InvoiceDatePreset } from "@/lib/invoice-date-presets";
+import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -18,9 +28,37 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const INVOICES_SHELL_OWNER_ID = "screen-invoices";
+export type InvoicesScreenProps = {
+  direction?: InvoiceListDirection;
+  title?: string;
+  emptyHint?: string;
+  activeScreen?: MainShellActiveScreen;
+  shellOwnerId?: string;
+  titleTestId?: string;
+};
 
-export default function InvoicesScreen() {
+const OUTGOING_DEFAULTS: Required<
+  Pick<
+    InvoicesScreenProps,
+    "direction" | "title" | "emptyHint" | "activeScreen" | "shellOwnerId" | "titleTestId"
+  >
+> = {
+  direction: "outgoing",
+  title: "Giden Faturalar",
+  emptyHint: "Bu dönemde giden fatura bulunamadı.",
+  activeScreen: "invoices",
+  shellOwnerId: "screen-outgoing-invoices",
+  titleTestId: "outgoing-invoices-title",
+};
+
+export default function InvoicesScreen(props: InvoicesScreenProps = {}) {
+  const direction = props.direction ?? OUTGOING_DEFAULTS.direction;
+  const headerTitle = props.title ?? OUTGOING_DEFAULTS.title;
+  const emptyHint = props.emptyHint ?? OUTGOING_DEFAULTS.emptyHint;
+  const activeScreen = props.activeScreen ?? OUTGOING_DEFAULTS.activeScreen;
+  const shellOwnerId = props.shellOwnerId ?? OUTGOING_DEFAULTS.shellOwnerId;
+  const titleTestId = props.titleTestId ?? OUTGOING_DEFAULTS.titleTestId;
+
   const { openMenu } = useMainAppShell();
   const {
     preset,
@@ -36,23 +74,20 @@ export default function InvoicesScreen() {
     refreshing,
     error,
     fetchInvoices,
+    afterIncomingInboxAction,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
-  } = useInvoicesScreen();
-
-  const shellOwnerId = INVOICES_SHELL_OWNER_ID;
-  const headerTitle = "Faturalarım";
-  const emptyHint = "Bu dönemde fatura bulunamadı.";
+  } = useInvoicesScreen({ direction });
 
   const sideMenuBindings = useMemo(
     () => ({
-      activeScreen: "invoices" as const,
+      activeScreen,
       openingConversationId: null,
       activeConversationId: null,
       onNewChat: handleDrawerNewChat,
       onOpenConversation: handleDrawerOpenConversation,
     }),
-    [handleDrawerNewChat, handleDrawerOpenConversation],
+    [activeScreen, handleDrawerNewChat, handleDrawerOpenConversation],
   );
 
   useRegisterMainShellSideMenu(shellOwnerId, sideMenuBindings);
@@ -70,6 +105,18 @@ export default function InvoicesScreen() {
     setChatFilterInfoOpen(false);
   };
 
+  const [previewRequest, setPreviewRequest] =
+    useState<InvoicePreviewRequest | null>(null);
+  const [responseRequest, setResponseRequest] =
+    useState<IncomingInvoiceResponseRequest | null>(null);
+
+  const handleInvoiceResponded = useCallback(
+    (result: Parameters<typeof afterIncomingInboxAction>[0]) => {
+      void afterIncomingInboxAction(result);
+    },
+    [afterIncomingInboxAction],
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
@@ -79,7 +126,7 @@ export default function InvoicesScreen() {
           onPress={openMenu}
           accessibilityLabel="Menü"
         />
-        <Text testID="invoices-title" style={styles.title} numberOfLines={1}>
+        <Text testID={titleTestId} style={styles.title} numberOfLines={1}>
           {headerTitle}
         </Text>
         <View style={styles.headerRight}>
@@ -129,7 +176,14 @@ export default function InvoicesScreen() {
           data={invoices}
           keyExtractor={(item, i) => item.ettn ?? String(i)}
           renderItem={({ item }) => (
-            <InvoiceRowCard item={item} listDirection="outgoing" />
+            <InvoiceRowCard
+              item={item}
+              listDirection={direction}
+              onOpenPreview={setPreviewRequest}
+              onOpenIncomingResponse={
+                direction === "incoming" ? setResponseRequest : undefined
+              }
+            />
           )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
@@ -150,6 +204,15 @@ export default function InvoicesScreen() {
           }
         />
       )}
+      <InvoicePreviewModal
+        request={previewRequest}
+        onClose={() => setPreviewRequest(null)}
+      />
+      <IncomingInvoiceResponseModal
+        request={responseRequest}
+        onClose={() => setResponseRequest(null)}
+        onSuccess={handleInvoiceResponded}
+      />
     </SafeAreaView>
   );
 }

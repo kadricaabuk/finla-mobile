@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import type { ChatAction } from "./chat-types.ts";
-import { gibGetInvoicePreview } from "./gib.ts";
+import type { FinlaSession } from "./session-auth.ts";
+import type { CreateInvoiceInput } from './invoice-mapper.ts'
 import {
   buildLocalPreviewFromRequest,
   type InvoicePreviewContent,
@@ -82,25 +83,71 @@ export function hasActiveDraft(pending: PendingInvoiceState | null): boolean {
   );
 }
 
+/** Onay/kesim için geçerli taslak ETTN + tarih (draft.date yoksa request.date). */
+export function resolvePendingDraftRef(
+  pending: PendingInvoiceState | null,
+): { uuid: string; date: string } | null {
+  const uuid = pending?.draft?.uuid?.trim();
+  const date =
+    pending?.draft?.date?.trim() || pending?.request?.date?.trim() || "";
+  if (!uuid || !date) return null;
+  return { uuid, date };
+}
+
+/** pending_invoice.request → Mysoft yeniden gönderim için CreateInvoiceInput */
+export function pendingRequestToCreateInput(
+  pending: PendingInvoiceState | null,
+): CreateInvoiceInput | null {
+  const r = pending?.request;
+  if (!r?.buyer_name?.trim() || !Array.isArray(r.items) || r.items.length === 0) {
+    return null;
+  }
+
+  const items = r.items
+    .filter(
+      (i) =>
+        typeof i.name === "string" &&
+        i.name.trim() &&
+        typeof i.quantity === "number" &&
+        typeof i.unit_price === "number" &&
+        typeof i.vat_rate === "number",
+    )
+    .map((i) => ({
+      name: i.name!.trim(),
+      quantity: i.quantity!,
+      unit: typeof i.unit === "string" && i.unit.trim() ? i.unit.trim() : "adet",
+      unitPrice: i.unit_price!,
+      vatRate: i.vat_rate!,
+    }));
+
+  if (items.length === 0) return null;
+
+  return {
+    buyerName: r.buyer_name.trim(),
+    buyerTaxId: r.buyer_tax_id?.trim() || undefined,
+    buyerAddress: r.buyer_address?.trim() || undefined,
+    items,
+    date: pending?.draft?.date?.trim() || r.date?.trim() || undefined,
+    currency: (r.currency?.trim().toUpperCase() || "TRY") as "TRY" | "USD" | "EUR",
+    currencyRate: r.exchange_rate?.trim() || undefined,
+  };
+}
+
 export async function fetchInvoicePreview(
-  username: string,
-  uuid: string,
-  signed: boolean,
-  draftDate?: string,
+  _session: FinlaSession,
+  _uuid: string,
+  _signed: boolean,
+  _draftDate?: string,
   localRequest?: PendingInvoiceState["request"],
 ): Promise<InvoicePreviewContent> {
-  try {
-    return await gibGetInvoicePreview(username, uuid, signed, draftDate);
-  } catch (err) {
-    if (localRequest) {
-      return buildLocalPreviewFromRequest(localRequest);
-    }
-    throw err;
+  if (localRequest) {
+    return buildLocalPreviewFromRequest(localRequest);
   }
+  throw new Error("Önizleme için taslak verisi bulunamadı.");
 }
 
 export async function buildPendingDraftPreviewAction(
-  username: string,
+  _session: FinlaSession,
   pending: PendingInvoiceState,
 ): Promise<ChatAction | null> {
   const uuid = pending.draft?.uuid;
@@ -114,7 +161,7 @@ export async function buildPendingDraftPreviewAction(
   if (!html.length) {
     try {
       const preview = await fetchInvoicePreview(
-        username,
+        _session,
         uuid,
         false,
         draftDate,

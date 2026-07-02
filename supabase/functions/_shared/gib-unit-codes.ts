@@ -40,7 +40,6 @@ const GIB_UNIT_ALIASES: Record<string, string> = {
   M3: 'MTQ',
   DESIMETREKARE: 'DMK',
   DM2: 'DMK',
-  CIFT: 'PR',
   BINADET: 'T3',
   'BİN ADET': 'T3',
   YUZADET: 'CEN',

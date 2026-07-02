@@ -82,7 +82,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'fatura.js üzerinden e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
+      'Mysoft üzerinden e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez.',
     input_schema: {
       type: 'object',
       properties: {
@@ -93,11 +93,20 @@ export const TOOLS: Anthropic.Tool[] = [
         buyer_tax_id: {
           type: 'string',
           description:
-            'Alıcının TC Kimlik No veya Vergi Kimlik No (opsiyonel). Kullanıcı TCKN/VKN vermek istemezse bu alanı gönderme.',
+            'Alıcının TC Kimlik No veya Vergi Kimlik No. Yurt içi alıcı için zorunlu; yurt dışı alıcıda gönderme. Tevkifatlı faturada zorunlu.',
         },
         buyer_address: {
           type: 'string',
           description: 'Alıcının adresi (opsiyonel)',
+        },
+        buyer_country: {
+          type: 'string',
+          description:
+            'Alıcının ülkesi. Yurt dışı faturada zorunlu (ör. Almanya, ABD). Türkiye içinse gönderme.',
+        },
+        buyer_city: {
+          type: 'string',
+          description: 'Alıcının şehri (opsiyonel; yurt dışında önerilir)',
         },
         tax_office: {
           type: 'string',
@@ -123,8 +132,19 @@ export const TOOLS: Anthropic.Tool[] = [
               },
               vat_rate: {
                 type: 'number',
-                description: 'KDV oranı: 0, 1, 10 veya 20',
+                description:
+                  'KDV oranı: 0, 1, 10 veya 20. 0 seçilirse vat_exemption_code zorunlu.',
                 enum: [0, 1, 10, 20],
+              },
+              vat_exemption_code: {
+                type: 'string',
+                description:
+                  'KDV %0 ise zorunlu GİB istisna kodu. Yaygın: 302 hizmet ihracatı (yurt dışına hizmet), 303 roaming, 311 uluslararası taşımacılık, 312 diplomatik, 350 diğerleri, 351 istisna olmayan diğer. Mal ihracatı (301) desteklenmez. Emin değilsen kullanıcıya istisna sebebini sor.',
+              },
+              withholding_code: {
+                type: 'string',
+                description:
+                  'KDV tevkifat kodu (kısmi tevkifat 601–627). Ör: 601 yapım işleri 4/10, 602 danışmanlık/etüt 9/10, 606 işgücü temini 9/10, 612 temizlik 9/10, 624 yük taşımacılığı 2/10, 625 ticari reklam 3/10. Oran sistemce koda göre KDV üzerinden hesaplanır. Kullanıcı kod belirtmezse işlem türünü sorup doğru kodu netleştir.',
               },
             },
             required: ['name', 'quantity', 'unit', 'unit_price', 'vat_rate'],
@@ -143,6 +163,11 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description:
             'Onaylanmış kur: 1 birim dövizin TL karşılığı. Belirtilmezse TCMB kuru otomatik çekilir ve kullanıcı onayı istenir.',
+        },
+        replace_existing_draft: {
+          type: 'boolean',
+          description:
+            'Bekleyen taslak varken kullanıcı değişiklik isterse true gönder: eski taslak silinir, yenisi oluşturulur.',
         },
       },
       required: ['buyer_name', 'items'],
@@ -340,20 +365,21 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'cancel_invoice',
     description:
-      'Taslak durumundaki bir faturayı ETTN numarasıyla iptal eder. Önce list_invoices ile ETTN numarasını öğren.',
+      'Fatura veya bekleyen taslağı iptal eder. Sohbette bekleyen taslak varsa ETTN vermeden çağrılabilir (taslak silinir). Kesilmiş fatura için önce list_invoices ile ETTN öğren.',
     input_schema: {
       type: 'object',
       properties: {
         ettn: {
           type: 'string',
-          description: 'İptal edilecek faturanın ETTN numarası',
+          description:
+            'İptal edilecek faturanın ETTN numarası. Bekleyen taslak iptalinde boş bırakılabilir.',
         },
         reason: {
           type: 'string',
           description: 'İptal sebebi',
         },
       },
-      required: ['ettn'],
+      required: [],
     },
   },
 ]
@@ -381,11 +407,18 @@ export function assembleSystemPrompt(): string {
   const ruleLines = [
     '- Türkçe yanıt ver',
     '- Kısa ve doğal konuşma dili kullan',
+    `- İç araç/parametre adlarını (create_invoice, confirm_invoice_issue, vat_rate vb.) kullanıcıya ASLA yazma; "taslak oluşturuyorum", "faturayı kesiyorum" gibi doğal dil kullan`,
+    `- Vergi/mali müşavirlik tavsiyesi verme; tevkifat veya istisna uygulanıp uygulanmayacağından emin değilsen kullanıcıya (gerekirse muhasebecisine danışmasını söyleyerek) sor, asla varsayma`,
     `- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.`,
     `- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder`,
     `- Fatura akışı: (1) create_invoice → Mysoft taslak (isSaveAsDraft), (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (Mysoft imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
     `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
-    `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al`,
+    `- Bekleyen taslakta kullanıcı değişiklik isterse (tevkifat ekle, tutar değiştir vb.) create_invoice aracını replace_existing_draft=true ve GÜNCEL parametrelerle çağır; eski taslak otomatik silinir. "Taslak silinemiyor" deme`,
+    `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı, varsa tevkifat/istisna) özetle ve onay al`,
+    `- Tevkifat: kullanıcı tevkifatlı fatura isterse işlem türüne uygun kodu (601–627) netleştir; kalemde withholding_code gönder. Tevkifat tutarını KENDİN HESAPLAMA, sistem KDV üzerinden koda göre hesaplar. Tevkifat KDV'den kesilir, net tutardan değil. Alıcı VKN/TCKN zorunlu. Kullanıcı oran söylerse (ör. 9/10) koda uygunluğunu doğrula; uyuşmazsa kullanıcıyla netleştir`,
+    `- Tevkifat alt sınırı: KDV dahil tutar 12.000 TL ve altındaysa (2026) kısmi tevkifat genelde uygulanmaz (aynı güne ait aynı alıcı faturaları toplamı esas alınır); kullanıcıyı bilgilendir ama kararı ona bırak`,
+    `- KDV %0 fatura: mutlaka istisna sebebini öğren ve kalemde vat_exemption_code gönder. Yurt dışına HİZMET → 302 hizmet ihracatı + buyer_country. Mal ihracatı (gümrük beyannameli) desteklenmiyor; kullanıcıyı Mysoft portalına yönlendir`,
+    `- Yurt dışı alıcı: buyer_country ver, VKN/TCKN isteme; döviz cinsinden ise önce kur onayı akışını uygula`,
     `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
     `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
     `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,

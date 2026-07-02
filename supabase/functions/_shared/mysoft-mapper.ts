@@ -1,3 +1,8 @@
+import {
+  resolveIstisnaName,
+  resolveTevkifatCode,
+  validateInvoiceTaxFields,
+} from './gib-tax-codes.ts'
 import { normalizeGibUnit } from './gib-unit-codes.ts'
 import {
   normalizeInboxDisplayStatus,
@@ -124,27 +129,60 @@ function isEfaturaRecipient(recipient: RecipientLookupResult | null): boolean {
   return Boolean(recipient.pk_alias)
 }
 
+/** Yurt dışı alıcı: GİB kuralı gereği VKN alanına "2222222222" yazılır. */
+const FOREIGN_BUYER_TAX_ID = '2222222222'
+
+export function isForeignBuyerCountry(country: string | undefined): boolean {
+  const c = (country ?? '').trim().toLocaleLowerCase('tr-TR')
+  if (!c) return false
+  return c !== 'türkiye' && c !== 'turkiye' && c !== 'turkey' && c !== 'tr'
+}
+
 export function buildMysoftInvoiceOutboxBody(
   input: CreateInvoiceInput,
   tenantVkn: string,
   recipient: RecipientLookupResult | null,
   options: { isSaveAsDraft: boolean; ettn?: string; gbAlias?: string },
 ): Record<string, unknown> {
-  const taxId = resolveBuyerTaxId(input.buyerTaxId)
-  if (!/^\d{10,11}$/.test(taxId)) {
+  const foreignBuyer = isForeignBuyerCountry(input.buyerCountry)
+  let taxId = resolveBuyerTaxId(input.buyerTaxId)
+  if (foreignBuyer) {
+    if (!/^\d{10,11}$/.test(taxId)) taxId = FOREIGN_BUYER_TAX_ID
+  } else if (!/^\d{10,11}$/.test(taxId)) {
     throw new Error('Alıcı VKN/TCKN geçersiz veya eksik.')
   }
+
+  const { hasWithholding, allExempt } = validateInvoiceTaxFields(input.items)
 
   const trDate = input.date?.trim() || mysoftDateToTrDate(new Date().toISOString())
   const docDate = trDateToMysoftDate(trDate)
   const currency = (input.currency?.trim().toUpperCase() || 'TRY')
-  const efatura = isEfaturaRecipient(recipient)
+  let currencyRate = '1'
+  if (currency !== 'TRY') {
+    const rawRate = input.currencyRate?.trim()
+    if (!rawRate || !Number.isFinite(Number(rawRate)) || Number(rawRate) <= 0) {
+      throw new Error(
+        'Dövizli fatura için geçerli kur zorunlu (1 birim dövizin TL karşılığı).',
+      )
+    }
+    currencyRate = rawRate
+  }
+  // Yurt dışı alıcıya e-Fatura kesilemez; her zaman e-Arşiv düzenlenir.
+  const efatura = !foreignBuyer && isEfaturaRecipient(recipient)
 
   const invoiceDetail = input.items.map((item) => {
     const qty = item.quantity
     const unitPrice = item.unitPrice
     const amtTra = roundMoney(qty * unitPrice)
     const amtVatTra = roundMoney(amtTra * item.vatRate / 100)
+    const exemptionCode = item.vatExemptionCode?.trim() || ''
+    const exemptionName = exemptionCode
+      ? resolveIstisnaName(exemptionCode) ?? ''
+      : ''
+    const withholding = resolveTevkifatCode(item.withholdingCode)
+    const withholdingAmount = withholding
+      ? roundMoney(amtVatTra * withholding.numerator / withholding.denominator)
+      : 0
     return {
       productName: item.name,
       unitCode: normalizeGibUnit(item.unit),
@@ -154,6 +192,23 @@ export function buildMysoftInvoiceOutboxBody(
       vatRate: String(item.vatRate),
       amtVatTra: formatMoney(amtVatTra),
       taxableAmtTra: amtTra,
+      ...(exemptionCode
+        ? {
+          taxExemptionReasonCode: exemptionCode,
+          taxExemptionReasonName: exemptionName,
+        }
+        : {}),
+      ...(withholding
+        ? {
+          withholdingTaxTypeCode: withholding.code,
+          withholdingTaxTypeName: withholding.name,
+          withholdingTaxPercentage: roundMoney(
+            withholding.numerator / withholding.denominator * 100,
+          ),
+          withholdingTaxableAmount: amtVatTra,
+          withholdingTaxAmount: withholdingAmount,
+        }
+        : {}),
     }
   })
 
@@ -164,10 +219,28 @@ export function buildMysoftInvoiceOutboxBody(
     invoiceDetail.reduce((s, row) => s + Number(row.amtVatTra), 0),
   )
   const taxInclusiveAmount = roundMoney(lineExtensionAmount + taxAmount)
+  const withholdingTotal = roundMoney(
+    invoiceDetail.reduce(
+      (s, row) => s + Number(row.withholdingTaxAmount ?? 0),
+      0,
+    ),
+  )
+  const payableAmount = roundMoney(taxInclusiveAmount - withholdingTotal)
 
-  const vatRates = [...new Set(input.items.map((i) => String(i.vatRate)))]
-  const taxSubTotal = vatRates.map((rate) => {
-    const rows = invoiceDetail.filter((r) => r.vatRate === rate)
+  const subTotalKeys = [
+    ...new Set(
+      input.items.map((i) =>
+        `${i.vatRate}|${i.vatExemptionCode?.trim() || ''}`
+      ),
+    ),
+  ]
+  const taxSubTotal = subTotalKeys.map((key) => {
+    const [rate, exemptionCode] = key.split('|')
+    const rows = invoiceDetail.filter((r) =>
+      r.vatRate === rate &&
+      ((r as Record<string, unknown>).taxExemptionReasonCode ?? '') ===
+        exemptionCode
+    )
     const taxableAmount = roundMoney(
       rows.reduce((s, r) => s + Number(r.taxableAmtTra), 0),
     )
@@ -179,30 +252,61 @@ export function buildMysoftInvoiceOutboxBody(
       percent: rate,
       taxName: 'Katma Değer Vergisi',
       taxTypeCode: '0015',
+      ...(exemptionCode
+        ? {
+          taxExemptionReasonCode: exemptionCode,
+          taxExemptionReasonName: resolveIstisnaName(exemptionCode) ?? '',
+        }
+        : {}),
     }
   })
+
+  const invoiceType = hasWithholding
+    ? 'TEVKIFAT'
+    : allExempt
+      ? 'ISTISNA'
+      : 'SATIS'
+
+  // GİB kuralı: tevkifatlı e-Fatura, alıcının red hakkı olan TİCARİFATURA
+  // senaryosuyla gönderilmek zorunda (TEMELFATURA reddedilemez).
+  const profile = efatura
+    ? (hasWithholding ? 'TICARIFATURA' : 'TEMELFATURA')
+    : 'EARSIVFATURA'
+
+  const cityName = input.buyerCity?.trim() ||
+    (foreignBuyer
+      ? input.buyerCountry?.trim() || 'Yurt Dışı'
+      : recipient?.address?.trim() || 'İstanbul')
 
   const body: Record<string, unknown> = {
     isSaveAsDraft: options.isSaveAsDraft,
     isCalculateByApi: false,
     id: 0,
     eDocumentType: efatura ? 'EFATURA' : 'EARSIVFATURA',
-    invoiceType: 'SATIS',
-    profile: efatura ? 'TEMELFATURA' : 'TEMELFATURA',
+    invoiceType,
+    profile,
     ettn: options.ettn ?? '',
     docNo: '',
     docDate,
     docTime: nowDocTime(docDate),
     currencyCode: currency,
-    currencyRate: '1',
+    currencyRate,
     tenantIdentifierNumber: tenantVkn,
     senderType: 'ELEKTRONIK',
     invoiceAccount: {
       vknTckn: taxId,
       accountName: input.buyerName.trim(),
-      countryName: 'TÜRKİYE',
-      cityName: 'İSTANBUL',
-      citySubdivision: recipient?.address?.trim() || 'Merkez',
+      countryName: foreignBuyer
+        ? input.buyerCountry!.trim()
+        : 'TÜRKİYE',
+      cityName,
+      citySubdivision: 'Merkez',
+      ...(input.taxOffice?.trim() || recipient?.tax_office?.trim()
+        ? {
+          taxOfficeName: input.taxOffice?.trim() ||
+            recipient?.tax_office?.trim(),
+        }
+        : {}),
       ...(input.buyerAddress?.trim()
         ? { streetName: input.buyerAddress.trim() }
         : {}),
@@ -218,7 +322,7 @@ export function buildMysoftInvoiceOutboxBody(
       lineExtensionAmount,
       taxExclusiveAmount: lineExtensionAmount,
       taxInclusiveAmount,
-      payableAmount: taxInclusiveAmount,
+      payableAmount,
       allowanceTotalAmount: 0,
     },
     invoiceDetail,
@@ -510,6 +614,29 @@ export function mapMysoftUserProfile(
   }
 }
 
+/**
+ * getGibAccountModel alias satırı: aliasType 1 = PK (posta kutusu),
+ * aliasType 2 = GB (gönderici birim). Silinmemiş, urn: formatlı PK seçilir.
+ */
+function pickPkAliasFromGibAccount(
+  nested: Record<string, unknown>,
+): string | undefined {
+  const list = nested.gibAccountAliasList
+  if (!Array.isArray(list)) return undefined
+  const candidates = list
+    .filter((row): row is Record<string, unknown> =>
+      !!row && typeof row === 'object'
+    )
+    .filter((row) =>
+      row.aliasType === 1 &&
+      row.aliasDeleteDate == null &&
+      typeof row.alias === 'string' &&
+      row.alias.trim().length > 0
+    )
+    .map((row) => (row.alias as string).trim())
+  return candidates.find((a) => a.startsWith('urn:')) ?? candidates[0]
+}
+
 export function mapMysoftGibAccount(
   taxId: string,
   payload: unknown,
@@ -521,13 +648,20 @@ export function mapMysoftGibAccount(
       ? (row.data as Record<string, unknown>)
       : row
 
-  const pkAlias =
-    (typeof nested.pkAlias === 'string' && nested.pkAlias) ||
-    (typeof nested.pk_alias === 'string' && nested.pk_alias) ||
-    (typeof nested.alias === 'string' && nested.alias) ||
+  // GİB'de kayıt yoksa API { data: null, succeed: true } döner → e-Arşiv alıcısı.
+  const hasAccount =
+    typeof nested.gibAccountName === 'string' ||
+    typeof nested.identifierNumber === 'string' ||
+    typeof nested.accountName === 'string'
+  if (!hasAccount) return null
+
+  const pkAlias = pickPkAliasFromGibAccount(nested) ||
+    (typeof nested.pkAlias === 'string' && nested.pkAlias.trim()) ||
+    (typeof nested.pk_alias === 'string' && nested.pk_alias.trim()) ||
     undefined
 
   const name =
+    (typeof nested.gibAccountName === 'string' && nested.gibAccountName) ||
     (typeof nested.accountName === 'string' && nested.accountName) ||
     (typeof nested.title === 'string' && nested.title) ||
     (typeof nested.name === 'string' && nested.name) ||
@@ -535,6 +669,7 @@ export function mapMysoftGibAccount(
 
   const isEfatura = Boolean(
     pkAlias ||
+      typeof nested.eInvoiceStartDate === 'string' ||
       nested.isEInvoiceUser === true ||
       nested.isEFaturaUser === true ||
       nested.eInvoiceUser === true ||

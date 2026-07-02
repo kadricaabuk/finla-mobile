@@ -29,6 +29,10 @@ import {
   type PendingInvoiceState,
 } from "../../_shared/invoice-workflow.ts";
 import {
+  TEVKIFAT_MIN_GROSS_TRY,
+  validateInvoiceTaxFields,
+} from "../../_shared/gib-tax-codes.ts";
+import {
   normalizeCurrencyRate,
   summarizeGibInvoicePayload,
   type CreateInvoiceInput,
@@ -95,6 +99,10 @@ export function createInvoiceInputFromToolInput(
       typeof input.buyer_address === "string" ? input.buyer_address : undefined,
     taxOffice:
       typeof input.tax_office === "string" ? input.tax_office : undefined,
+    buyerCountry:
+      typeof input.buyer_country === "string" ? input.buyer_country : undefined,
+    buyerCity:
+      typeof input.buyer_city === "string" ? input.buyer_city : undefined,
     items: items.map((row) => {
       const i = row as Record<string, unknown>;
       return {
@@ -103,6 +111,14 @@ export function createInvoiceInputFromToolInput(
         unit: String(i.unit ?? "adet"),
         unitPrice: Number(i.unit_price ?? 0),
         vatRate: Number(i.vat_rate ?? 20),
+        vatExemptionCode:
+          typeof i.vat_exemption_code === "string"
+            ? i.vat_exemption_code
+            : undefined,
+        withholdingCode:
+          typeof i.withholding_code === "string"
+            ? i.withholding_code
+            : undefined,
       };
     }),
     date: typeof input.date === "string" ? input.date : undefined,
@@ -180,21 +196,39 @@ export async function executeToolImpl(
 
     case "create_invoice": {
       const existingPending = await loadPendingInvoice(supabase, conversationId);
+      const replaceRequested = input.replace_existing_draft === true;
       if (
         existingPending?.status === "preview_ready" &&
         existingPending?.draft?.uuid
       ) {
-        const hasHtml =
-          typeof existingPending.preview_html === "string" &&
-          existingPending.preview_html.length > 0;
-        return {
-          status: "preview_ready",
-          draft_uuid: existingPending.draft.uuid,
-          reused_existing: true,
-          ...(hasHtml ? {} : { preview_html_pending: true }),
-          message:
-            "Zaten bir fatura taslağı var. Önizlemeyi açıp kontrol et; uygunsa onayla.",
-        };
+        if (!replaceRequested) {
+          const hasHtml =
+            typeof existingPending.preview_html === "string" &&
+            existingPending.preview_html.length > 0;
+          return {
+            status: "preview_ready",
+            draft_uuid: existingPending.draft.uuid,
+            reused_existing: true,
+            ...(hasHtml ? {} : { preview_html_pending: true }),
+            message:
+              "Zaten bir fatura taslağı var. Önizlemeyi açıp kontrol et; uygunsa onayla. Kullanıcı taslakta değişiklik istiyorsa aynı aracı replace_existing_draft=true ve güncel parametrelerle çağır.",
+          };
+        }
+        // Kullanıcı değişiklik istedi: eski taslağı sil (GİB'e gitmediği için
+        // güvenli), silinemese bile yenisiyle devam et.
+        try {
+          await provider.deleteDraftInvoice(
+            providerCtx,
+            existingPending.draft.uuid,
+          );
+        } catch (err) {
+          console.warn(JSON.stringify({
+            event: "delete_draft_before_replace_failed",
+            ettn: existingPending.draft.uuid,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+        }
+        await savePendingInvoice(supabase, conversationId, null);
       }
 
       const items = input.items as {
@@ -203,7 +237,43 @@ export async function executeToolImpl(
         unit: string;
         unit_price: number;
         vat_rate: number;
+        vat_exemption_code?: string;
+        withholding_code?: string;
       }[];
+
+      // Vergi alanlarını kur onayı akışından ÖNCE doğrula; hata kullanıcıya
+      // aktarılabilir Türkçe mesajla dönsün.
+      let taxProfile: { hasWithholding: boolean; allExempt: boolean };
+      try {
+        taxProfile = validateInvoiceTaxFields(
+          items.map((i) => ({
+            vatRate: Number(i.vat_rate ?? 20),
+            vatExemptionCode: i.vat_exemption_code,
+            withholdingCode: i.withholding_code,
+          })),
+        );
+      } catch (err) {
+        return {
+          status: "invalid_invoice_tax_fields",
+          error_code: "INVALID_TAX_FIELDS",
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (
+        taxProfile.hasWithholding &&
+        !/^\d{10,11}$/.test(
+          typeof input.buyer_tax_id === "string"
+            ? input.buyer_tax_id.replace(/\s/g, "")
+            : "",
+        )
+      ) {
+        return {
+          status: "invalid_invoice_tax_fields",
+          error_code: "INVALID_TAX_FIELDS",
+          message:
+            "Tevkifatlı fatura için alıcının VKN/TCKN bilgisi zorunlu; kullanıcıdan iste.",
+        };
+      }
       const currency =
         typeof input.currency === "string"
           ? input.currency.trim().toUpperCase()
@@ -255,17 +325,42 @@ export async function executeToolImpl(
         buyerAddress: input.buyer_address as string | undefined,
         taxOffice:
           typeof input.tax_office === "string" ? input.tax_office : undefined,
+        buyerCountry:
+          typeof input.buyer_country === "string"
+            ? input.buyer_country
+            : undefined,
+        buyerCity:
+          typeof input.buyer_city === "string" ? input.buyer_city : undefined,
         items: items.map((i) => ({
           name: i.name,
           quantity: i.quantity,
           unit: i.unit,
           unitPrice: i.unit_price,
           vatRate: i.vat_rate,
+          vatExemptionCode: i.vat_exemption_code,
+          withholdingCode: i.withholding_code,
         })),
         date: invoiceDate,
         currency,
         currencyRate: resolvedRate || undefined,
       };
+
+      // 2026 kısmi tevkifat alt sınırı bilgilendirmesi (karar kullanıcının).
+      let withholdingThresholdWarning: string | undefined;
+      if (taxProfile.hasWithholding) {
+        const grossDoc = items.reduce(
+          (s, i) =>
+            s +
+            Number(i.quantity ?? 0) * Number(i.unit_price ?? 0) *
+              (1 + Number(i.vat_rate ?? 0) / 100),
+          0,
+        );
+        const rate = currency === "TRY" ? 1 : Number(resolvedRate) || 1;
+        if (grossDoc * rate <= TEVKIFAT_MIN_GROSS_TRY) {
+          withholdingThresholdWarning =
+            `Bilgi: KDV dahil tutar ${TEVKIFAT_MIN_GROSS_TRY.toLocaleString("tr-TR")} TL'nin altında; aynı gün aynı alıcıya kesilen faturaların toplamı bu sınırı aşmıyorsa kısmi tevkifat uygulanmaz. Kullanıcıya hatırlat, kararı ona bırak.`;
+        }
+      }
 
       const preview = await provider.createInvoicePreview(
         providerCtx,
@@ -298,6 +393,9 @@ export async function executeToolImpl(
           ? { exchange_rate: resolvedRate, currency }
           : {}),
         ...(preview.html.length > 0 ? {} : { preview_html_pending: true }),
+        ...(withholdingThresholdWarning
+          ? { warning: withholdingThresholdWarning }
+          : {}),
         message: preview.html.length > 0
           ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve GİB'e gönderelim."
           : "Taslak Mysoft'ta oluşturuldu. Önizleme açılacak; uygunsa onayla ve GİB'e gönderelim.",
@@ -636,12 +734,44 @@ export async function executeToolImpl(
       });
     }
 
-    case "cancel_invoice":
+    case "cancel_invoice": {
+      const ettn = String(input.ettn ?? "").trim();
+      const pendingForCancel = await loadPendingInvoice(
+        supabase,
+        conversationId,
+      );
+      // Bekleyen taslak iptali: GİB'e gitmemiş API taslağı silinir.
+      if (
+        pendingForCancel?.draft?.uuid &&
+        (!ettn || pendingForCancel.draft.uuid === ettn) &&
+        pendingForCancel.status !== "issued"
+      ) {
+        try {
+          await provider.deleteDraftInvoice(
+            providerCtx,
+            pendingForCancel.draft.uuid,
+          );
+        } catch (err) {
+          console.warn(JSON.stringify({
+            event: "delete_draft_on_cancel_failed",
+            ettn: pendingForCancel.draft.uuid,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+        }
+        await savePendingInvoice(supabase, conversationId, null);
+        return {
+          status: "draft_cancelled",
+          ettn: pendingForCancel.draft.uuid,
+          message:
+            "Bekleyen fatura taslağı iptal edildi; GİB'e gönderilmedi. Yeni taslak oluşturulabilir.",
+        };
+      }
       return provider.cancelInvoice(
         providerCtx,
-        input.ettn as string,
+        ettn,
         (input.reason as string) || "İptal",
       );
+    }
 
     default:
       throw new Error(`Bilinmeyen araç: ${toolName}`);

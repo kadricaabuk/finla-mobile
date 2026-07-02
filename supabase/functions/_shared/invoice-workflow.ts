@@ -21,12 +21,17 @@ export interface PendingInvoiceState {
     buyer_name?: string;
     buyer_tax_id?: string;
     buyer_address?: string;
+    buyer_country?: string;
+    buyer_city?: string;
+    tax_office?: string;
     items?: {
       name?: string;
       quantity?: number;
       unit?: string;
       unit_price?: number;
       vat_rate?: number;
+      vat_exemption_code?: string;
+      withholding_code?: string;
     }[];
     currency?: string;
     date?: string;
@@ -150,6 +155,9 @@ export function formatPendingInvoiceForPrompt(
       lines.push(
         "Metin onayı gelirse confirm_invoice_issue çağır; UI «Onayla ve Kes» zaten sunucu fast-path kullanır.",
       );
+      lines.push(
+        "Kullanıcı taslakta değişiklik isterse create_invoice'u replace_existing_draft=true ve güncel parametrelerle çağır (eski taslak silinir); taslağı iptal etmek isterse cancel_invoice çağır. Taslak silinemez deme.",
+      );
       break;
     }
     case "otp_pending":
@@ -189,6 +197,8 @@ export function pendingRequestToCreateInput(
       unit: typeof i.unit === "string" && i.unit.trim() ? i.unit.trim() : "adet",
       unitPrice: i.unit_price!,
       vatRate: i.vat_rate!,
+      vatExemptionCode: i.vat_exemption_code?.trim() || undefined,
+      withholdingCode: i.withholding_code?.trim() || undefined,
     }));
 
   if (items.length === 0) return null;
@@ -197,6 +207,9 @@ export function pendingRequestToCreateInput(
     buyerName: r.buyer_name.trim(),
     buyerTaxId: r.buyer_tax_id?.trim() || undefined,
     buyerAddress: r.buyer_address?.trim() || undefined,
+    buyerCountry: r.buyer_country?.trim() || undefined,
+    buyerCity: r.buyer_city?.trim() || undefined,
+    taxOffice: r.tax_office?.trim() || undefined,
     items,
     date: pending?.draft?.date?.trim() || r.date?.trim() || undefined,
     currency: (r.currency?.trim().toUpperCase() || "TRY") as "TRY" | "USD" | "EUR",

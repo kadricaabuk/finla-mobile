@@ -1,3 +1,4 @@
+import { validateInvoiceTaxFields } from '../gib-tax-codes.ts'
 import {
   buildLocalDraftPreviewHtml,
   todayGibApiFormatted,
@@ -60,6 +61,7 @@ export const mockInvoiceProvider: InvoiceProvider = {
   },
 
   async createInvoicePreview(_ctx, input) {
+    validateInvoiceTaxFields(input.items)
     const draft: InvoiceDraftRef = {
       uuid: crypto.randomUUID(),
       date: input.date ?? todayGibApiFormatted(),
@@ -75,6 +77,8 @@ export const mockInvoiceProvider: InvoiceProvider = {
         unit: i.unit,
         unit_price: i.unitPrice,
         vat_rate: i.vatRate,
+        vat_exemption_code: i.vatExemptionCode,
+        withholding_code: i.withholdingCode,
       })),
     })
     return { draft, html }
@@ -83,6 +87,10 @@ export const mockInvoiceProvider: InvoiceProvider = {
   async confirmInvoiceIssue(_ctx, draft, _options?) {
     const html = `<!DOCTYPE html><html><body><h1>Mock Fatura Kesildi</h1><p>ETTN: ${draft.uuid}</p></body></html>`
     return { uuid: draft.uuid, html }
+  },
+
+  async deleteDraftInvoice(_ctx, _ettn) {
+    // Mock: taslak durumsuz, silinecek bir şey yok.
   },
 
   async getInvoicePreview(_ctx, { invoiceUuid, signed, direction }) {

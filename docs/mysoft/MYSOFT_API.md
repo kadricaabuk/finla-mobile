@@ -157,11 +157,54 @@ Postman: `saveInvoiceOutboxWithMinimumFields`
 |-------|-----------------|-----------|-----|
 | e-Fatura mükellefi | `EFATURA` | `TEMELFATURA` | `pkAlias` zorunlu |
 | e-Arşiv | `EARSIVFATURA` | `EARSIVFATURA` | `pkAlias` yok |
+| Yurt dışı alıcı | `EARSIVFATURA` | `EARSIVFATURA` | `vknTckn: "2222222222"`, ülke/şehir gerçek değer |
 
-Routing: `getGibAccountModel` → `pkAlias` varsa e-Fatura.
+Routing: `getGibAccountModel` → yanıt şekli `{ data: { gibAccountName,
+identifierNumber, eInvoiceStartDate, gibAccountAliasList: [{ alias, aliasType,
+aliasDeleteDate }] } }`. **aliasType 1 = PK, 2 = GB**; silinmemiş `urn:` PK
+seçilir (`pickPkAliasFromGibAccount`). GİB kaydı yoksa `data: null` döner →
+e-Arşiv alıcısı. Kayıtlı alıcıya e-Arşiv body gönderilirse Mysoft
+"E-Fatura için Profile alanında geçersiz değer" hatası verir (yanıltıcı mesaj —
+asıl sorun belge tipi uyuşmazlığıdır).
+
+### Fatura tipleri (`invoiceType`)
+
+| Tip | Ne zaman | Finla durumu |
+|-----|----------|--------------|
+| `SATIS` | Normal satış | ✅ |
+| `TEVKIFAT` | Kalemde `withholdingTaxTypeCode` (601–627) varsa; oran KDV üzerinden, `payableAmount = brüt − tevkifat`. **e-Fatura'da profil `TICARIFATURA` zorunlu** (alıcının red hakkı; `TEMELFATURA`/`EARSIVFATURA` profili "geçersiz Profile" hatası verir — sandbox doğrulandı) | ✅ (`gib-tax-codes.ts`) |
+| `ISTISNA` | Tüm kalemler KDV %0 + `taxExemptionReasonCode` (ör. 302 hizmet ihracatı) | ✅ (`gib-tax-codes.ts`) |
+| `ISTISNA` + `profile: IHRACAT` | Mal ihracatı (GTİP, gümrük, `pkAlias: ihracatpk@gtb.gov.tr`) | ❌ desteklenmiyor — chat kullanıcıyı yönlendirir |
+| `IADE` | İade faturası (`billingRefInvoiceNo` referansı) | ❌ |
+| `YTBISTISNA` vb. | Yatırım teşvik (belge no/tarih, `expenditureType`) | ❌ |
+
+Tevkifat örneği (Postman `saveInvoiceOutboxTEVKIFAT`): satır bazında
+`withholdingTaxTypeCode/Name/Percentage`, `withholdingTaxableAmount` = satır KDV'si,
+`withholdingTaxAmount` = KDV × oran. Kod/oran tablosu: `_shared/gib-tax-codes.ts`
+(KDVGUT kısmi tevkifat listesi; 2026 alt sınır 12.000 TL KDV dahil).
+
+İstisna kodları: 3xx tam / 2xx kısmi istisna listesi de `gib-tax-codes.ts` içinde.
+KDV %0 satır istisna kodu olmadan reddedilir (GİB şematron hatasını önler).
+
+### Taslak silme
+
+`GET /api/InvoiceOutbox/deleteDraftInvoiceOutbox?invoiceETTN={ettn}` — chat'te
+`replace_existing_draft` ve taslak iptali bu endpoint'i kullanır (best-effort;
+taslak GİB'e gitmediği için silinmese de yenisi oluşturulabilir).
 
 Test VKN (Postman): `6271036106` — MYSOFT DİJİTAL DÖNÜŞÜM A.Ş. TEST  
 e-Arşiv örnek TCKN: `11111111111`
+
+### Entegre edilmemiş alanlar (yol haritası)
+
+- **İskonto**: satır `discRate`/`discAmtTra`, toplamda `allowanceTotalAmount` — şu an hep 0
+- **İade faturası** (`invoiceType: IADE` + `billingRefInvoiceNo/Date`)
+- **Mal ihracatı** (`profile: IHRACAT`: GTİP, `deliveryTermCode` incoterms, `transportModeCode`, `shipment`)
+- **Özel matrah** (8xx kodları), **ÖTV/ÖİV/konaklama vergisi** (farklı `taxTypeCode`)
+- **KAMU faturası** (`publicServicePayee*` alanları), **SGK**, **yatırım teşvik** senaryoları
+- **Ödeme bilgisi** (`paymentMeans`, vade `dueDate`), **not satırları** (`notes`)
+- **Tam tevkifat** (kısmi 601–627 dışındaki 10/10 uygulamaları)
+- **e-İrsaliye / SMM** (Despatch*, Receipt* modülleri)
 
 ---
 

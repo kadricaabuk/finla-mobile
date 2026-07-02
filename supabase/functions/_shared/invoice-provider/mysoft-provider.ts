@@ -247,6 +247,8 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
           unit: i.unit,
           unit_price: i.unitPrice,
           vat_rate: i.vatRate,
+          vat_exemption_code: i.vatExemptionCode,
+          withholding_code: i.withholdingCode,
         })),
       })
     }
@@ -304,6 +306,20 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
     }
 
     return { uuid: draft.uuid, html }
+  },
+
+  async deleteDraftInvoice(ctx, ettn) {
+    const tenantVkn = requireTenantVkn(ctx)
+    await mysoftRequest<unknown>(
+      '/api/InvoiceOutbox/deleteDraftInvoiceOutbox',
+      {
+        method: 'GET',
+        query: {
+          invoiceETTN: ettn,
+          tenantIdentifierNumber: tenantVkn,
+        },
+      },
+    )
   },
 
   async getInvoicePreview(ctx, params) {

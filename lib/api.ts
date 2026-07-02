@@ -380,20 +380,6 @@ export interface UserProfileResponse {
   profile: UserProfile;
 }
 
-/** @deprecated GİB login kaldırıldı — loginRequest kullan */
-export async function legacyGibLoginRequest(
-  username: string,
-  password: string,
-): Promise<LoginResponse> {
-  assertConfig();
-  const res = await fetch(`${API_BASE_URL}/login`, {
-    method: "POST",
-    headers: publicHeaders(),
-    body: JSON.stringify({ username, password }),
-  });
-  return (await parseJsonOrThrow(res)) as LoginResponse;
-}
-
 /** Logout — Bearer access token */
 export async function logoutRequest(accessToken: string): Promise<void> {
   assertConfig();

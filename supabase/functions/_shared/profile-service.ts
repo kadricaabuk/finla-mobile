@@ -3,7 +3,7 @@ import {
   providerContextFromSession,
 } from './invoice-provider/index.ts'
 import type { FinlaSession } from './session-auth.ts'
-import type { UserData } from './gib.ts'
+import type { UserData } from './invoice-mapper.ts'
 
 export async function getUserProfile(session: FinlaSession): Promise<UserData> {
   const provider = getInvoiceProvider()

@@ -1,3 +1,8 @@
+import {
+  formatTevkifatRatio,
+  resolveIstisnaName,
+  resolveTevkifatCode,
+} from './gib-tax-codes.ts'
 import { normalizeGibUnit } from './gib-unit-codes.ts'
 import {
   inboxDisplayToFactStatus,
@@ -10,6 +15,10 @@ export interface InvoiceLineItem {
   unit: string
   unitPrice: number
   vatRate: number
+  /** KDV %0 satır için zorunlu GİB istisna kodu (ör. 302 hizmet ihracatı). */
+  vatExemptionCode?: string
+  /** Kısmi KDV tevkifatı kodu (601–627); oran koda göre sistemce belirlenir. */
+  withholdingCode?: string
 }
 
 export interface CreateInvoiceInput {
@@ -18,6 +27,10 @@ export interface CreateInvoiceInput {
   buyerAddress?: string
   /** Alıcı vergi dairesi (opsiyonel; lookup_recipient sonucundan). */
   taxOffice?: string
+  /** Alıcı ülkesi; Türkiye dışıysa yurt dışı faturası kesilir. */
+  buyerCountry?: string
+  /** Alıcı şehri (yurt içi il veya yurt dışı şehir). */
+  buyerCity?: string
   items: InvoiceLineItem[]
   /** GG/AA/YYYY (Türkçe); GİB API'ye MM/DD/YYYY olarak dönüştürülür. */
   date?: string
@@ -27,6 +40,30 @@ export interface CreateInvoiceInput {
 }
 
 export type InvoiceDirection = 'outgoing' | 'incoming'
+
+export interface UserData {
+  taxIDOrTRID: string
+  title: string
+  name: string
+  surname: string
+  registryNo?: string
+  mersisNo?: string
+  taxOffice?: string
+  fullAddress?: string
+  buildingName?: string
+  buildingNumber?: string
+  doorNumber?: string
+  town?: string
+  district?: string
+  city?: string
+  zipCode?: string
+  country?: string
+  phoneNumber?: string
+  faxNumber?: string
+  email?: string
+  webSite?: string
+  businessCenter?: string
+}
 
 export interface InvoiceFactRow {
   gib_username: string
@@ -344,6 +381,8 @@ export type LocalDraftPreviewInput = {
     unit?: string
     unit_price?: number
     vat_rate?: number
+    vat_exemption_code?: string
+    withholding_code?: string
   }[]
 }
 
@@ -366,6 +405,11 @@ export function buildLocalDraftPreviewHtml(
     const net = qty * unitPrice
     const vat = Math.round(net * vatRate) / 100
     const gross = net + vat
+    const withholding = resolveTevkifatCode(item.withholding_code)
+    const withholdingAmount = withholding
+      ? Math.round(vat * withholding.numerator / withholding.denominator * 100) /
+        100
+      : 0
     return {
       name: item.name?.trim() || 'Kalem',
       qty,
@@ -375,12 +419,36 @@ export function buildLocalDraftPreviewHtml(
       net,
       vat,
       gross,
+      exemptionCode: item.vat_exemption_code?.trim() || '',
+      withholding,
+      withholdingAmount,
     }
   })
   const netTotal = rows.reduce((s, r) => s + r.net, 0)
   const vatTotal = rows.reduce((s, r) => s + r.vat, 0)
   const grossTotal = netTotal + vatTotal
+  const withholdingTotal = rows.reduce((s, r) => s + r.withholdingAmount, 0)
+  const payableTotal = grossTotal - withholdingTotal
   const buyer = [input.buyer_name, input.buyer_tax_id].filter(Boolean).join(' · ')
+
+  const exemptionNotes = [
+    ...new Set(rows.filter((r) => r.exemptionCode).map((r) => r.exemptionCode)),
+  ]
+    .map((code) => {
+      const name = resolveIstisnaName(code)
+      return `KDV istisnası: ${code}${name ? ` — ${name}` : ''}`
+    })
+    .join('<br/>')
+  const withholdingNotes = [
+    ...new Set(
+      rows
+        .filter((r) => r.withholding)
+        .map(
+          (r) =>
+            `KDV tevkifatı: ${r.withholding!.code} — ${r.withholding!.name} (${formatTevkifatRatio(r.withholding!)})`,
+        ),
+    ),
+  ].join('<br/>')
 
   const itemRows = rows
     .map(
@@ -389,7 +457,7 @@ export function buildLocalDraftPreviewHtml(
           <td>${escapeHtml(r.name)}</td>
           <td style="text-align:right">${r.qty} ${escapeHtml(r.unit)}</td>
           <td style="text-align:right">${formatTry(r.unitPrice)}</td>
-          <td style="text-align:right">%${r.vatRate}</td>
+          <td style="text-align:right">%${r.vatRate}${r.exemptionCode ? ` (istisna ${escapeHtml(r.exemptionCode)})` : ''}</td>
           <td style="text-align:right">${formatTry(r.gross)}</td>
         </tr>`,
     )
@@ -415,6 +483,8 @@ export function buildLocalDraftPreviewHtml(
     ${buyer ? `<div>Alıcı: ${escapeHtml(buyer)}</div>` : ''}
     ${input.date ? `<div>Tarih: ${escapeHtml(input.date)}</div>` : ''}
     <div>Para birimi: ${escapeHtml(currency)}</div>
+    ${exemptionNotes ? `<div>${exemptionNotes}</div>` : ''}
+    ${withholdingNotes ? `<div>${withholdingNotes}</div>` : ''}
   </div>
   <table>
     <thead><tr><th>Kalem</th><th style="text-align:right">Miktar</th><th style="text-align:right">Birim fiyat</th><th style="text-align:right">KDV</th><th style="text-align:right">Toplam</th></tr></thead>
@@ -423,6 +493,10 @@ export function buildLocalDraftPreviewHtml(
       <tr><td colspan="4">Ara toplam</td><td style="text-align:right">${formatTry(netTotal)} ${currency}</td></tr>
       <tr><td colspan="4">KDV</td><td style="text-align:right">${formatTry(vatTotal)} ${currency}</td></tr>
       <tr><td colspan="4">Genel toplam</td><td style="text-align:right">${formatTry(grossTotal)} ${currency}</td></tr>
+      ${withholdingTotal > 0
+        ? `<tr><td colspan="4">KDV tevkifatı (alıcı öder)</td><td style="text-align:right">−${formatTry(withholdingTotal)} ${currency}</td></tr>
+      <tr><td colspan="4">Ödenecek tutar</td><td style="text-align:right">${formatTry(payableTotal)} ${currency}</td></tr>`
+        : ''}
     </tfoot>
   </table>
 </body></html>`

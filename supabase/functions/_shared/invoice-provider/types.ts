@@ -35,6 +35,11 @@ export interface InvoiceProvider {
     draft: InvoiceDraftRef,
     options?: { resendInput?: CreateInvoiceInput },
   ): Promise<{ uuid: string; html: string }>
+  /** API taslağını siler (best-effort; taslak GİB'e gitmediği için güvenli). */
+  deleteDraftInvoice(
+    ctx: InvoiceProviderContext,
+    ettn: string,
+  ): Promise<void>
   getInvoicePreview(
     ctx: InvoiceProviderContext,
     params: {

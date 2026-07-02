@@ -11,7 +11,7 @@
     "ios:open": "open ios/finla.xcworkspace",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:chat": "deno test --no-check supabase/functions/chat/intents.test.ts supabase/functions/chat/date-range.test.ts supabase/functions/chat/invoice-workflow.test.ts supabase/functions/chat/chat-history.test.ts",
+    "test:chat": "deno test --no-check supabase/functions/chat/intents.test.ts supabase/functions/chat/date-range.test.ts supabase/functions/chat/invoice-workflow.test.ts supabase/functions/chat/chat-history.test.ts supabase/functions/chat/invoice-tax.test.ts",
     "maestro:login": "maestro test .maestro/flows/login.yaml",
     "maestro:smoke": "maestro test .maestro/flows/smoke.yaml",
     "maestro:chat": "maestro test .maestro/flows/chat-send.yaml",

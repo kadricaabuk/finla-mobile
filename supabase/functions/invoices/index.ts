@@ -6,7 +6,7 @@ import {
   syncFactsForSession,
   type InvoiceFactRow,
 } from '../_shared/invoice-facts.ts'
-import { mapInvoicesToFacts } from '../_shared/gib.ts'
+import { mapInvoicesToFacts } from '../_shared/invoice-mapper.ts'
 import {
   getInvoiceProvider,
   providerContextFromSession,

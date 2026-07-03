@@ -1,80 +1,11 @@
-export interface ChatAction {
-  type:
-    | 'open_invoices'
-    | 'open_invoice_detail'
-    | 'open_invoice_preview'
-    | 'open_sign_otp'
-    | 'open_excel_export'
-  label: string
-  filter?: {
-    startDate: string
-    endDate: string
-    customerName?: string
-    amountGte?: number
-    amountEq?: number
-    direction?: 'outgoing' | 'incoming'
-  }
-  invoice?: InvoiceDetailPayload
-  preview?: { title: string; html?: string; uuid?: string; issued?: boolean }
-  sign_otp?: { draftUuid: string; phoneMasked: string }
-  excel_export?: {
-    download_url: string
-    file_name: string
-    row_count: number
-    expires_in_seconds?: number
-  }
-}
+export type {
+  ChatAction,
+  InvoiceDetailPayload,
+} from "../_shared/chat-types.ts";
 
-export interface InvoiceSearchFilters {
-  customerName?: string
-  amountGte?: number
-  amountEq?: number
-}
+export type {
+  PendingInvoiceState,
+  PendingInvoiceStatus,
+} from "../_shared/invoice-workflow.ts";
 
-export type InvoiceDetailPayload = {
-  invoice_uuid: string
-  issue_date: string | null
-  status: string
-  currency: string
-  gross_total: number | null
-  vat_total: number | null
-  net_total: number | null
-  customer_tax_id: string | null
-  customer_name: string | null
-}
-
-export interface PendingInvoiceState {
-  status?: 'exchange_rate_pending' | 'preview_ready'
-  draft?: { date?: string; uuid?: string }
-  request?: {
-    buyer_name?: string
-    buyer_tax_id?: string
-    items?: { quantity?: number; unit_price?: number; vat_rate?: number }[]
-    currency?: string
-    date?: string
-    exchange_rate?: string
-  }
-  exchange_rate_quote?: {
-    currency: string
-    rate: string
-    rate_date: string
-    source: string
-    rate_type: string
-  }
-  preview_html?: string
-  signing?: {
-    status?: 'idle' | 'otp_sent' | 'otp_verified'
-    phone?: string
-    phone_masked?: string
-    operation_id?: string
-    otp_requested_at?: string
-    otp_verified_at?: string
-  }
-}
-
-export interface ToolContext {
-  username: string
-  conversationId: string
-  userMessage: string
-  filters: InvoiceSearchFilters
-}
+export type { InvoiceSearchFilters } from "../_shared/invoice-facts.ts";

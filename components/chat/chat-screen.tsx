@@ -2,7 +2,6 @@ import ChatInput from "@/components/chat-input";
 import { ChatMessageBubble } from "@/components/chat/chat-message-bubble";
 import { InvoiceDetailModal } from "@/components/chat/invoice-detail-modal";
 import { InvoicePreviewModal } from "@/components/chat/invoice-preview-modal";
-import { SignOtpModal } from "@/components/chat/sign-otp-modal";
 import { useChatScreen } from "@/components/chat/use-chat-screen";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
@@ -17,6 +16,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import Animated from "react-native-reanimated";
@@ -39,23 +39,14 @@ export default function ChatScreen() {
     detailInvoice,
     previewAction,
     confirmingDraftUuid,
-    signOtpAction,
-    signOtpCode,
-    signOtpPhone,
-    verifyingSignOtp,
-    requestingSignOtp,
     openingConversationId,
     setDetailAction,
     setPreviewAction,
-    setSignOtpCode,
-    setSignOtpPhone,
     handleSend,
+    handleCancelStream,
     handleConfirmFromPreview,
-    handleVerifySignOtp,
-    handleRequestSignOtp,
     handleNewChat,
     handleOpenConversation,
-    dismissSignOtp,
   } = useChatScreen();
 
   const handleShareExcelExport = useCallback(
@@ -158,6 +149,15 @@ export default function ChatScreen() {
         </View>
 
         <ChatInput disabled={loading || streaming} onSend={handleSend} />
+        {streaming && (
+          <TouchableOpacity
+            style={styles.cancelStreamBtn}
+            onPress={handleCancelStream}
+            accessibilityLabel="Yanıtı durdur"
+          >
+            <Text style={styles.cancelStreamText}>Durdur</Text>
+          </TouchableOpacity>
+        )}
       </Animated.View>
 
       <InvoiceDetailModal
@@ -170,20 +170,6 @@ export default function ChatScreen() {
         action={previewAction}
         conversationId={conversationId}
         onClose={() => setPreviewAction(null)}
-      />
-
-      <SignOtpModal
-        action={signOtpAction}
-        signOtpCode={signOtpCode}
-        signOtpPhone={signOtpPhone}
-        verifyingSignOtp={verifyingSignOtp}
-        requestingSignOtp={requestingSignOtp}
-        onChangeCode={setSignOtpCode}
-        onChangePhone={setSignOtpPhone}
-        onVerify={handleVerifySignOtp}
-        onResend={() => handleRequestSignOtp(false)}
-        onUpdatePhoneAndSend={() => handleRequestSignOtp(true)}
-        onDismiss={dismissSignOtp}
       />
     </SafeAreaView>
   );
@@ -237,5 +223,16 @@ const styles = StyleSheet.create({
   loadingBubble: {
     paddingVertical: 12,
     paddingHorizontal: 18,
+  },
+  cancelStreamBtn: {
+    alignSelf: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginBottom: 4,
+  },
+  cancelStreamText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
   },
 });

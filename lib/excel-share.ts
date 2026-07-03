@@ -8,13 +8,12 @@ import {
   downloadAsync,
 } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { resolvePublicApiUrls } from "@/lib/dev-api-host";
 
 /** Supabase yerel/production gateway kökü — imzayı `kong` yerine bununla uyumlu yaparız. */
 function supabaseGatewayOriginFromEnv(): string | null {
-  const tries = [
-    process.env.EXPO_PUBLIC_API_BASE_URL,
-    process.env.EXPO_PUBLIC_SUPABASE_URL,
-  ];
+  const { apiBaseUrl, supabaseUrl } = resolvePublicApiUrls();
+  const tries = [apiBaseUrl, supabaseUrl];
   for (const rawUntrimmed of tries) {
     const raw = (rawUntrimmed ?? "").trim();
     if (!raw) continue;

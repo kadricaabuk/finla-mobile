@@ -1,13 +1,18 @@
-import { loadFeatureFlags } from '../_shared/feature-config.ts'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import { createClient } from 'npm:@supabase/supabase-js'
 import {
-  faturaGetInvoicesIssuedToMe,
-  faturaListInvoices,
-  mapInvoicesToFacts,
-} from '../_shared/gib.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
-import { normalizeTurkish } from '../_shared/turkish.ts'
+  filterGibInvoicesByFacts,
+  filterInvoiceFacts,
+  syncFactsForSession,
+  type InvoiceFactRow,
+} from '../_shared/invoice-facts.ts'
+import { mapInvoicesToFacts } from '../_shared/invoice-mapper.ts'
+import {
+  getInvoiceProvider,
+  providerContextFromSession,
+} from '../_shared/invoice-provider/index.ts'
+import { sortInvoicesByDate } from '../_shared/invoice-list-sort.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -19,32 +24,18 @@ Deno.serve(async (req: Request) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
-    const features = await loadFeatureFlags()
+    const session = await requireFinlaSession(req)
     const body = await req.json() as {
       startDate?: string
       endDate?: string
       customerName?: string
       amountGte?: number
       amountEq?: number
-      /** outgoing = kestiğim; incoming = bana kesilen (gelen) */
       direction?: 'outgoing' | 'incoming'
     }
     const { startDate, endDate, customerName, amountGte, amountEq } = body
-    const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
-
-    if (direction === 'outgoing' && !features.outgoingInvoices) {
-      return Response.json(
-        { error: 'Giden fatura listesi bu sürümde kapalı.' },
-        { status: 403, headers: corsHeaders },
-      )
-    }
-    if (direction === 'incoming' && !features.incomingInvoices) {
-      return Response.json(
-        { error: 'Gelen fatura listesi bu sürümde kapalı.' },
-        { status: 403, headers: corsHeaders },
-      )
-    }
+    const direction =
+      body.direction === 'incoming' ? 'incoming' : 'outgoing'
 
     if (!startDate || !endDate) {
       return Response.json(
@@ -53,12 +44,18 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const invoices = (
+    const provider = getInvoiceProvider()
+    const ctx = providerContextFromSession(session)
+    const scopeKey = session.userId
+    const invoices =
       direction === 'incoming'
-        ? await faturaGetInvoicesIssuedToMe(username, startDate, endDate)
-        : await faturaListInvoices(username, startDate, endDate)
-    ) as unknown[]
-    const facts = mapInvoicesToFacts(username, invoices, direction)
+        ? await provider.listIncomingInvoices(ctx, startDate, endDate)
+        : await provider.listOutgoingInvoices(ctx, startDate, endDate)
+    const facts = mapInvoicesToFacts(scopeKey, invoices, direction).map((row) => ({
+      ...row,
+      user_id: session.userId,
+      tenant_vkn: session.tenantVkn ?? null,
+    }))
     if (facts.length > 0) {
       const { error: upsertError } = await supabase
         .from('invoice_facts')
@@ -66,35 +63,26 @@ Deno.serve(async (req: Request) => {
       if (upsertError) console.error('invoice_facts upsert failed', upsertError)
     }
 
-    const hasCustomer = typeof customerName === 'string' && customerName.trim().length > 0
-    const hasAmountGte = typeof amountGte === 'number' && Number.isFinite(amountGte)
-    const hasAmountEq = typeof amountEq === 'number' && Number.isFinite(amountEq)
+    const filters = { customerName, amountGte, amountEq }
+    const factRows = facts as InvoiceFactRow[]
+    const hasFilters = Boolean(
+      (typeof customerName === 'string' && customerName.trim().length > 0) ||
+        (typeof amountGte === 'number' && Number.isFinite(amountGte)) ||
+        (typeof amountEq === 'number' && Number.isFinite(amountEq)),
+    )
+    const matchedFacts = hasFilters
+      ? filterInvoiceFacts(factRows, filters)
+      : factRows
+    const filteredInvoices = hasFilters
+      ? filterGibInvoicesByFacts(invoices, matchedFacts)
+      : invoices
 
-    let filteredInvoices = invoices
-    if (hasCustomer || hasAmountGte || hasAmountEq) {
-      const normalizedCustomer = hasCustomer ? normalizeTurkish(customerName) : ''
-      const eqTolerance = 0.5
-      const matched = facts
-        .filter((f) => {
-          if (hasCustomer) {
-            const candidate = normalizeTurkish(f.customer_name ?? '')
-            if (!candidate.includes(normalizedCustomer)) return false
-          }
-          const amount = f.gross_total ?? f.net_total ?? 0
-          if (hasAmountGte && amount < amountGte) return false
-          if (hasAmountEq && Math.abs(amount - amountEq) > eqTolerance) return false
-          return true
-        })
-        .map((f) => f.invoice_uuid)
-      const matchedSet = new Set(matched)
-      filteredInvoices = (invoices as Array<Record<string, unknown>>).filter((i) => {
-        const ettn = typeof i.ettn === 'string' ? i.ettn : ''
-        const docNo = typeof i.belgeNumarasi === 'string' ? i.belgeNumarasi : ''
-        return matchedSet.has(ettn) || matchedSet.has(docNo)
-      })
-    }
-
-    return Response.json({ invoices: filteredInvoices, synced: facts.length }, { headers: corsHeaders })
+    return Response.json({
+      invoices: sortInvoicesByDate(
+        filteredInvoices as Record<string, unknown>[],
+      ),
+      synced: facts.length,
+    }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {
       return Response.json({ error: err.message }, { status: err.status, headers: corsHeaders })

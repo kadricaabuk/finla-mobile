@@ -105,7 +105,14 @@ export async function putInvoiceCacheEntry(
   await persistInvoiceCache(accessToken);
 }
 
-/** Called on logout: drop disk + RAM so another user cannot see stale lists. */
+export async function invalidateInvoiceCacheEntry(
+  accessToken: string,
+  rangeKey: string,
+): Promise<void> {
+  await hydrateInvoiceCache(accessToken);
+  syncCache.delete(rangeKey);
+  await persistInvoiceCache(accessToken);
+}
 export async function invalidateInvoiceCaches(
   accessToken: string | null,
 ): Promise<void> {

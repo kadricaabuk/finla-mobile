@@ -1,12 +1,14 @@
 import InvoicesScreen from "@/components/invoices/invoices-screen";
-import { useMainAppShell } from "@/contexts/main-app-shell-context";
-import { Redirect } from "expo-router";
 
-/** Gelen faturalar (adıma kesilen). */
 export default function IncomingInvoicesRoute() {
-  const { features } = useMainAppShell();
-  if (!features.incomingInvoices) {
-    return <Redirect href="/" />;
-  }
-  return <InvoicesScreen invoiceDirection="incoming" />;
+  return (
+    <InvoicesScreen
+      direction="incoming"
+      title="Gelen Faturalar"
+      emptyHint="Bu dönemde gelen fatura bulunamadı."
+      activeScreen="incoming-invoices"
+      shellOwnerId="screen-incoming-invoices"
+      titleTestId="incoming-invoices-title"
+    />
+  );
 }

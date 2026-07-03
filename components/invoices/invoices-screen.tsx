@@ -1,13 +1,22 @@
+import {
+  IncomingInvoiceResponseModal,
+  type IncomingInvoiceResponseRequest,
+} from "@/components/invoices/incoming-invoice-response-modal";
 import { InvoiceFiltersBar } from "@/components/invoices/invoice-filters-bar";
 import { InvoiceRowCard } from "@/components/invoices/invoice-row-card";
 import { useInvoicesScreen } from "@/components/invoices/use-invoices-screen";
+import {
+  InvoicePreviewModal,
+  type InvoicePreviewRequest,
+} from "@/components/chat/invoice-preview-modal";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
+import type { MainShellActiveScreen } from "@/contexts/main-app-shell-context";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import type { InvoiceDatePreset } from "@/lib/invoice-date-presets";
 import type { InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -17,19 +26,44 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
-const INVOICES_SHELL_OWNER_ID = "screen-invoices";
-const INCOMING_SHELL_OWNER_ID = "screen-incoming-invoices";
+export type InvoicesScreenProps = {
+  direction?: InvoiceListDirection;
+  title?: string;
+  emptyHint?: string;
+  activeScreen?: MainShellActiveScreen;
+  shellOwnerId?: string;
+  titleTestId?: string;
+};
 
-export interface InvoicesScreenProps {
-  invoiceDirection?: InvoiceListDirection;
-}
+const OUTGOING_DEFAULTS: Required<
+  Pick<
+    InvoicesScreenProps,
+    "direction" | "title" | "emptyHint" | "activeScreen" | "shellOwnerId" | "titleTestId"
+  >
+> = {
+  direction: "outgoing",
+  title: "Giden Faturalar",
+  emptyHint: "Bu dönemde giden fatura bulunamadı.",
+  activeScreen: "invoices",
+  shellOwnerId: "screen-outgoing-invoices",
+  titleTestId: "outgoing-invoices-title",
+};
 
-export default function InvoicesScreen({
-  invoiceDirection = "outgoing",
-}: InvoicesScreenProps) {
+export default function InvoicesScreen(props: InvoicesScreenProps = {}) {
+  const direction = props.direction ?? OUTGOING_DEFAULTS.direction;
+  const headerTitle = props.title ?? OUTGOING_DEFAULTS.title;
+  const emptyHint = props.emptyHint ?? OUTGOING_DEFAULTS.emptyHint;
+  const activeScreen = props.activeScreen ?? OUTGOING_DEFAULTS.activeScreen;
+  const shellOwnerId = props.shellOwnerId ?? OUTGOING_DEFAULTS.shellOwnerId;
+  const titleTestId = props.titleTestId ?? OUTGOING_DEFAULTS.titleTestId;
+
   const { openMenu } = useMainAppShell();
+  const insets = useSafeAreaInsets();
   const {
     preset,
     setPreset,
@@ -44,33 +78,20 @@ export default function InvoicesScreen({
     refreshing,
     error,
     fetchInvoices,
+    afterIncomingInboxAction,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
-  } = useInvoicesScreen({ invoiceDirection });
-
-  const shellOwnerId =
-    invoiceDirection === "incoming"
-      ? INCOMING_SHELL_OWNER_ID
-      : INVOICES_SHELL_OWNER_ID;
-  const headerTitle =
-    invoiceDirection === "incoming" ? "Gelen faturalar" : "Faturalarım";
-  const emptyHint =
-    invoiceDirection === "incoming"
-      ? "Bu dönemde gelen fatura bulunamadı."
-      : "Bu dönemde fatura bulunamadı.";
+  } = useInvoicesScreen({ direction });
 
   const sideMenuBindings = useMemo(
     () => ({
-      activeScreen:
-        invoiceDirection === "incoming"
-          ? ("incoming_invoices" as const)
-          : ("invoices" as const),
+      activeScreen,
       openingConversationId: null,
       activeConversationId: null,
       onNewChat: handleDrawerNewChat,
       onOpenConversation: handleDrawerOpenConversation,
     }),
-    [handleDrawerNewChat, handleDrawerOpenConversation, invoiceDirection],
+    [activeScreen, handleDrawerNewChat, handleDrawerOpenConversation],
   );
 
   useRegisterMainShellSideMenu(shellOwnerId, sideMenuBindings);
@@ -88,6 +109,18 @@ export default function InvoicesScreen({
     setChatFilterInfoOpen(false);
   };
 
+  const [previewRequest, setPreviewRequest] =
+    useState<InvoicePreviewRequest | null>(null);
+  const [responseRequest, setResponseRequest] =
+    useState<IncomingInvoiceResponseRequest | null>(null);
+
+  const handleInvoiceResponded = useCallback(
+    (result: Parameters<typeof afterIncomingInboxAction>[0]) => {
+      void afterIncomingInboxAction(result);
+    },
+    [afterIncomingInboxAction],
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
@@ -97,7 +130,7 @@ export default function InvoicesScreen({
           onPress={openMenu}
           accessibilityLabel="Menü"
         />
-        <Text testID="invoices-title" style={styles.title} numberOfLines={1}>
+        <Text testID={titleTestId} style={styles.title} numberOfLines={1}>
           {headerTitle}
         </Text>
         <View style={styles.headerRight}>
@@ -147,9 +180,19 @@ export default function InvoicesScreen({
           data={invoices}
           keyExtractor={(item, i) => item.ettn ?? String(i)}
           renderItem={({ item }) => (
-            <InvoiceRowCard item={item} listDirection={invoiceDirection} />
+            <InvoiceRowCard
+              item={item}
+              listDirection={direction}
+              onOpenPreview={setPreviewRequest}
+              onOpenIncomingResponse={
+                direction === "incoming" ? setResponseRequest : undefined
+              }
+            />
           )}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: 24 + insets.bottom },
+          ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -168,6 +211,15 @@ export default function InvoicesScreen({
           }
         />
       )}
+      <InvoicePreviewModal
+        request={previewRequest}
+        onClose={() => setPreviewRequest(null)}
+      />
+      <IncomingInvoiceResponseModal
+        request={responseRequest}
+        onClose={() => setResponseRequest(null)}
+        onSuccess={handleInvoiceResponded}
+      />
     </SafeAreaView>
   );
 }
@@ -215,7 +267,6 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 16,
     paddingTop: 4,
-    paddingBottom: 24,
     gap: 10,
     flexGrow: 1,
   },

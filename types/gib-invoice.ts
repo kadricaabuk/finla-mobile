@@ -1,3 +1,5 @@
+import type { IncomingInvoiceDisplayStatus } from "@/types/incoming-invoice";
+
 /** Liste modu: kesilen (outgoing) vs adıma kesilen gelen (incoming). */
 export type InvoiceListDirection = "outgoing" | "incoming";
 
@@ -14,6 +16,7 @@ export interface GIBInvoice {
   belgeTarihi?: string;
   malhizmetToplamTutari?: string | number;
   vergilerDahilToplamTutar?: string | number;
-  onayDurumu?: string;
+  /** Gelen listede portal hizalı: Yanıt Bekleniyor | Kabul | Red | İptal */
+  onayDurumu?: IncomingInvoiceDisplayStatus | string;
   [key: string]: unknown;
 }

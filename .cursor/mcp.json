@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "fatura": {
-      "command": "node",
-      "args": ["../fatura-mcp/dist/index.js"]
-    },
     "maestro": {
       "command": "/opt/homebrew/bin/maestro",
       "args": ["mcp"]

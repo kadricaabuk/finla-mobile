@@ -3,12 +3,7 @@ import SideMenu from "@/components/side-menu";
 import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
-import {
-  getFeaturesConfig,
-  getUserProfile,
-  type UserProfile,
-} from "@/lib/supabase";
-import { DEFAULT_FEATURES, type FinlaFeatures } from "@/types/features";
+import { getUserProfile, type UserProfile } from "@/lib/supabase";
 import type { PropsWithChildren } from "react";
 import {
   createContext,
@@ -20,17 +15,24 @@ import {
 } from "react";
 import { StyleSheet, View } from "react-native";
 
+export type MainShellActiveScreen =
+  | "chat"
+  | "invoices"
+  | "incoming-invoices"
+  | "profile";
+
 export interface MainShellSideMenuBindings {
   onNewChat: () => void;
   onOpenConversation?: (id: string) => void | Promise<void>;
   openingConversationId?: string | null;
   activeConversationId?: string | null;
-  activeScreen?: "chat" | "invoices" | "incoming_invoices" | "profile";
+  activeScreen?: MainShellActiveScreen;
 }
 
 interface MainAppShellContextValue {
   sessionLabel: string;
-  features: FinlaFeatures;
+  userProfile: UserProfile | null;
+  refreshUserProfile: () => Promise<void>;
   openMenu: () => void;
   closeMenu: () => void;
   registerSideMenu: (
@@ -66,9 +68,8 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   const [menuRegistration, setMenuRegistration] =
     useState<ShellMenuRegistration | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [features, setFeatures] = useState<FinlaFeatures>(DEFAULT_FEATURES);
 
-  const fetchUserProfile = useCallback(async () => {
+  const refreshUserProfile = useCallback(async () => {
     try {
       const res = await getUserProfile();
       setUserProfile(res.profile);
@@ -77,23 +78,13 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
-  const fetchFeatures = useCallback(async () => {
-    try {
-      const res = await getFeaturesConfig();
-      setFeatures(res.features);
-    } catch {
-      setFeatures(DEFAULT_FEATURES);
-    }
-  }, []);
-
   useEffect(() => {
     if (!bootstrapped || !sessionLabel) {
       setUserProfile(null);
-      setFeatures(DEFAULT_FEATURES);
       return;
     }
-    void Promise.all([fetchUserProfile(), fetchFeatures()]);
-  }, [bootstrapped, fetchFeatures, fetchUserProfile, sessionLabel]);
+    void refreshUserProfile();
+  }, [bootstrapped, refreshUserProfile, sessionLabel]);
 
   const registerSideMenu = useCallback(
     (owner: string, bindings: MainShellSideMenuBindings) => {
@@ -117,16 +108,17 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
 
   const onPullRefreshConversations = useCallback(
     () =>
-      Promise.all([refreshConversationList("pull"), fetchUserProfile()]).then(
+      Promise.all([refreshConversationList("pull"), refreshUserProfile()]).then(
         () => undefined,
       ),
-    [fetchUserProfile, refreshConversationList],
+    [refreshUserProfile, refreshConversationList],
   );
 
   const ctx = useMemo<MainAppShellContextValue>(
     () => ({
       sessionLabel: sessionLabel!,
-      features,
+      userProfile,
+      refreshUserProfile,
       openMenu,
       closeMenu,
       registerSideMenu,
@@ -135,12 +127,13 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     }),
     [
       closeMenu,
-      features,
       openMenu,
       refreshList,
+      refreshUserProfile,
       registerSideMenu,
       sessionLabel,
       unregisterSideMenu,
+      userProfile,
     ],
   );
 
@@ -176,7 +169,6 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
         activeConversationId={bindings.activeConversationId}
         activeScreen={bindings.activeScreen}
         userProfile={userProfile}
-        features={features}
       />
     </MainAppShellContext.Provider>
   );

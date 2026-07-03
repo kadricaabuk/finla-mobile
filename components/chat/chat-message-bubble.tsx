@@ -1,5 +1,4 @@
 import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
-import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
@@ -37,12 +36,12 @@ export function ChatMessageBubble({
   onConfirmPreview,
   onShareExcelExport,
 }: ChatMessageBubbleProps) {
-  const { features } = useMainAppShell();
   const pending = Boolean(streamPending && msg.role === "assistant");
+  const messageText = msg.text ?? "";
   const showStreamStatusBubble =
     msg.role === "assistant" &&
     pending &&
-    msg.text.trim().length === 0;
+    messageText.trim().length === 0;
 
   if (showStreamStatusBubble) {
     const label =
@@ -77,41 +76,38 @@ export function ChatMessageBubble({
       style={bubbleStyles}
     >
       {msg.role === "user" ? (
-        <Text style={[styles.bubbleText, styles.userText]}>{msg.text}</Text>
-      ) : hasMarkdownTable(msg.text) ? (
+        <Text style={[styles.bubbleText, styles.userText]}>{messageText}</Text>
+      ) : hasMarkdownTable(messageText) ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={markdownWrap}>
-            <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+            <Markdown style={chatMarkdownStyles}>{messageText}</Markdown>
           </View>
         </ScrollView>
       ) : (
         <View style={markdownWrap}>
-          <Markdown style={chatMarkdownStyles}>{msg.text}</Markdown>
+          <Markdown style={chatMarkdownStyles}>{messageText || " "}</Markdown>
         </View>
       )}
-      {msg.role === "assistant" && msg.action?.type === "open_invoices" &&
-        (msg.action?.filter?.direction === "incoming"
-          ? features.incomingInvoices
-          : features.outgoingInvoices) && (
+      {msg.role === "assistant" && msg.action?.type === "open_invoices" && (
         <TouchableOpacity
           style={styles.actionButton}
           activeOpacity={0.8}
           onPress={() => {
-            const incoming =
-              msg.action?.filter?.direction === "incoming";
+            const filter = msg.action?.filter;
+            const isIncoming = filter?.direction === "incoming";
             router.push({
-              pathname: incoming ? "/incoming-invoices" : "/invoices",
+              pathname: isIncoming ? "/incoming-invoices" : "/outgoing-invoices",
               params: {
-                startDate: msg.action?.filter?.startDate,
-                endDate: msg.action?.filter?.endDate,
-                customerName: msg.action?.filter?.customerName,
+                startDate: filter?.startDate,
+                endDate: filter?.endDate,
+                customerName: filter?.customerName,
                 amountGte:
-                  typeof msg.action?.filter?.amountGte === "number"
-                    ? String(msg.action.filter.amountGte)
+                  typeof filter?.amountGte === "number"
+                    ? String(filter.amountGte)
                     : undefined,
                 amountEq:
-                  typeof msg.action?.filter?.amountEq === "number"
-                    ? String(msg.action.filter.amountEq)
+                  typeof filter?.amountEq === "number"
+                    ? String(filter.amountEq)
                     : undefined,
                 source: "chat",
               },
@@ -119,12 +115,14 @@ export function ChatMessageBubble({
           }}
         >
           <Text style={styles.actionButtonText}>
-            {msg.action.label || "Faturaları Gör"}
+            {msg.action.label ||
+              (msg.action.filter?.direction === "incoming"
+                ? "Gelen Faturaları Gör"
+                : "Giden Faturaları Gör")}
           </Text>
         </TouchableOpacity>
       )}
-      {features.outgoingInvoices &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_invoice_detail" &&
         msg.action.invoice && (
           <TouchableOpacity
@@ -137,8 +135,7 @@ export function ChatMessageBubble({
             </Text>
           </TouchableOpacity>
         )}
-      {(features.outgoingInvoices || features.incomingInvoices) &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_excel_export" &&
         msg.action.excel_export?.download_url &&
         typeof onShareExcelExport === "function" && (
@@ -154,8 +151,7 @@ export function ChatMessageBubble({
             </Text>
           </TouchableOpacity>
         )}
-      {(features.outgoingInvoices || features.incomingInvoices) &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_excel_export" &&
         !msg.action.excel_export?.download_url && (
           <Text style={styles.expiredHint} numberOfLines={2}>
@@ -163,11 +159,16 @@ export function ChatMessageBubble({
             isteyebilirsin.
           </Text>
         )}
-      {features.outgoingInvoices &&
-        msg.role === "assistant" &&
+      {msg.role === "assistant" &&
         msg.action?.type === "open_invoice_preview" &&
         (msg.action.preview?.html || msg.action.preview?.uuid) && (
-          <View style={styles.actionRow}>
+          <View
+            style={
+              msg.action.preview?.issued === false
+                ? styles.actionRow
+                : undefined
+            }
+          >
             <TouchableOpacity
               style={styles.actionButton}
               activeOpacity={0.8}
@@ -177,22 +178,24 @@ export function ChatMessageBubble({
                 {msg.action.label || "Faturayı Gör"}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.actionConfirmButton,
-                confirmingDraftUuid === msg.action.preview?.uuid &&
-                  styles.actionConfirmButtonDisabled,
-              ]}
-              activeOpacity={0.8}
-              disabled={confirmingDraftUuid === msg.action.preview?.uuid}
-              onPress={() => onConfirmPreview(msg.action?.preview?.uuid)}
-            >
-              <Text style={styles.actionConfirmButtonText}>
-                {confirmingDraftUuid === msg.action.preview?.uuid
-                  ? "Onaylanıyor..."
-                  : "Onayla ve Kes"}
-              </Text>
-            </TouchableOpacity>
+            {msg.action.preview?.issued === false ? (
+              <TouchableOpacity
+                style={[
+                  styles.actionConfirmButton,
+                  confirmingDraftUuid === msg.action.preview?.uuid &&
+                    styles.actionConfirmButtonDisabled,
+                ]}
+                activeOpacity={0.8}
+                disabled={confirmingDraftUuid === msg.action.preview?.uuid}
+                onPress={() => onConfirmPreview(msg.action?.preview?.uuid)}
+              >
+                <Text style={styles.actionConfirmButtonText}>
+                  {confirmingDraftUuid === msg.action.preview?.uuid
+                    ? "Onaylanıyor..."
+                    : "Onayla ve Kes"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         )}
     </View>

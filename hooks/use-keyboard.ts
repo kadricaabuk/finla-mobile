@@ -7,12 +7,26 @@ import {
 } from "react-native";
 import {
   Easing,
+  useAnimatedKeyboard,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 
 const KEYBOARD_PADDING_OPEN = 12;
+
+const IS_ANDROID = Platform.OS === "android";
+
+/**
+ * Android edge-to-edge'de (SDK 54'te zorunlu) adjustResize çalışmaz ve
+ * keyboardDidShow güvenilir değildir; klavye yüksekliğini UI thread'de
+ * kare kare veren useAnimatedKeyboard kullanılır. Bayraklar edge-to-edge
+ * için gerekli, yoksa yükseklik status/navigation bar kadar kayar.
+ */
+const ANDROID_KEYBOARD_OPTIONS = {
+  isStatusBarTranslucentAndroid: true,
+  isNavigationBarTranslucentAndroid: true,
+} as const;
 
 function mapKeyboardEasing(easing?: string) {
   switch (easing) {
@@ -69,12 +83,13 @@ function keyboardOverlapBottom(e: KeyboardEvent): number {
  */
 export function useKeyboardAvoidancePadding() {
   const pad = useSharedValue(0);
+  const keyboard = useAnimatedKeyboard(ANDROID_KEYBOARD_OPTIONS);
 
   useEffect(() => {
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    if (IS_ANDROID) return;
+
+    const showEvent = "keyboardWillShow";
+    const hideEvent = "keyboardWillHide";
 
     const onShow = (evt: KeyboardEvent) => {
       const h = keyboardOverlapBottom(evt);
@@ -101,7 +116,7 @@ export function useKeyboardAvoidancePadding() {
   }, [pad]);
 
   return useAnimatedStyle(() => ({
-    paddingBottom: pad.value,
+    paddingBottom: IS_ANDROID ? keyboard.height.value : pad.value,
   }));
 }
 
@@ -116,6 +131,7 @@ export function useAnimatedChatInputPadding(
 ) {
   const paddingBottom = useSharedValue(safeBottom);
   const keyboardOpenRef = useRef(false);
+  const keyboard = useAnimatedKeyboard(ANDROID_KEYBOARD_OPTIONS);
 
   useEffect(() => {
     if (!keyboardOpenRef.current) {
@@ -124,10 +140,10 @@ export function useAnimatedChatInputPadding(
   }, [paddingBottom, safeBottom]);
 
   useEffect(() => {
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    if (IS_ANDROID) return;
+
+    const showEvent = "keyboardWillShow";
+    const hideEvent = "keyboardWillHide";
 
     const onShow = (e: KeyboardEvent) => {
       keyboardOpenRef.current = true;
@@ -154,7 +170,14 @@ export function useAnimatedChatInputPadding(
     };
   }, [openPadding, paddingBottom, safeBottom]);
 
-  return useAnimatedStyle(() => ({
-    paddingBottom: paddingBottom.value,
-  }));
+  return useAnimatedStyle(() => {
+    if (IS_ANDROID) {
+      const kb = keyboard.height.value;
+      return {
+        paddingBottom:
+          kb <= 0 ? safeBottom : Math.max(openPadding, safeBottom - kb),
+      };
+    }
+    return { paddingBottom: paddingBottom.value };
+  });
 }

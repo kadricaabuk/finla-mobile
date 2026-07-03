@@ -1,0 +1,44 @@
+/* Finla Design System — Token Definitions */
+
+:root {
+  /* Colors */
+  --finla-primary: #000000;
+  --finla-primary-text: #ffffff;
+  --finla-bg: #ffffff;
+  --finla-surface: #F2F2F2;
+  --finla-surface-alt: #FAFAFA;
+  --finla-border: #E0E0E0;
+  --finla-border-subtle: #F0F0F0;
+  --finla-muted: #ABABAB;
+  --finla-muted-dark: #666666;
+  --finla-link: #0066CC;
+  --finla-success: #22C55E;
+  --finla-success-bg: rgba(34, 197, 94, 0.12);
+  --finla-error: #EF4444;
+  --finla-error-bg: rgba(239, 68, 68, 0.12);
+  --finla-warning: #F59E0B;
+  --finla-warning-bg: rgba(245, 158, 11, 0.12);
+  --finla-accent: #E6F4FE;
+
+  /* Typography */
+  --finla-font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, sans-serif;
+
+  /* Border radius */
+  --finla-radius-xs: 6px;
+  --finla-radius-sm: 8px;
+  --finla-radius-md: 12px;
+  --finla-radius-lg: 14px;
+  --finla-radius-xl: 20px;
+  --finla-radius-full: 9999px;
+
+  /* Shadows */
+  --finla-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --finla-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --finla-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --finla-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.16);
+}
+
+/* Global reset for DS components */
+*, *::before, *::after {
+  box-sizing: border-box;
+}

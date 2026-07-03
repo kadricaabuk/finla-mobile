@@ -1,4 +1,4 @@
-import { useMainAppShell } from "@/contexts/main-app-shell-context";
+import { useDrawerChatNavigation } from "@/hooks/use-drawer-chat-navigation";
 import {
   invoiceRangeForPreset,
   type InvoiceDatePreset,
@@ -7,20 +7,35 @@ import {
 import {
   getInvoiceCacheEntry,
   hydrateInvoiceCache,
+  invalidateInvoiceCacheEntry,
   INVOICES_CACHE_TTL_MS,
   putInvoiceCacheEntry,
 } from "@/lib/invoices-cache";
+import { sortGibInvoicesByDate } from "@/lib/sort-gib-invoices";
 import { getTokens } from "@/lib/session";
 import { callApi, userFacingApiError } from "@/lib/supabase";
-import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
-import { router, useLocalSearchParams } from "expo-router";
+import type { GIBInvoice } from "@/types/gib-invoice";
+import type { InvoicesListResponse } from "@/types/api-responses";
+import type { InvoiceListDirection } from "@/types/gib-invoice";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
-export function useInvoicesScreen(options?: {
-  invoiceDirection?: InvoiceListDirection;
-}) {
-  const invoiceDirection = options?.invoiceDirection ?? "outgoing";
-  const { closeMenu } = useMainAppShell();
+export type IncomingInboxActionResult = {
+  invoiceUuid: string;
+  status: "accepted" | "rejected";
+  statusLabel?: string;
+};
+
+export type UseInvoicesScreenOptions = {
+  direction?: InvoiceListDirection;
+};
+
+export function useInvoicesScreen(
+  options: UseInvoicesScreenOptions = {},
+) {
+  const direction = options.direction ?? "outgoing";
+  const { handleDrawerNewChat, handleDrawerOpenConversation } =
+    useDrawerChatNavigation();
 
   const params = useLocalSearchParams<{
     startDate?: string;
@@ -54,14 +69,14 @@ export function useInvoicesScreen(options?: {
       if (!tokens) return;
 
       const range = rangeOverride ?? invoiceRangeForPreset(p);
-      const cacheKey = `${invoiceDirection}|${range.startDate}|${range.endDate}`;
+      const cacheKey = `${direction}|${range.startDate}|${range.endDate}`;
 
       await hydrateInvoiceCache(tokens.accessToken);
 
       if (!isRefresh && !chatFilters) {
         const cached = getInvoiceCacheEntry(cacheKey);
         if (cached && Date.now() - cached.fetchedAt < INVOICES_CACHE_TTL_MS) {
-          setInvoices(cached.data as GIBInvoice[]);
+          setInvoices(sortGibInvoicesByDate(cached.data as GIBInvoice[]));
           setError(null);
           return;
         }
@@ -71,22 +86,20 @@ export function useInvoicesScreen(options?: {
         setRefreshing(true);
       } else {
         setLoading(true);
+        setInvoices([]);
       }
       setError(null);
 
       try {
-        const res = await callApi<{
-          invoices: GIBInvoice[];
-          error?: string;
-        }>("invoices", {
+        const res = await callApi<InvoicesListResponse>("invoices", {
           ...range,
-          direction: invoiceDirection,
+          direction,
           customerName: chatFilters?.customerName,
           amountGte: chatFilters?.amountGte,
           amountEq: chatFilters?.amountEq,
         });
         if (res.error) throw new Error(res.error);
-        const data = res.invoices ?? [];
+        const data = sortGibInvoicesByDate(res.invoices ?? []);
         setInvoices(data);
         if (!chatFilters)
           await putInvoiceCacheEntry(tokens.accessToken, cacheKey, data);
@@ -98,7 +111,39 @@ export function useInvoicesScreen(options?: {
         setRefreshing(false);
       }
     },
-    [chatFilters, invoiceDirection],
+    [chatFilters, direction],
+  );
+
+  const patchInvoiceOnayDurumu = useCallback(
+    (invoiceUuid: string, onayDurumu: string) => {
+      setInvoices((prev) =>
+        sortGibInvoicesByDate(
+          prev.map((inv) =>
+            inv.ettn === invoiceUuid ? { ...inv, onayDurumu } : inv,
+          ),
+        ),
+      );
+    },
+    [],
+  );
+
+  const afterIncomingInboxAction = useCallback(
+    async (result: IncomingInboxActionResult) => {
+      const label =
+        result.statusLabel ??
+        (result.status === "accepted" ? "Kabul" : "Red");
+      patchInvoiceOnayDurumu(result.invoiceUuid, label);
+
+      const tokens = await getTokens();
+      if (tokens) {
+        const range = customRange ?? invoiceRangeForPreset(preset);
+        const cacheKey = `${direction}|${range.startDate}|${range.endDate}`;
+        await invalidateInvoiceCacheEntry(tokens.accessToken, cacheKey);
+      }
+
+      await fetchInvoices(preset, customRange ?? undefined, true);
+    },
+    [patchInvoiceOnayDurumu, preset, customRange, direction, fetchInvoices],
   );
 
   useEffect(() => {
@@ -142,30 +187,7 @@ export function useInvoicesScreen(options?: {
     void fetchInvoices(preset, customRange ?? undefined);
   }, [preset, customRange, fetchInvoices]);
 
-  const handleDrawerNewChat = useCallback(() => {
-    closeMenu();
-    router.replace({
-      pathname: "/",
-      params: { resetKey: String(Date.now()) },
-    });
-  }, [closeMenu]);
-
-  const handleDrawerOpenConversation = useCallback(
-    (id: string) => {
-      closeMenu();
-      router.replace({
-        pathname: "/",
-        params: {
-          loadConversationId: id,
-          loadKey: String(Date.now()),
-        },
-      });
-    },
-    [closeMenu],
-  );
-
   return {
-    invoiceDirection,
     preset,
     setPreset,
     customRange,
@@ -179,9 +201,8 @@ export function useInvoicesScreen(options?: {
     refreshing,
     error,
     fetchInvoices,
+    afterIncomingInboxAction,
     handleDrawerNewChat,
     handleDrawerOpenConversation,
   };
 }
-
-export type { InvoiceListDirection };

@@ -4,6 +4,7 @@ import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import type { UserProfile } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { useMemo, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -15,9 +16,14 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 const PROFILE_SHELL_OWNER_ID = "screen-profile";
+
+const APP_VERSION = Constants.expoConfig?.version ?? "";
 
 function displayName(p: UserProfile): string {
   const t = p.title?.trim();
@@ -107,6 +113,7 @@ function Section({
 
 export default function ProfileScreen() {
   const { openMenu } = useMainAppShell();
+  const insets = useSafeAreaInsets();
   const {
     profile,
     loading,
@@ -184,7 +191,10 @@ export default function ProfileScreen() {
       ) : profile ? (
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.scrollInner}
+          contentContainerStyle={[
+            styles.scrollInner,
+            { paddingBottom: 24 + insets.bottom },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -340,6 +350,10 @@ export default function ProfileScreen() {
               </Text>
             </TouchableOpacity>
           )}
+
+          {APP_VERSION ? (
+            <Text style={styles.versionText}>finla v{APP_VERSION}</Text>
+          ) : null}
         </ScrollView>
       ) : null}
     </SafeAreaView>
@@ -386,7 +400,6 @@ const styles = StyleSheet.create({
   },
   scrollInner: {
     paddingHorizontal: 16,
-    paddingBottom: 40,
   },
   hero: {
     alignItems: "center",
@@ -523,5 +536,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: "#fff",
+  },
+  versionText: {
+    marginTop: 24,
+    textAlign: "center",
+    fontSize: 12,
+    color: "#ABABAB",
   },
 });

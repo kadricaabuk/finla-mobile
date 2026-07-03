@@ -1,12 +1,12 @@
 import { createClient } from 'npm:@supabase/supabase-js'
-import { loadFeatureFlags } from '../_shared/feature-config.ts'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import {
   createInvoicesExcelExport,
   type InvoiceExportFilters,
 } from '../_shared/invoices-excel-export.ts'
+import { parseAmount } from '../_shared/invoice-facts.ts'
 import {
-  getSubjectFromAuthHeader,
+  requireFinlaSession,
   SessionAuthError,
 } from '../_shared/session-auth.ts'
 
@@ -15,25 +15,15 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 )
 
-function parseAmount(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value !== 'string') return null
-  const normalized = value.replace(/\./g, '').replace(',', '.').trim()
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
 Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
-    const features = await loadFeatureFlags()
+    const session = await requireFinlaSession(req)
     const body = await req.json() as {
       startDate?: string
       endDate?: string
-      direction?: 'outgoing' | 'incoming'
       customerName?: string
       amountGte?: number | string
       amountEq?: number | string
@@ -44,21 +34,6 @@ Deno.serve(async (req: Request) => {
       return Response.json(
         { error: 'startDate ve endDate zorunludur (GG/AA/YYYY).' },
         { status: 400, headers: corsHeaders },
-      )
-    }
-
-    const direction = body.direction === 'incoming' ? 'incoming' : 'outgoing'
-
-    if (direction === 'outgoing' && !features.outgoingInvoices) {
-      return Response.json(
-        { error: 'Giden fatura dışa aktarma kapalı.' },
-        { status: 403, headers: corsHeaders },
-      )
-    }
-    if (direction === 'incoming' && !features.incomingInvoices) {
-      return Response.json(
-        { error: 'Gelen fatura dışa aktarma kapalı.' },
-        { status: 403, headers: corsHeaders },
       )
     }
 
@@ -73,10 +48,10 @@ Deno.serve(async (req: Request) => {
 
     const result = await createInvoicesExcelExport({
       supabase,
-      username,
+      session,
       startDateTr: startDate,
       endDateTr: endDate,
-      direction,
+      direction: 'outgoing',
       filters,
     })
 

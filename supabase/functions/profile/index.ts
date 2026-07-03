@@ -1,12 +1,9 @@
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 import {
-  extractGibUserDataStringPatch,
-  faturaGetUserData,
-  faturaUpdateUserData,
-  mergeGibUserDataPatch,
-  type UserData,
-} from '../_shared/gib.ts'
-import { getSubjectFromAuthHeader, SessionAuthError } from '../_shared/session-auth.ts'
+  getUserProfile,
+  updateUserProfile,
+} from '../_shared/profile-service.ts'
+import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -17,7 +14,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse
 
   try {
-    const username = await getSubjectFromAuthHeader(req)
+    const session = await requireFinlaSession(req)
 
     let body: unknown = {}
     try {
@@ -27,18 +24,14 @@ Deno.serve(async (req) => {
     }
 
     const updates = isRecord(body) ? body['updates'] : undefined
-    const picked =
-      isRecord(updates) ? extractGibUserDataStringPatch(updates) : {}
+    const picked = isRecord(updates) ? updates : {}
 
     if (Object.keys(picked).length > 0) {
-      const current = (await faturaGetUserData(username)) as UserData
-      const merged = mergeGibUserDataPatch(current, picked)
-      await faturaUpdateUserData(username, merged)
-      const profile = (await faturaGetUserData(username)) as UserData
+      const profile = await updateUserProfile(session, picked)
       return Response.json({ profile }, { headers: corsHeaders })
     }
 
-    const profile = await faturaGetUserData(username)
+    const profile = await getUserProfile(session)
     return Response.json({ profile }, { headers: corsHeaders })
   } catch (err) {
     if (err instanceof SessionAuthError) {

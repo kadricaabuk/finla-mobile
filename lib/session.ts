@@ -49,8 +49,21 @@ export async function clearLegacyCredentials(): Promise<void> {
   }
 }
 
-/** Decode JWT payload without verification (display-only; sub = GİB username) */
+/** Decode JWT payload without verification (display-only) */
 export function decodeJwtSub(accessToken: string): string | null {
+  const claims = decodeJwtClaims(accessToken)
+  return claims?.phone ?? claims?.sub ?? null
+}
+
+export interface FinlaJwtClaims {
+  sub?: string
+  phone?: string
+  tenant_vkn?: string
+  tenant_name?: string
+  onboarding_status?: string
+}
+
+export function decodeJwtClaims(accessToken: string): FinlaJwtClaims | null {
   try {
     const parts = accessToken.split('.')
     if (parts.length !== 3) return null
@@ -58,8 +71,7 @@ export function decodeJwtSub(accessToken: string): string | null {
     const pad = payload.length % 4
     if (pad) payload += '='.repeat(4 - pad)
     const json = atob(payload)
-    const obj = JSON.parse(json) as { sub?: string }
-    return typeof obj.sub === 'string' ? obj.sub : null
+    return JSON.parse(json) as FinlaJwtClaims
   } catch {
     return null
   }

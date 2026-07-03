@@ -1,4 +1,4 @@
-import type { FinlaFeatures } from "@/types/features";
+import type { ConversationSummary } from "@/types/conversations";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useRef } from "react";
@@ -18,11 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MENU_WIDTH = 280;
 
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  created_at: string;
-}
+export type { ConversationSummary } from "@/types/conversations";
 
 interface SideMenuProps {
   isOpen: boolean;
@@ -38,15 +34,14 @@ interface SideMenuProps {
   openingConversationId?: string | null;
   activeConversationId?: string | null;
   logoutLoading?: boolean;
-  /** Faturalarım ekranındayken liste satırı yalnızca menüyü kapatır. */
-  activeScreen?: "chat" | "invoices" | "incoming_invoices" | "profile";
+  /** Giden / gelen fatura ekranındayken liste satırı yalnızca menüyü kapatır. */
+  activeScreen?: "chat" | "invoices" | "incoming-invoices" | "profile";
   userProfile?: {
     taxIDOrTRID?: string;
     title?: string;
     name?: string;
     surname?: string;
   } | null;
-  features: FinlaFeatures;
 }
 
 function formatConvDate(iso: string): string {
@@ -78,7 +73,6 @@ export default function SideMenu({
   activeConversationId = null,
   activeScreen = "chat",
   userProfile = null,
-  features,
 }: SideMenuProps) {
   const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -187,71 +181,65 @@ export default function SideMenu({
             </View>
           </TouchableOpacity>
 
-          {features.outgoingInvoices ? (
-            <TouchableOpacity
-              testID="side-menu-outgoing-invoices"
-              style={[
-                styles.navBtn,
-                activeScreen === "invoices" && styles.navBtnCurrent,
-              ]}
-              onPress={() => {
-                if (activeScreen === "invoices") {
-                  onClose();
-                  return;
-                }
+          <TouchableOpacity
+            testID="side-menu-outgoing-invoices"
+            style={[
+              styles.navBtn,
+              activeScreen === "invoices" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "invoices") {
                 onClose();
-                router.push("/invoices");
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="document-text-outline" size={18} color="#000" />
-              <Text style={styles.navBtnLabel}>Faturalarım</Text>
-            </TouchableOpacity>
-          ) : null}
+                return;
+              }
+              onClose();
+              router.push("/outgoing-invoices");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-up-circle-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Giden Faturalar</Text>
+          </TouchableOpacity>
 
-          {features.incomingInvoices ? (
-            <TouchableOpacity
-              testID="side-menu-incoming-invoices"
-              style={[
-                styles.navBtn,
-                activeScreen === "incoming_invoices" && styles.navBtnCurrent,
-              ]}
-              onPress={() => {
-                if (activeScreen === "incoming_invoices") {
-                  onClose();
-                  return;
-                }
+          <TouchableOpacity
+            testID="side-menu-incoming-invoices"
+            style={[
+              styles.navBtn,
+              activeScreen === "incoming-invoices" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "incoming-invoices") {
                 onClose();
-                router.push("/incoming-invoices");
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="download-outline" size={18} color="#000" />
-              <Text style={styles.navBtnLabel}>Gelen Faturalar</Text>
-            </TouchableOpacity>
-          ) : null}
+                return;
+              }
+              onClose();
+              router.push("/incoming-invoices");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-down-circle-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Gelen Faturalar</Text>
+          </TouchableOpacity>
 
-          {features.profile ? (
-            <TouchableOpacity
-              testID="side-menu-profile"
-              style={[
-                styles.navBtn,
-                activeScreen === "profile" && styles.navBtnCurrent,
-              ]}
-              onPress={() => {
-                if (activeScreen === "profile") {
-                  onClose();
-                  return;
-                }
+          <TouchableOpacity
+            testID="side-menu-profile"
+            style={[
+              styles.navBtn,
+              activeScreen === "profile" && styles.navBtnCurrent,
+            ]}
+            onPress={() => {
+              if (activeScreen === "profile") {
                 onClose();
-                router.push("/profile");
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="person-outline" size={18} color="#000" />
-              <Text style={styles.navBtnLabel}>Profil</Text>
-            </TouchableOpacity>
-          ) : null}
+                return;
+              }
+              onClose();
+              router.push("/profile");
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="person-outline" size={18} color="#000" />
+            <Text style={styles.navBtnLabel}>Profil</Text>
+          </TouchableOpacity>
 
           {onOpenConversation ? (
             <View style={styles.convSection}>

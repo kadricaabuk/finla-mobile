@@ -44,3 +44,17 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Design sync — generated / machine state
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+
+# env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

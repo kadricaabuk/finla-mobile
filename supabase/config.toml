@@ -39,8 +39,11 @@ enabled = true
 policy = "oneshot"
 inspector_port = 8083
 
-# Login / refresh — Expo yanlış anon key ile gelse bile gateway'de patlamasın (yerel + hosted karışımı).
-[functions.login]
+# Auth / refresh — Expo yanlış anon key ile gelse bile gateway'de patlamasın (yerel + hosted karışımı).
+[functions.auth]
+verify_jwt = false
+
+[functions.mysoft-smoke]
 verify_jwt = false
 
 [functions.refresh]

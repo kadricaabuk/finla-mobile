@@ -1,5 +1,4 @@
 import type Anthropic from 'npm:@anthropic-ai/sdk'
-import type { FinlaFeatures } from './feature-config.ts'
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -83,7 +82,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'fatura.js üzerinden e-Arşiv için fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez.',
+      'Mysoft üzerinden e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
     input_schema: {
       type: 'object',
       properties: {
@@ -94,11 +93,20 @@ export const TOOLS: Anthropic.Tool[] = [
         buyer_tax_id: {
           type: 'string',
           description:
-            'Alıcının TC Kimlik No veya Vergi Kimlik No (opsiyonel). Kullanıcı TCKN/VKN vermek istemezse bu alanı gönderme.',
+            'Alıcının TC Kimlik No veya Vergi Kimlik No. Yurt içi alıcı için zorunlu; yurt dışı alıcıda gönderme. Tevkifatlı faturada zorunlu.',
         },
         buyer_address: {
           type: 'string',
           description: 'Alıcının adresi (opsiyonel)',
+        },
+        buyer_country: {
+          type: 'string',
+          description:
+            'Alıcının ülkesi. Yurt dışı faturada zorunlu (ör. Almanya, ABD). Türkiye içinse gönderme.',
+        },
+        buyer_city: {
+          type: 'string',
+          description: 'Alıcının şehri (opsiyonel; yurt dışında önerilir)',
         },
         tax_office: {
           type: 'string',
@@ -124,8 +132,29 @@ export const TOOLS: Anthropic.Tool[] = [
               },
               vat_rate: {
                 type: 'number',
-                description: 'KDV oranı: 0, 1, 10 veya 20',
+                description:
+                  'KDV oranı: 0, 1, 10 veya 20. 0 seçilirse vat_exemption_code zorunlu.',
                 enum: [0, 1, 10, 20],
+              },
+              vat_exemption_code: {
+                type: 'string',
+                description:
+                  'KDV %0 ise zorunlu GİB istisna kodu. Yaygın: 302 hizmet ihracatı (yurt dışına hizmet), 303 roaming, 311 uluslararası taşımacılık, 312 diplomatik, 350 diğerleri, 351 istisna olmayan diğer. Mal ihracatı (301) desteklenmez. Emin değilsen kullanıcıya istisna sebebini sor.',
+              },
+              withholding_code: {
+                type: 'string',
+                description:
+                  'KDV tevkifat kodu (kısmi tevkifat 601–627). Ör: 601 yapım işleri 4/10, 602 danışmanlık/etüt 9/10, 606 işgücü temini 9/10, 612 temizlik 9/10, 624 yük taşımacılığı 2/10, 625 ticari reklam 3/10. Oran sistemce koda göre KDV üzerinden hesaplanır. Kullanıcı kod belirtmezse işlem türünü sorup doğru kodu netleştir.',
+              },
+              discount_rate: {
+                type: 'number',
+                description:
+                  'Satır iskonto yüzdesi (0-100). discount_amount ile birlikte gönderme. KDV, iskonto sonrası matrahtan hesaplanır.',
+              },
+              discount_amount: {
+                type: 'number',
+                description:
+                  'Satır iskonto tutarı (fatura para biriminde). discount_rate ile birlikte gönderme.',
               },
             },
             required: ['name', 'quantity', 'unit', 'unit_price', 'vat_rate'],
@@ -134,6 +163,16 @@ export const TOOLS: Anthropic.Tool[] = [
         date: {
           type: 'string',
           description: 'Fatura tarihi GG/AA/YYYY formatında. Belirtilmezse bugünün tarihi kullanılır.',
+        },
+        due_date: {
+          type: 'string',
+          description:
+            'Vade (son ödeme) tarihi GG/AA/YYYY formatında (opsiyonel). Kullanıcı "30 gün vadeli" derse fatura tarihinden hesapla ve onayda belirt.',
+        },
+        note: {
+          type: 'string',
+          description:
+            'Fatura üzerinde görünecek serbest not (opsiyonel, ör. IBAN, sipariş referansı, açıklama).',
         },
         currency: {
           type: 'string',
@@ -145,6 +184,26 @@ export const TOOLS: Anthropic.Tool[] = [
           description:
             'Onaylanmış kur: 1 birim dövizin TL karşılığı. Belirtilmezse TCMB kuru otomatik çekilir ve kullanıcı onayı istenir.',
         },
+        replace_existing_draft: {
+          type: 'boolean',
+          description:
+            'Bekleyen taslak varken kullanıcı değişiklik isterse true gönder: eski taslak silinir, yenisi oluşturulur.',
+        },
+        return_ref_invoice_no: {
+          type: 'string',
+          description:
+            'İade faturası: iade edilen orijinal faturanın belge numarası (16 karakter, ör. ABC2026000000123). Verilirse fatura İADE tipinde kesilir. Numarayı UYDURMA; list_invoices (gelen) sonucundan al veya kullanıcıdan iste.',
+        },
+        return_ref_invoice_date: {
+          type: 'string',
+          description:
+            'İade edilen orijinal faturanın tarihi GG/AA/YYYY. return_ref_invoice_no ile birlikte zorunlu.',
+        },
+        return_reason: {
+          type: 'string',
+          description:
+            'İade sebebi (fatura üzerinde referans notu olarak görünür, ör. "Ürün hasarlı geldi"). İade faturasında kullanıcıya sorulması önerilir.',
+        },
       },
       required: ['buyer_name', 'items'],
     },
@@ -152,7 +211,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'confirm_invoice_issue',
     description:
-      'Hazır bekleyen fatura taslağını onaylayıp resmen keser. Sadece kullanıcı açıkça onay verdiyse çağır.',
+      'Hazır bekleyen fatura taslağını onaylayıp Mysoft üzerinden GİB\'e gönderir (sendDraftInvoiceToGIB). Kullanıcı açıkça onay verdiyse çağır; SMS doğrulama gerekmez.',
     input_schema: {
       type: 'object',
       properties: {},
@@ -160,39 +219,9 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'request_invoice_sign_otp',
-    description:
-      'Onay bekleyen taslak fatura için GİB imzalama SMS kodu gönderir. Telefon belirtilmezse kullanıcı profilindeki numarayı kullanır.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        phone: {
-          type: 'string',
-          description: 'Opsiyonel telefon numarası (başında 0 veya ülke koduyla olabilir)',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'verify_invoice_sign_otp',
-    description:
-      'İmzalama için gelen SMS OTP kodunu doğrular. Başarılı doğrulamadan sonra fatura kesimi yapılabilir.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description: 'Kullanıcının SMS ile aldığı doğrulama kodu',
-        },
-      },
-      required: ['code'],
-    },
-  },
-  {
     name: 'list_invoices',
     description:
-      'fatura.js (GİB e-Arşiv) sistemindeki faturaları listeler. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, dün) aralık belirlenir.',
+      'Giden ve/veya gelen faturaları listeler. direction belirtilmezse her iki yön sorgulanır. Tarih: bugün, bu ay, geçen ay, dün vb. Yanıt: { count, start_date, end_date, direction, invoices } veya direction=both iken incoming/outgoing dilimleri.',
     input_schema: {
       type: 'object',
       properties: {
@@ -216,37 +245,11 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'number',
           description: 'Opsiyonel yaklaşık eşit tutar filtresi',
         },
-      },
-      required: [],
-    },
-  },
-    {
-    name: 'list_invoices_received',
-    description:
-      'GİB e-Arşivde bana kesilen (gelen) e-faturaları listeler — getAllInvoicesIssuedToMeByDateRange. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay) aralık belirlenir. Kesilen (müşteriye) faturalar için list_invoices kullan.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        start_date: {
+        direction: {
           type: 'string',
-          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
-        },
-        end_date: {
-          type: 'string',
-          description: 'Bitiş tarihi GG/AA/YYYY formatında',
-        },
-        customer_name: {
-          type: 'string',
+          enum: ['outgoing', 'incoming'],
           description:
-            'Opsiyonel tedarikçi/gönderici adı veya unvan filtresi (faturayı kesen taraf)',
-        },
-        amount_gte: {
-          type: 'number',
-          description: 'Opsiyonel alt tutar filtresi (>=)',
-        },
-        amount_eq: {
-          type: 'number',
-          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+            'outgoing: kestiğin giden faturalar; incoming: sana gelen (gider) faturalar. Varsayılan: outgoing',
         },
       },
       required: [],
@@ -255,45 +258,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'export_invoices_excel',
     description:
-      'Fatura listesini Excel (.xlsx) olarak üretir; kullanıcı sohbette indirip paylaşabilir. Kesilen (müşteriye) veya gelen (bana kesilen) faturalar için direction kullan. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, son 1 ay) aralık belirlenir. Excel, csv veya dışa aktarma istenen her durumda bu aracı tercih et.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        start_date: {
-          type: 'string',
-          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
-        },
-        end_date: {
-          type: 'string',
-          description: 'Bitiş tarihi GG/AA/YYYY formatında',
-        },
-        direction: {
-          type: 'string',
-          enum: ['outgoing', 'incoming'],
-          description:
-            'outgoing = kestiğim faturalar; incoming = gelen (bana kesilen) faturalar',
-        },
-        customer_name: {
-          type: 'string',
-          description:
-            'Opsiyonel cari adı/unvan filtresi (yön outgoing ise müşteri, incoming ise gönderici)',
-        },
-        amount_gte: {
-          type: 'number',
-          description: 'Opsiyonel alt tutar filtresi (>=)',
-        },
-        amount_eq: {
-          type: 'number',
-          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'invoice_totals',
-    description:
-      'Onaylı faturalar için toplam satış, toplam KDV ve net tutar özetini getirir. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
+      'Kestiğin fatura listesini Excel (.xlsx) olarak üretir; kullanıcı sohbette indirip paylaşabilir. Tarih verilmezse kullanıcı ifadesinden (ör. bu ay, son 1 ay) aralık belirlenir. Excel, csv veya dışa aktarma istenen her durumda bu aracı tercih et.',
     input_schema: {
       type: 'object',
       properties: {
@@ -308,6 +273,80 @@ export const TOOLS: Anthropic.Tool[] = [
         customer_name: {
           type: 'string',
           description: 'Opsiyonel müşteri adı/unvan filtresi',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: kestiğin giden faturalar; incoming: sana gelen faturalar. Varsayılan: outgoing',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'invoice_totals',
+    description:
+      'Belirtilen yönde onaylı/kabul edilmiş faturalar için toplam tutar, KDV ve net özetini getirir. outgoing = satış/gelir; incoming = gider/borç. Tarih verilmezse kullanıcı ifadesinden aralık belirlenir.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel müşteri adı/unvan filtresi',
+        },
+        amount_gte: {
+          type: 'number',
+          description: 'Opsiyonel alt tutar filtresi (>=)',
+        },
+        amount_eq: {
+          type: 'number',
+          description: 'Opsiyonel yaklaşık eşit tutar filtresi',
+        },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: satış toplamı; incoming: gider/borç toplamı. Varsayılan: outgoing',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'invoice_financial_summary',
+    description:
+      'Tek çağrıda gelen (gider) ve giden (gelir) fatura toplamlarını ve net farkı getirir. Kar/zarar veya gider-gelir özeti istendiğinde kullan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: {
+          type: 'string',
+          description: 'Başlangıç tarihi GG/AA/YYYY formatında',
+        },
+        end_date: {
+          type: 'string',
+          description: 'Bitiş tarihi GG/AA/YYYY formatında',
+        },
+        customer_name: {
+          type: 'string',
+          description: 'Opsiyonel cari adı/unvan filtresi',
         },
         amount_gte: {
           type: 'number',
@@ -348,6 +387,12 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'number',
           description: 'Opsiyonel yaklaşık eşit tutar filtresi',
         },
+        direction: {
+          type: 'string',
+          enum: ['outgoing', 'incoming'],
+          description:
+            'outgoing: en son kestiğin fatura; incoming: sana gelen en son fatura. Varsayılan: outgoing',
+        },
       },
       required: [],
     },
@@ -355,146 +400,151 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'cancel_invoice',
     description:
-      'Taslak durumundaki bir faturayı ETTN numarasıyla iptal eder. Önce list_invoices ile ETTN numarasını öğren.',
+      'Fatura veya bekleyen taslağı iptal eder. Sohbette bekleyen taslak varsa ETTN vermeden çağrılabilir (taslak silinir). Kesilmiş fatura için önce list_invoices ile ETTN öğren.',
     input_schema: {
       type: 'object',
       properties: {
         ettn: {
           type: 'string',
-          description: 'İptal edilecek faturanın ETTN numarası',
+          description:
+            'İptal edilecek faturanın ETTN numarası. Bekleyen taslak iptalinde boş bırakılabilir.',
         },
         reason: {
           type: 'string',
           description: 'İptal sebebi',
         },
       },
-      required: ['ettn'],
+      required: [],
     },
   },
 ]
 
-/** `FEATURES` bayraklarına göre Claude sistem mesajını üretir. */
-export function assembleSystemPrompt(f: FinlaFeatures): string {
-  const previewHints: string[] = []
-  if (f.outgoingInvoices) {
-    previewHints.push(
-      'önce latest_invoice ile ETTN/UUID bağlamını netleştir ve kullanıcıyı çıkan önizleme / paylaşım adımına yönlendir',
-    )
-  }
-  if (f.incomingInvoices) {
-    previewHints.push('gelen fatura sorularında list_invoices_received sonucundan yararlan')
-  }
-  const previewSuffix = previewHints.length > 0
-    ? previewHints.join('; ') + '.'
-    : 'uygulama bağlam oluştuğunda HTML önizleme sunabilir.'
+/** Claude sistem mesajını üretir (tüm araçlar ve yanıt sözleşmesi kuralları dahil). */
+export function assembleSystemPrompt(): string {
   const previewBlock =
-    `Önizleme / PDF: Kullanıcı faturanın tam görünümünü, PDF veya önizleme isterse uygulama sohbette düğümle HTML önizleme ve paylaşılabilir çıktı sunar (GİB HTML). PDF veya önizlemenin uygulamada mümkün olmadığını söyleme — ${previewSuffix}`
+    `Önizleme / PDF: Kullanıcı faturanın tam görünümünü, PDF veya önizleme isterse uygulama sohbette düğümle HTML önizleme ve paylaşılabilir çıktı sunar (GİB HTML). PDF veya önizlemenin uygulamada mümkün olmadığını söyleme — önce latest_invoice ile ETTN/UUID bağlamını netleştir ve kullanıcıyı çıkan önizleme / paylaşım adımına yönlendir.`
 
-  const capabilityLines: string[] = []
-  if (f.outgoingInvoices) {
-    capabilityLines.push('- Fatura oluşturma (create_invoice)')
-    capabilityLines.push('- TCMB döviz kuru (get_exchange_rate)')
-    capabilityLines.push('- Fatura kesim onayı (confirm_invoice_issue)')
-    capabilityLines.push('- İmzalama SMS gönderimi (request_invoice_sign_otp)')
-    capabilityLines.push('- İmzalama SMS doğrulaması (verify_invoice_sign_otp)')
-    capabilityLines.push(
-      '- Fatura listeleme — kestiğin faturalar (list_invoices)',
-    )
-    capabilityLines.push('- Toplam satış/KDV özeti (invoice_totals)')
-    capabilityLines.push('- Son faturayı bulma (latest_invoice)')
-    capabilityLines.push('- Fatura iptal etme (cancel_invoice)')
-    capabilityLines.push('- Alıcı bilgisi sorgulama (lookup_recipient)')
-  }
-  if (f.incomingInvoices) {
-    capabilityLines.push(
-      '- Gelen faturaları listeleme — sana kesilen e-faturalar (list_invoices_received)',
-    )
-  }
-  if (f.outgoingInvoices || f.incomingInvoices) {
-    capabilityLines.push(
-      '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv veya dışarı aktarma isterse bu araçla .xlsx üret (direction ile giden/gelen seç)',
-    )
-  }
-  if (f.profile) {
-    capabilityLines.push('- Kullanıcı profil bilgisi (get_user_profile)')
-    capabilityLines.push(
-      '- GİB profil kaydı güncelleme (update_user_profile)',
-    )
-  }
-
-  const ruleLines: string[] = [
-    '- Türkçe yanıt ver',
-    '- Kısa ve doğal konuşma dili kullan',
+  const capabilityLines = [
+    '- Fatura oluşturma (create_invoice)',
+    '- TCMB döviz kuru (get_exchange_rate)',
+    '- Fatura kesim onayı (confirm_invoice_issue — Mysoft sendDraftInvoiceToGIB)',
+    '- Fatura listeleme — yön belirtilmediyse her iki yön (list_invoices, direction opsiyonel; geçen ay / bu ay / bugün)',
+    '- Toplam satış/gider özeti (invoice_totals, direction: outgoing veya incoming)',
+    '- Gider + gelir + net özeti (invoice_financial_summary): kar/zarar, gider-gelir özeti',
+    '- Son faturayı bulma (latest_invoice): giden veya gelen; list_invoices değil',
+    '- Fatura iptal etme (cancel_invoice)',
+    '- Alıcı bilgisi sorgulama (lookup_recipient)',
+    '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv, rapor veya dışarı aktarma isterse bu araçla .xlsx üret',
+    '- Kullanıcı profil bilgisi (get_user_profile)',
+    '- GİB profil kaydı güncelleme (update_user_profile)',
   ]
 
-  if (f.profile) {
-    ruleLines.push(
-      `- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.`,
-    )
-    ruleLines.push(
-      `- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder`,
-    )
-  }
-  if (f.outgoingInvoices) {
-    ruleLines.push(
-      `- Fatura akışı: (1) create_invoice → taslak, (2) uygulama önizlemeyi açar, (3) kullanıcı onaylar → SMS imza`,
-    )
-    ruleLines.push(
-      `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
-    )
-    ruleLines.push(
-      `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı) özetle ve onay al`,
-    )
-    ruleLines.push(
-      `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
-    )
-    ruleLines.push(
-      `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
-    )
-    ruleLines.push(
-      `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,
-    )
-    ruleLines.push(
-      `- Birim alanında Türkçe yaz (adet, saat, kg); sistem GİB koduna çevirir`,
-    )
-    ruleLines.push(
-      `- lookup_recipient boş dönerse bu TEST ortamında normal olabilir; TCKN/VKN kayıtlı değil diye create_invoice hatasını açıklama`,
-    )
-    ruleLines.push(
-      `- create_invoice başarılı (preview_ready) ise taslak oluşmuştur; HTML önizleme alınamasa bile kullanıcı onaylayıp kesebilir`,
-    )
-    ruleLines.push(
-      `- create_invoice INVALID_INVOICE_DATA hatasında birim kodu veya tarih formatı sorunudur; alıcı kimlik numarasını suçlama`,
-    )
-    ruleLines.push(
-      `- confirm_invoice_issue çağrısından önce SMS doğrulama (request_invoice_sign_otp + verify_invoice_sign_otp) tamamlanmış olmalı`,
-    )
-  }
-  ruleLines.push('- Eksik bilgi varsa soru sor')
-  ruleLines.push(
+  const ruleLines = [
+    '- Türkçe yanıt ver',
+    '- Kısa ve doğal konuşma dili kullan',
+    `- İç araç/parametre adlarını (create_invoice, confirm_invoice_issue, vat_rate vb.) kullanıcıya ASLA yazma; "taslak oluşturuyorum", "faturayı kesiyorum" gibi doğal dil kullan`,
+    `- Vergi/mali müşavirlik tavsiyesi verme; tevkifat veya istisna uygulanıp uygulanmayacağından emin değilsen kullanıcıya (gerekirse muhasebecisine danışmasını söyleyerek) sor, asla varsayma`,
+    `- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.`,
+    `- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder`,
+    `- Fatura akışı: (1) create_invoice → Mysoft taslak (isSaveAsDraft), (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (Mysoft imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
+    `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
+    `- Bekleyen taslakta kullanıcı değişiklik isterse (tevkifat ekle, tutar değiştir vb.) create_invoice aracını replace_existing_draft=true ve GÜNCEL parametrelerle çağır; eski taslak otomatik silinir. "Taslak silinemiyor" deme`,
+    `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı, varsa tevkifat/istisna) özetle ve onay al`,
+    `- Tevkifat: kullanıcı tevkifatlı fatura isterse işlem türüne uygun kodu (601–627) netleştir; kalemde withholding_code gönder. Tevkifat tutarını KENDİN HESAPLAMA, sistem KDV üzerinden koda göre hesaplar. Tevkifat KDV'den kesilir, net tutardan değil. Alıcı VKN/TCKN zorunlu. Kullanıcı oran söylerse (ör. 9/10) koda uygunluğunu doğrula; uyuşmazsa kullanıcıyla netleştir`,
+    `- Tevkifat alt sınırı: KDV dahil tutar 12.000 TL ve altındaysa (2026) kısmi tevkifat genelde uygulanmaz (aynı güne ait aynı alıcı faturaları toplamı esas alınır); kullanıcıyı bilgilendir ama kararı ona bırak`,
+    `- KDV %0 fatura: mutlaka istisna sebebini öğren ve kalemde vat_exemption_code gönder. Yurt dışına HİZMET → 302 hizmet ihracatı + buyer_country. Mal ihracatı (gümrük beyannameli) desteklenmiyor; kullanıcıyı Mysoft portalına yönlendir`,
+    `- Yurt dışı alıcı: buyer_country ver, VKN/TCKN isteme; döviz cinsinden ise önce kur onayı akışını uygula`,
+    `- İskonto: kullanıcı indirim belirtirse kalemde discount_rate (yüzde) VEYA discount_amount (tutar) gönder; ikisini birden gönderme. KDV iskonto sonrası tutardan hesaplanır; onay özetinde iskontoyu ve matrahı belirt`,
+    `- Vadeli fatura: kullanıcı vade belirtirse due_date gönder; "X gün vadeli" ifadesini fatura tarihinden hesaplayıp onayda tarihi açıkça söyle`,
+    `- Fatura notu: kullanıcı faturaya not/IBAN/açıklama eklenmesini isterse note alanında gönder`,
+    `- İade faturası ("gelen faturayı iade et", "malı geri gönderiyorum"): SADECE bize kesilmiş (gelen) faturanın iadesi desteklenir. Akış: (1) orijinal faturayı gelen faturalardan bul (list_invoices direction=incoming) veya belge no + tarihi kullanıcıdan iste, (2) alıcı = orijinal faturayı KESEN taraf (gönderici ünvan + VKN), (3) kalemler iade edilen mal/hizmet, KDV oranları orijinaldekiyle AYNI olmalı, (4) iade sebebini sor ve return_reason ile gönder, (5) return_ref_invoice_no + return_ref_invoice_date ile create_invoice çağır. Kısmi iade serbest ama toplam orijinal fatura tutarını AŞAMAZ. Belge numarasını asla tahmin etme`,
+    `- İade faturasında tevkifat uygulanamaz (özel düzeltme kuralı); orijinal fatura tevkifatlıysa kullanıcıyı mali müşavirine yönlendir`,
+    `- Kendi kestiğimiz (giden) faturayı geri almak iade değil İPTAL veya alıcının iade faturası konusudur; kullanıcı bunu isterse cancel_invoice akışını veya karşı tarafın iade kesmesi gerektiğini anlat`,
+    `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
+    `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
+    `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,
+    `- Birim alanında Türkçe yaz (adet, saat, kg); sistem GİB koduna çevirir`,
+    `- lookup_recipient boş dönerse bu TEST ortamında normal olabilir; TCKN/VKN kayıtlı değil diye create_invoice hatasını açıklama`,
+    `- create_invoice başarılı (preview_ready) ise taslak oluşmuştur; HTML önizleme alınamasa bile kullanıcı onaylayıp kesebilir`,
+    `- create_invoice INVALID_INVOICE_DATA hatasında birim kodu veya tarih formatı sorunudur; alıcı kimlik numarasını suçlama`,
+    `- confirm_invoice_issue: kullanıcı onayladıysa doğrudan çağır; Mysoft sunucuda mali mühür imzasını yapar`,
+    '- Eksik bilgi varsa soru sor',
     '- Mali toplamları kendin tahmin etme; mümkünse araç çağrısı sonucu kullan',
-  )
-  ruleLines.push(
     '- Markdown tablo kullanma; sade cümleler veya kısa maddeler kullan',
-  )
-  ruleLines.push('- Tarih belirtilmemişse bugünün tarihini kullan')
-  ruleLines.push(
-    '- "Bu ay", "ayın başından beri", "dün", "geçen hafta" gibi ifadelerde tarih netleştirmesi isteme; doğrudan ilgili aracı çağır',
-  )
-  ruleLines.push('- Hata durumlarını kullanıcıya Türkçe açıkla')
+    '- Tarih belirtilmemişse bugünün tarihini kullan',
+  ]
 
-  let capabilitiesSection = ''
-  if (capabilityLines.length > 0) {
-    capabilitiesSection = `Yeteneklerin:\n${capabilityLines.join('\n')}\n\n`
-  }
+  const responseContract = [
+    `Yanıt stili:`,
+    `- Konuşma dili kullan; rapor/excel dili kullanma.`,
+    `- Zorunlu sabit başlıklar ("İstek", "Sonuç", "Tarih Aralığı", "Sonraki Adım") kullanma.`,
+    `- Gerekirse tarihi cümle içinde doğalca belirt.`,
+    `- Tutar/KDV gibi sayısal değerleri sadece araç sonucundan kullan; tahmin etme.`,
+    `- Markdown tablo kullanma; gerekiyorsa kısa madde listesi kullan.`,
+    `- Kullanıcı "bu ay", "ayın başından beri", "dün", "geçen hafta" derse tarih sormadan ilgili aracı çağır.`,
+    `- "gider", "borç", "harcama", "alış" → invoice_totals direction=incoming veya invoice_financial_summary.`,
+    `- "kazanç", "gelir", "satış", "kestiğim" → invoice_totals direction=outgoing.`,
+    `- "özet", "kar zarar", "gider ve gelir" → invoice_financial_summary.`,
+    `- "gelen fatura", "bana kesilen" → list_invoices direction=incoming.`,
+    `- Yön belirtilmeden "faturaları getir/listele" → list_invoices direction=both (giden+gelen).`,
+    `- "geçen ay" → bir önceki takvim ayı; "bu ay" → içinde bulunulan ay.`,
+    `- "son fatura", "en son fatura", "X'e son kestiğimiz fatura" → latest_invoice direction=outgoing; "gelen son fatura", "X'ten gelen" → direction=incoming.`,
+    `- Gelen fatura kabul/red işlemi chat'ten yapılmaz; kullanıcıyı Gelen Faturalar ekranına yönlendir.`,
+    `- Kullanıcı az önce konuşulan faturayı "göster", "pdf", "önizle" derse yeni liste açma; sohbet bağlamındaki son faturayı aç.`,
+    `- Müşteri adı birden fazla kişiye denk gelirse (ör. iki farklı "Ege") adayları listele ve hangisini istediğini sor.`,
+    `- Cevabı kısa tut (genelde 2-5 cümle).`,
+    ``,
+    `Fatura arama/filtreleme:`,
+    `- Fatura kesim akışı: (1) create_invoice ile Mysoft taslağı, (2) önizleme, (3) confirm_invoice_issue ile GİB'e gönderim.`,
+    `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR ÇAĞIRMA; kullanıcıya mevcut taslağı önizle.`,
+    `- Kullanıcı "taslağı gör", "önizle", "pdf" derse yeni taslak oluşturma; mevcut pending taslak varsa onu aç.`,
+    `- list_invoices aracından boş sonuç gelirse, kullanılan tarih ve filtre kriterlerini kullanıcıya bildir (örnek: "Ahmet için bu ay fatura bulunamadı").`,
+    `- Kullanıcı excel, csv, xlsx, "rapor oluştur" veya "dışarı aktar" isterse export_invoices_excel aracını çağır.`,
+    `- Fatura listesi getirince kullanılan tarih aralığını ve varsa filtreleri doğal şekilde belirt.`,
+    ``,
+    `Hata yönetimi (araç sonucunda "error_code" varsa):`,
+    `- INVALID_TAX_ID: "Bu VKN/TCKN geçersiz görünüyor, numarayı kontrol eder misin?" diye sor.`,
+    `- INVALID_DATE: "Tarih formatı yanlış — GG/AA/YYYY formatında girer misin?" de.`,
+    `- MISSING_EXCHANGE_RATE: USD/EUR fatura için get_exchange_rate ile TCMB kurunu göster veya kullanıcıdan kur iste.`,
+    `- EXCHANGE_RATE_CONFIRMATION: create_invoice "exchange_rate_confirmation" döndürürse TCMB kurunu özetle ve onay iste; onaydan sonra aynı parametrelerle exchange_rate göndererek create_invoice tekrar çağır.`,
+    `- EXCHANGE_RATE_UNAVAILABLE: TCMB'ye ulaşılamadı; biraz bekle veya manuel kur sor.`,
+    `- INVALID_INVOICE_DATA: Birim, kur veya alıcı bilgisinde sorun olabilir; kullanıcıdan eksik bilgiyi netleştir.`,
+    `- GIB_UNAVAILABLE: "GİB şu an yanıt vermiyor, biraz bekleyip tekrar deneyelim." de.`,
+    `- SESSION_EXPIRED: "Oturumun sona ermiş gibi görünüyor, uygulamayı kapatıp tekrar açmayı dene." de.`,
+    `- GIB_ERROR veya diğer: Hata mesajını doğal Türkçe ile özetle, kullanıcı ne yapması gerektiğini açıkla.`,
+    `- Hata sonrası ne yapılabileceğini mutlaka belirt; "tekrar deneyin" yerine somut adım öner.`,
+  ]
 
   const intro =
-    `Sen "finla" uygulamasının yapay zeka asistanısın. fatura.js entegrasyonu üzerinden GİB e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.`
+    `Sen "finla" uygulamasının yapay zeka asistanısın. Mysoft EDocument API (sandbox) üzerinden e-Fatura / e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.`
 
   return `${intro}
 
 ${previewBlock}
 
-${capabilitiesSection}Kurallar:
-${ruleLines.join('\n')}`
+Yeteneklerin:
+${capabilityLines.join('\n')}
+
+Kurallar:
+${ruleLines.join('\n')}
+
+${responseContract.join('\n')}`
+}
+
+export function filterToolsWithEphemeralPromptCacheLast(
+  allTools: Anthropic.Tool[],
+  names: Set<string>,
+): Anthropic.Tool[] {
+  const filtered = allTools.filter((t) => names.has(t.name));
+  if (filtered.length === 0) return filtered;
+  return filtered.map((t, i) =>
+    i === filtered.length - 1
+      ? {
+        ...t,
+        cache_control: {
+          type: "ephemeral",
+        } as Anthropic.CacheControlEphemeral,
+      }
+      : t
+  );
 }

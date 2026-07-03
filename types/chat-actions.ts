@@ -3,7 +3,6 @@ export interface ChatMessageAction {
     | "open_invoices"
     | "open_invoice_detail"
     | "open_invoice_preview"
-    | "open_sign_otp"
     | "open_excel_export";
   label: string;
   filter?: {
@@ -25,10 +24,10 @@ export interface ChatMessageAction {
     draftDate?: string;
     /** true = kesilmiş fatura HTML (signed); false = taslak önizleme */
     issued?: boolean;
-  };
-  sign_otp?: {
-    draftUuid: string;
-    phoneMasked: string;
+    /** outgoing = giden; incoming = gelen (PDF önizleme) */
+    direction?: "outgoing" | "incoming";
+    /** GİB önizleme başarısız — yerel özet HTML */
+    local_fallback?: boolean;
   };
   excel_export?: {
     download_url: string;

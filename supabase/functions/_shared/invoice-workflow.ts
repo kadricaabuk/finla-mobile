@@ -32,9 +32,16 @@ export interface PendingInvoiceState {
       vat_rate?: number;
       vat_exemption_code?: string;
       withholding_code?: string;
+      discount_rate?: number;
+      discount_amount?: number;
     }[];
     currency?: string;
     date?: string;
+    due_date?: string;
+    note?: string;
+    return_ref_invoice_no?: string;
+    return_ref_invoice_date?: string;
+    return_reason?: string;
     exchange_rate?: string;
   };
   exchange_rate_quote?: {
@@ -150,6 +157,11 @@ export function formatPendingInvoiceForPrompt(
       const ref = resolvePendingDraftRef(pending);
       const buyer = pending.request?.buyer_name?.trim();
       lines.push("Taslak fatura önizlemeye hazır; kesim onayı bekleniyor.");
+      if (pending.request?.return_ref_invoice_no?.trim()) {
+        lines.push(
+          `Bu bir İADE faturası (referans: ${pending.request.return_ref_invoice_no.trim()}).`,
+        );
+      }
       if (buyer) lines.push(`Alıcı: ${buyer}.`);
       if (ref) lines.push(`Taslak ETTN: ${ref.uuid}.`);
       lines.push(
@@ -199,6 +211,10 @@ export function pendingRequestToCreateInput(
       vatRate: i.vat_rate!,
       vatExemptionCode: i.vat_exemption_code?.trim() || undefined,
       withholdingCode: i.withholding_code?.trim() || undefined,
+      discountRate:
+        typeof i.discount_rate === "number" ? i.discount_rate : undefined,
+      discountAmount:
+        typeof i.discount_amount === "number" ? i.discount_amount : undefined,
     }));
 
   if (items.length === 0) return null;
@@ -212,6 +228,15 @@ export function pendingRequestToCreateInput(
     taxOffice: r.tax_office?.trim() || undefined,
     items,
     date: pending?.draft?.date?.trim() || r.date?.trim() || undefined,
+    dueDate: r.due_date?.trim() || undefined,
+    note: r.note?.trim() || undefined,
+    returnRef: r.return_ref_invoice_no?.trim()
+      ? {
+        invoiceNo: r.return_ref_invoice_no.trim().toUpperCase(),
+        invoiceDate: r.return_ref_invoice_date?.trim() || "",
+        reason: r.return_reason?.trim() || undefined,
+      }
+      : undefined,
     currency: (r.currency?.trim().toUpperCase() || "TRY") as "TRY" | "USD" | "EUR",
     currencyRate: r.exchange_rate?.trim() || undefined,
   };

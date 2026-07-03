@@ -33,9 +33,15 @@ import {
   validateInvoiceTaxFields,
 } from "../../_shared/gib-tax-codes.ts";
 import {
+  assertReturnMatchesOriginal,
+  computeLineAmounts,
+  findIncomingInvoiceByDocNo,
   normalizeCurrencyRate,
   summarizeGibInvoicePayload,
+  validateInvoiceLinePricing,
+  validateReturnRef,
   type CreateInvoiceInput,
+  type ReturnInvoiceRef,
 } from "../../_shared/invoice-mapper.ts";
 import {
   getUserProfile,
@@ -119,9 +125,31 @@ export function createInvoiceInputFromToolInput(
           typeof i.withholding_code === "string"
             ? i.withholding_code
             : undefined,
+        discountRate:
+          typeof i.discount_rate === "number" ? i.discount_rate : undefined,
+        discountAmount:
+          typeof i.discount_amount === "number" ? i.discount_amount : undefined,
       };
     }),
     date: typeof input.date === "string" ? input.date : undefined,
+    dueDate: typeof input.due_date === "string" ? input.due_date : undefined,
+    note: typeof input.note === "string" ? input.note : undefined,
+    returnRef:
+      typeof input.return_ref_invoice_no === "string" &&
+        input.return_ref_invoice_no.trim()
+        ? {
+          invoiceNo: input.return_ref_invoice_no.trim().toUpperCase(),
+          invoiceDate:
+            typeof input.return_ref_invoice_date === "string"
+              ? input.return_ref_invoice_date.trim()
+              : "",
+          reason:
+            typeof input.return_reason === "string" &&
+              input.return_reason.trim()
+              ? input.return_reason.trim()
+              : undefined,
+        }
+        : undefined,
     currency,
     currencyRate: resolvedRate || undefined,
   };
@@ -239,12 +267,25 @@ export async function executeToolImpl(
         vat_rate: number;
         vat_exemption_code?: string;
         withholding_code?: string;
+        discount_rate?: number;
+        discount_amount?: number;
       }[];
 
-      // Vergi alanlarını kur onayı akışından ÖNCE doğrula; hata kullanıcıya
-      // aktarılabilir Türkçe mesajla dönsün.
+      // Vergi ve fiyat alanlarını kur onayı akışından ÖNCE doğrula; hata
+      // kullanıcıya aktarılabilir Türkçe mesajla dönsün.
       let taxProfile: { hasWithholding: boolean; allExempt: boolean };
       try {
+        validateInvoiceLinePricing(
+          items.map((i) => ({
+            name: String(i.name ?? ""),
+            quantity: Number(i.quantity ?? 1),
+            unit: String(i.unit ?? "adet"),
+            unitPrice: Number(i.unit_price ?? 0),
+            vatRate: Number(i.vat_rate ?? 20),
+            discountRate: i.discount_rate,
+            discountAmount: i.discount_amount,
+          })),
+        );
         taxProfile = validateInvoiceTaxFields(
           items.map((i) => ({
             vatRate: Number(i.vat_rate ?? 20),
@@ -280,6 +321,110 @@ export async function executeToolImpl(
           : "TRY";
       const invoiceDate =
         typeof input.date === "string" ? input.date : undefined;
+
+      // İade faturası: referans alanları + orijinal (gelen) fatura kontrolü.
+      const returnNoRaw =
+        typeof input.return_ref_invoice_no === "string"
+          ? input.return_ref_invoice_no.trim()
+          : "";
+      const returnDateRaw =
+        typeof input.return_ref_invoice_date === "string"
+          ? input.return_ref_invoice_date.trim()
+          : "";
+      const returnReasonRaw =
+        typeof input.return_reason === "string"
+          ? input.return_reason.trim()
+          : "";
+      let returnRef: ReturnInvoiceRef | undefined;
+      let returnReferenceWarning: string | undefined;
+      if (returnNoRaw || returnDateRaw) {
+        returnRef = {
+          invoiceNo: returnNoRaw.toUpperCase(),
+          invoiceDate: returnDateRaw,
+          reason: returnReasonRaw || undefined,
+        };
+        try {
+          validateReturnRef(returnRef);
+          if (taxProfile.hasWithholding) {
+            throw new Error(
+              "Tevkifat uygulanmış faturanın iadesi özel düzeltme kurallarına tabidir ve buradan desteklenmiyor; kullanıcıyı mali müşavirine yönlendir.",
+            );
+          }
+          if (
+            !/^\d{10,11}$/.test(
+              typeof input.buyer_tax_id === "string"
+                ? input.buyer_tax_id.replace(/\s/g, "")
+                : "",
+            )
+          ) {
+            throw new Error(
+              "İade faturasında alıcı, orijinal faturayı kesen taraftır; VKN/TCKN bilgisi zorunlu. Gelen fatura listesindeki gönderici VKN'sini kullan.",
+            );
+          }
+        } catch (err) {
+          return {
+            status: "invalid_invoice_tax_fields",
+            error_code: "INVALID_TAX_FIELDS",
+            message: err instanceof Error ? err.message : String(err),
+          };
+        }
+
+        // Orijinal faturayı gelen kutusunda ara; bulunursa alıcı/tutar/para
+        // birimi eşleşmesini zorunlu kıl (yanlış iade = mali sorumluluk).
+        let originalRow: Record<string, unknown> | null = null;
+        let referenceLookupFailed = false;
+        try {
+          const incomingRows = await provider.listIncomingInvoices(
+            providerCtx,
+            returnRef.invoiceDate,
+            returnRef.invoiceDate,
+          );
+          originalRow = findIncomingInvoiceByDocNo(
+            incomingRows,
+            returnRef.invoiceNo,
+          );
+        } catch (err) {
+          referenceLookupFailed = true;
+          console.warn(JSON.stringify({
+            event: "return_reference_lookup_failed",
+            error: err instanceof Error ? err.message : String(err),
+          }));
+        }
+        if (originalRow) {
+          const returnGross = items.reduce((s, i) => {
+            const a = computeLineAmounts({
+              name: String(i.name ?? ""),
+              quantity: Number(i.quantity ?? 1),
+              unit: String(i.unit ?? "adet"),
+              unitPrice: Number(i.unit_price ?? 0),
+              vatRate: Number(i.vat_rate ?? 20),
+              discountRate: i.discount_rate,
+              discountAmount: i.discount_amount,
+            });
+            return s + a.taxable + a.vat;
+          }, 0);
+          try {
+            assertReturnMatchesOriginal(originalRow, {
+              buyerTaxId:
+                typeof input.buyer_tax_id === "string"
+                  ? input.buyer_tax_id
+                  : undefined,
+              grossTotal: Math.round(returnGross * 100) / 100,
+              currency,
+            });
+          } catch (err) {
+            return {
+              status: "invalid_invoice_tax_fields",
+              error_code: "INVALID_TAX_FIELDS",
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
+        } else {
+          returnReferenceWarning = referenceLookupFailed
+            ? "Uyarı: orijinal fatura şu an gelen fatura listesinden doğrulanamadı (sorgu hatası). Belge numarası ve tarihi kullanıcıyla birebir teyit etmeden kesme."
+            : "Uyarı: bu belge numarası verilen tarihte gelen e-fatura listesinde bulunamadı. Kağıt veya e-arşiv faturalar listede görünmez; belge numarası ve tarihi kullanıcıyla birebir teyit et, emin değilse kesme.";
+        }
+      }
       const providedRate =
         typeof input.exchange_rate === "string"
           ? input.exchange_rate.trim()
@@ -339,8 +484,14 @@ export async function executeToolImpl(
           vatRate: i.vat_rate,
           vatExemptionCode: i.vat_exemption_code,
           withholdingCode: i.withholding_code,
+          discountRate: i.discount_rate,
+          discountAmount: i.discount_amount,
         })),
         date: invoiceDate,
+        dueDate:
+          typeof input.due_date === "string" ? input.due_date : undefined,
+        note: typeof input.note === "string" ? input.note : undefined,
+        returnRef,
         currency,
         currencyRate: resolvedRate || undefined,
       };
@@ -348,13 +499,10 @@ export async function executeToolImpl(
       // 2026 kısmi tevkifat alt sınırı bilgilendirmesi (karar kullanıcının).
       let withholdingThresholdWarning: string | undefined;
       if (taxProfile.hasWithholding) {
-        const grossDoc = items.reduce(
-          (s, i) =>
-            s +
-            Number(i.quantity ?? 0) * Number(i.unit_price ?? 0) *
-              (1 + Number(i.vat_rate ?? 0) / 100),
-          0,
-        );
+        const grossDoc = invoiceInput.items.reduce((s, i) => {
+          const a = computeLineAmounts(i);
+          return s + a.taxable + a.vat;
+        }, 0);
         const rate = currency === "TRY" ? 1 : Number(resolvedRate) || 1;
         if (grossDoc * rate <= TEVKIFAT_MIN_GROSS_TRY) {
           withholdingThresholdWarning =
@@ -393,8 +541,13 @@ export async function executeToolImpl(
           ? { exchange_rate: resolvedRate, currency }
           : {}),
         ...(preview.html.length > 0 ? {} : { preview_html_pending: true }),
-        ...(withholdingThresholdWarning
-          ? { warning: withholdingThresholdWarning }
+        ...(returnRef ? { invoice_type: "IADE" } : {}),
+        ...(withholdingThresholdWarning || returnReferenceWarning
+          ? {
+            warning: [withholdingThresholdWarning, returnReferenceWarning]
+              .filter(Boolean)
+              .join(" "),
+          }
           : {}),
         message: preview.html.length > 0
           ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve GİB'e gönderelim."
@@ -429,21 +582,26 @@ export async function executeToolImpl(
       const items = Array.isArray(pending?.request?.items)
         ? pending.request.items
         : [];
-      const netTotal = items.reduce(
-        (sum, item) =>
-          sum +
-          (Number(item.quantity ?? 0) * Number(item.unit_price ?? 0) || 0),
-        0,
+      // İskonto sonrası matrah + KDV (fatura üzerindeki gerçek tutarlar).
+      const lineAmounts = items.map((item) =>
+        computeLineAmounts({
+          name: String(item.name ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          unit: String(item.unit ?? "adet"),
+          unitPrice: Number(item.unit_price ?? 0),
+          vatRate: Number(item.vat_rate ?? 0),
+          discountRate:
+            typeof item.discount_rate === "number"
+              ? item.discount_rate
+              : undefined,
+          discountAmount:
+            typeof item.discount_amount === "number"
+              ? item.discount_amount
+              : undefined,
+        })
       );
-      const vatTotal = items.reduce(
-        (sum, item) =>
-          sum +
-          ((Number(item.quantity ?? 0) *
-            Number(item.unit_price ?? 0) *
-            Number(item.vat_rate ?? 0)) /
-            100 || 0),
-        0,
-      );
+      const netTotal = lineAmounts.reduce((s, a) => s + a.taxable, 0);
+      const vatTotal = lineAmounts.reduce((s, a) => s + a.vat, 0);
       const grossTotal = netTotal + vatTotal;
 
       const { error: convError } = await supabase

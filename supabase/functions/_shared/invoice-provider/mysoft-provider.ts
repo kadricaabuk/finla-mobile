@@ -240,6 +240,11 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
         buyer_name: input.buyerName,
         buyer_tax_id: input.buyerTaxId,
         date: trDate,
+        due_date: input.dueDate,
+        note: input.note,
+        return_ref_invoice_no: input.returnRef?.invoiceNo,
+        return_ref_invoice_date: input.returnRef?.invoiceDate,
+        return_reason: input.returnRef?.reason,
         currency: input.currency,
         items: input.items.map((i) => ({
           name: i.name,
@@ -249,6 +254,8 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
           vat_rate: i.vatRate,
           vat_exemption_code: i.vatExemptionCode,
           withholding_code: i.withholdingCode,
+          discount_rate: i.discountRate,
+          discount_amount: i.discountAmount,
         })),
       })
     }

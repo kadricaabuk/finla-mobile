@@ -175,7 +175,7 @@ asıl sorun belge tipi uyuşmazlığıdır).
 | `TEVKIFAT` | Kalemde `withholdingTaxTypeCode` (601–627) varsa; oran KDV üzerinden, `payableAmount = brüt − tevkifat`. **e-Fatura'da profil `TICARIFATURA` zorunlu** (alıcının red hakkı; `TEMELFATURA`/`EARSIVFATURA` profili "geçersiz Profile" hatası verir — sandbox doğrulandı) | ✅ (`gib-tax-codes.ts`) |
 | `ISTISNA` | Tüm kalemler KDV %0 + `taxExemptionReasonCode` (ör. 302 hizmet ihracatı) | ✅ (`gib-tax-codes.ts`) |
 | `ISTISNA` + `profile: IHRACAT` | Mal ihracatı (GTİP, gümrük, `pkAlias: ihracatpk@gtb.gov.tr`) | ❌ desteklenmiyor — chat kullanıcıyı yönlendirir |
-| `IADE` | İade faturası (`billingRefInvoiceNo` referansı) | ❌ |
+| `IADE` | İade faturası (`billingRefInvoiceList` referansı) | ✅ (Faz 2 — sadece gelen faturanın iadesi) |
 | `YTBISTISNA` vb. | Yatırım teşvik (belge no/tarih, `expenditureType`) | ❌ |
 
 Tevkifat örneği (Postman `saveInvoiceOutboxTEVKIFAT`): satır bazında
@@ -195,14 +195,53 @@ taslak GİB'e gitmediği için silinmese de yenisi oluşturulabilir).
 Test VKN (Postman): `6271036106` — MYSOFT DİJİTAL DÖNÜŞÜM A.Ş. TEST  
 e-Arşiv örnek TCKN: `11111111111`
 
+### İskonto / vade / not (Faz 1 — entegre, sandbox doğrulandı 2026-07-03)
+
+- **Satır iskontosu**: `discRate` + `discAmtTra`; KDV matrahı (`taxableAmtTra`)
+  iskonto SONRASI tutar. Toplamlar UBL-TR kurgusu: `lineExtensionAmount` =
+  iskonto öncesi satır toplamı, `allowanceTotalAmount` = toplam iskonto,
+  `taxExclusiveAmount` = matrah. GİB render: "Mal Hizmet Toplam Tutarı /
+  Toplam İskonto / Hesaplanan KDV" satırları doğru dolar.
+- **Vade**: `dueDate` (`YYYY-MM-DD`). Şablonda ayrı satır olarak
+  görünmeyebilir; kullanıcıya not alanı da önerilir.
+- **Not**: `notes: [{ note }]` — faturada toplamların altında görünür (IBAN,
+  açıklama vb. için).
+- Tevkifat + iskonto kombinasyonu geçerli: tevkifat, iskonto sonrası KDV'den
+  hesaplanır (sandbox: `MYE2026000000060`, zarf 1200).
+
+### İade faturası (Faz 2 — entegre, sandbox doğrulandı 2026-07-03)
+
+Kapsam: **alıcı olarak bize kesilen (gelen) faturanın iadesi**. Kendi kestiğimiz
+faturayı geri almak iade değildir (iptal veya karşı tarafın iadesi).
+
+- Payload: `invoiceType: "IADE"` + header'da
+  `billingRefInvoiceList: [{ billingRefInvoiceNo, billingRefInvoiceDate (YYYY-MM-DD), billingRefNote }]`.
+- Alıcı = orijinal faturayı kesen taraf (gönderici ünvan + VKN). Profil kuralı
+  normal faturayla aynı: alıcı e-fatura mükellefiyse `TEMELFATURA`, değilse
+  `EARSIVFATURA`.
+- **Sunucu doğrulaması** (`chat/tools/index.ts`): referans no formatı (16
+  karakter GİB belge no) + tarih zorunlu; orijinal fatura gelen kutusunda
+  aranır — bulunursa gönderici VKN = alıcı VKN, iade toplamı ≤ orijinal KDV
+  dahil toplam ve para birimi eşleşmesi ZORUNLU. Bulunamazsa (kağıt/e-arşiv
+  gelen faturalar Mysoft gelen kutusunda görünmez) sadece uyarı döner; model
+  kullanıcıyla belge no/tarihi teyit etmeli.
+- **Tevkifatlı faturanın iadesi engellenir** (KDVGUT I/C-2.1.4.4 özel düzeltme
+  kuralı); kullanıcı mali müşavirine yönlendirilir.
+- `billingRefNote` GİB şablonunda basılmıyor; iade sebebi ayrıca
+  `notes`'a "İade sebebi: …" olarak eklenir (faturada görünür).
+- GİB render: toplamların altında "İadeye Konu Olan Faturalar | Fatura No |
+  Tarih" bloğu çıkar.
+- Sandbox: `AMA2026000000251` (e-arşiv, ONAYLANDI), `MYE2026000000061`
+  (e-fatura, zarf 1200), `AMA2026000000252` (iade + iskonto + sebep notu,
+  ONAYLANDI).
+
 ### Entegre edilmemiş alanlar (yol haritası)
 
-- **İskonto**: satır `discRate`/`discAmtTra`, toplamda `allowanceTotalAmount` — şu an hep 0
-- **İade faturası** (`invoiceType: IADE` + `billingRefInvoiceNo/Date`)
 - **Mal ihracatı** (`profile: IHRACAT`: GTİP, `deliveryTermCode` incoterms, `transportModeCode`, `shipment`)
 - **Özel matrah** (8xx kodları), **ÖTV/ÖİV/konaklama vergisi** (farklı `taxTypeCode`)
 - **KAMU faturası** (`publicServicePayee*` alanları), **SGK**, **yatırım teşvik** senaryoları
-- **Ödeme bilgisi** (`paymentMeans`, vade `dueDate`), **not satırları** (`notes`)
+- **Yapılandırılmış ödeme bilgisi** (`paymentMeans` — banka hesabı alanları; not alanı ile kısmen karşılanıyor)
+- **Belge seviyesi iskonto** (`allowanceCharge` header — satır iskontosu destekleniyor)
 - **Tam tevkifat** (kısmi 601–627 dışındaki 10/10 uygulamaları)
 - **e-İrsaliye / SMM** (Despatch*, Receipt* modülleri)
 

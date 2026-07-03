@@ -2,6 +2,8 @@ import { validateInvoiceTaxFields } from '../gib-tax-codes.ts'
 import {
   buildLocalDraftPreviewHtml,
   todayGibApiFormatted,
+  validateInvoiceLinePricing,
+  validateReturnRef,
   type CreateInvoiceInput,
 } from '../invoice-mapper.ts'
 import type {
@@ -61,7 +63,9 @@ export const mockInvoiceProvider: InvoiceProvider = {
   },
 
   async createInvoicePreview(_ctx, input) {
+    validateInvoiceLinePricing(input.items)
     validateInvoiceTaxFields(input.items)
+    if (input.returnRef) validateReturnRef(input.returnRef)
     const draft: InvoiceDraftRef = {
       uuid: crypto.randomUUID(),
       date: input.date ?? todayGibApiFormatted(),
@@ -70,6 +74,11 @@ export const mockInvoiceProvider: InvoiceProvider = {
       buyer_name: input.buyerName,
       buyer_tax_id: input.buyerTaxId,
       date: input.date,
+      due_date: input.dueDate,
+      note: input.note,
+      return_ref_invoice_no: input.returnRef?.invoiceNo,
+      return_ref_invoice_date: input.returnRef?.invoiceDate,
+      return_reason: input.returnRef?.reason,
       currency: input.currency,
       items: input.items.map((i) => ({
         name: i.name,
@@ -79,6 +88,8 @@ export const mockInvoiceProvider: InvoiceProvider = {
         vat_rate: i.vatRate,
         vat_exemption_code: i.vatExemptionCode,
         withholding_code: i.withholdingCode,
+        discount_rate: i.discountRate,
+        discount_amount: i.discountAmount,
       })),
     })
     return { draft, html }

@@ -9,7 +9,12 @@ import {
   parseMysoftInboxStatusRaw,
 } from './incoming-invoice-status.ts'
 import { toIsoDate } from './invoice-facts.ts'
-import type { CreateInvoiceInput } from './invoice-mapper.ts'
+import {
+  computeLineAmounts,
+  validateInvoiceLinePricing,
+  validateReturnRef,
+  type CreateInvoiceInput,
+} from './invoice-mapper.ts'
 import type { RecipientLookupResult } from './invoice-provider/types.ts'
 
 /** GG/AA/YYYY → YYYY-MM-DD */
@@ -152,7 +157,21 @@ export function buildMysoftInvoiceOutboxBody(
     throw new Error('Alıcı VKN/TCKN geçersiz veya eksik.')
   }
 
+  validateInvoiceLinePricing(input.items)
   const { hasWithholding, allExempt } = validateInvoiceTaxFields(input.items)
+
+  const returnRef = input.returnRef
+  if (returnRef) {
+    validateReturnRef(returnRef)
+    if (hasWithholding) {
+      // KDV Genel Uygulama Tebliği I/C-2.1.4.4: tevkifatlı işlemin iadesinde
+      // düzeltme tevkif edilmeyen KDV kısmı üzerinden yapılır; standart iade
+      // faturası kurgusuna uymaz.
+      throw new Error(
+        'Tevkifat uygulanmış faturanın iadesi özel düzeltme kurallarına tabidir ve buradan desteklenmiyor; mali müşavirinle veya Mysoft portalından ilerle.',
+      )
+    }
+  }
 
   const trDate = input.date?.trim() || mysoftDateToTrDate(new Date().toISOString())
   const docDate = trDateToMysoftDate(trDate)
@@ -171,27 +190,39 @@ export function buildMysoftInvoiceOutboxBody(
   const efatura = !foreignBuyer && isEfaturaRecipient(recipient)
 
   const invoiceDetail = input.items.map((item) => {
-    const qty = item.quantity
-    const unitPrice = item.unitPrice
-    const amtTra = roundMoney(qty * unitPrice)
-    const amtVatTra = roundMoney(amtTra * item.vatRate / 100)
+    const amounts = computeLineAmounts(item)
     const exemptionCode = item.vatExemptionCode?.trim() || ''
     const exemptionName = exemptionCode
       ? resolveIstisnaName(exemptionCode) ?? ''
       : ''
     const withholding = resolveTevkifatCode(item.withholdingCode)
     const withholdingAmount = withholding
-      ? roundMoney(amtVatTra * withholding.numerator / withholding.denominator)
+      ? roundMoney(
+        amounts.vat * withholding.numerator / withholding.denominator,
+      )
       : 0
+    const discRate =
+      typeof item.discountRate === 'number' && item.discountRate > 0
+        ? item.discountRate
+        : amounts.discount > 0 && amounts.gross > 0
+          ? roundMoney(amounts.discount / amounts.gross * 100)
+          : 0
     return {
       productName: item.name,
       unitCode: normalizeGibUnit(item.unit),
-      qty: String(qty),
-      unitPriceTra: formatMoney(unitPrice),
-      amtTra: formatMoney(amtTra),
+      qty: String(item.quantity),
+      unitPriceTra: formatMoney(item.unitPrice),
+      amtTra: formatMoney(amounts.gross),
+      ...(amounts.discount > 0
+        ? {
+          discRate,
+          discAmtTra: formatMoney(amounts.discount),
+        }
+        : {}),
       vatRate: String(item.vatRate),
-      amtVatTra: formatMoney(amtVatTra),
-      taxableAmtTra: amtTra,
+      amtVatTra: formatMoney(amounts.vat),
+      // KDV matrahı iskonto sonrası tutar.
+      taxableAmtTra: amounts.taxable,
       ...(exemptionCode
         ? {
           taxExemptionReasonCode: exemptionCode,
@@ -205,20 +236,27 @@ export function buildMysoftInvoiceOutboxBody(
           withholdingTaxPercentage: roundMoney(
             withholding.numerator / withholding.denominator * 100,
           ),
-          withholdingTaxableAmount: amtVatTra,
+          withholdingTaxableAmount: amounts.vat,
           withholdingTaxAmount: withholdingAmount,
         }
         : {}),
     }
   })
 
+  // UBL-TR: LineExtension = iskonto öncesi satır toplamı; TaxExclusive = matrah.
   const lineExtensionAmount = roundMoney(
+    invoiceDetail.reduce((s, row) => s + Number(row.amtTra), 0),
+  )
+  const allowanceTotalAmount = roundMoney(
+    invoiceDetail.reduce((s, row) => s + Number(row.discAmtTra ?? 0), 0),
+  )
+  const taxExclusiveAmount = roundMoney(
     invoiceDetail.reduce((s, row) => s + Number(row.taxableAmtTra), 0),
   )
   const taxAmount = roundMoney(
     invoiceDetail.reduce((s, row) => s + Number(row.amtVatTra), 0),
   )
-  const taxInclusiveAmount = roundMoney(lineExtensionAmount + taxAmount)
+  const taxInclusiveAmount = roundMoney(taxExclusiveAmount + taxAmount)
   const withholdingTotal = roundMoney(
     invoiceDetail.reduce(
       (s, row) => s + Number(row.withholdingTaxAmount ?? 0),
@@ -261,11 +299,13 @@ export function buildMysoftInvoiceOutboxBody(
     }
   })
 
-  const invoiceType = hasWithholding
-    ? 'TEVKIFAT'
-    : allExempt
-      ? 'ISTISNA'
-      : 'SATIS'
+  const invoiceType = returnRef
+    ? 'IADE'
+    : hasWithholding
+      ? 'TEVKIFAT'
+      : allExempt
+        ? 'ISTISNA'
+        : 'SATIS'
 
   // GİB kuralı: tevkifatlı e-Fatura, alıcının red hakkı olan TİCARİFATURA
   // senaryosuyla gönderilmek zorunda (TEMELFATURA reddedilemez).
@@ -320,12 +360,43 @@ export function buildMysoftInvoiceOutboxBody(
     isManuelCalculation: true,
     invoiceCalculation: {
       lineExtensionAmount,
-      taxExclusiveAmount: lineExtensionAmount,
+      taxExclusiveAmount,
       taxInclusiveAmount,
       payableAmount,
-      allowanceTotalAmount: 0,
+      allowanceTotalAmount,
     },
     invoiceDetail,
+  }
+
+  if (returnRef) {
+    body.billingRefInvoiceList = [
+      {
+        billingRefInvoiceNo: returnRef.invoiceNo.trim().toUpperCase(),
+        billingRefInvoiceDate: trDateToMysoftDate(returnRef.invoiceDate.trim()),
+        ...(returnRef.reason?.trim()
+          ? { billingRefNote: returnRef.reason.trim().slice(0, 500) }
+          : {}),
+      },
+    ]
+  }
+
+  const dueDateTr = input.dueDate?.trim()
+  if (dueDateTr) {
+    body.dueDate = trDateToMysoftDate(dueDateTr)
+  }
+  const notes: { note: string }[] = []
+  const note = input.note?.trim()
+  if (note) {
+    notes.push({ note: note.slice(0, 500) })
+  }
+  // billingRefNote GİB şablonunda basılmıyor; iade sebebi fatura üzerinde
+  // görünsün diye ayrıca not olarak eklenir.
+  const returnReason = returnRef?.reason?.trim()
+  if (returnReason) {
+    notes.push({ note: `İade sebebi: ${returnReason}`.slice(0, 500) })
+  }
+  if (notes.length > 0) {
+    body.notes = notes
   }
 
   if (efatura && recipient?.pk_alias) {

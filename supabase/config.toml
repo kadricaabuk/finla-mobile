@@ -39,10 +39,7 @@ enabled = true
 policy = "oneshot"
 inspector_port = 8083
 
-# Login / refresh — Expo yanlış anon key ile gelse bile gateway'de patlamasın (yerel + hosted karışımı).
-[functions.login]
-verify_jwt = false
-
+# Auth / refresh — Expo yanlış anon key ile gelse bile gateway'de patlamasın (yerel + hosted karışımı).
 [functions.auth]
 verify_jwt = false
 

@@ -82,7 +82,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'Mysoft üzerinden e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez.',
+      'Mysoft üzerinden e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
     input_schema: {
       type: 'object',
       properties: {
@@ -146,6 +146,16 @@ export const TOOLS: Anthropic.Tool[] = [
                 description:
                   'KDV tevkifat kodu (kısmi tevkifat 601–627). Ör: 601 yapım işleri 4/10, 602 danışmanlık/etüt 9/10, 606 işgücü temini 9/10, 612 temizlik 9/10, 624 yük taşımacılığı 2/10, 625 ticari reklam 3/10. Oran sistemce koda göre KDV üzerinden hesaplanır. Kullanıcı kod belirtmezse işlem türünü sorup doğru kodu netleştir.',
               },
+              discount_rate: {
+                type: 'number',
+                description:
+                  'Satır iskonto yüzdesi (0-100). discount_amount ile birlikte gönderme. KDV, iskonto sonrası matrahtan hesaplanır.',
+              },
+              discount_amount: {
+                type: 'number',
+                description:
+                  'Satır iskonto tutarı (fatura para biriminde). discount_rate ile birlikte gönderme.',
+              },
             },
             required: ['name', 'quantity', 'unit', 'unit_price', 'vat_rate'],
           },
@@ -153,6 +163,16 @@ export const TOOLS: Anthropic.Tool[] = [
         date: {
           type: 'string',
           description: 'Fatura tarihi GG/AA/YYYY formatında. Belirtilmezse bugünün tarihi kullanılır.',
+        },
+        due_date: {
+          type: 'string',
+          description:
+            'Vade (son ödeme) tarihi GG/AA/YYYY formatında (opsiyonel). Kullanıcı "30 gün vadeli" derse fatura tarihinden hesapla ve onayda belirt.',
+        },
+        note: {
+          type: 'string',
+          description:
+            'Fatura üzerinde görünecek serbest not (opsiyonel, ör. IBAN, sipariş referansı, açıklama).',
         },
         currency: {
           type: 'string',
@@ -168,6 +188,21 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'boolean',
           description:
             'Bekleyen taslak varken kullanıcı değişiklik isterse true gönder: eski taslak silinir, yenisi oluşturulur.',
+        },
+        return_ref_invoice_no: {
+          type: 'string',
+          description:
+            'İade faturası: iade edilen orijinal faturanın belge numarası (16 karakter, ör. ABC2026000000123). Verilirse fatura İADE tipinde kesilir. Numarayı UYDURMA; list_invoices (gelen) sonucundan al veya kullanıcıdan iste.',
+        },
+        return_ref_invoice_date: {
+          type: 'string',
+          description:
+            'İade edilen orijinal faturanın tarihi GG/AA/YYYY. return_ref_invoice_no ile birlikte zorunlu.',
+        },
+        return_reason: {
+          type: 'string',
+          description:
+            'İade sebebi (fatura üzerinde referans notu olarak görünür, ör. "Ürün hasarlı geldi"). İade faturasında kullanıcıya sorulması önerilir.',
         },
       },
       required: ['buyer_name', 'items'],
@@ -419,6 +454,12 @@ export function assembleSystemPrompt(): string {
     `- Tevkifat alt sınırı: KDV dahil tutar 12.000 TL ve altındaysa (2026) kısmi tevkifat genelde uygulanmaz (aynı güne ait aynı alıcı faturaları toplamı esas alınır); kullanıcıyı bilgilendir ama kararı ona bırak`,
     `- KDV %0 fatura: mutlaka istisna sebebini öğren ve kalemde vat_exemption_code gönder. Yurt dışına HİZMET → 302 hizmet ihracatı + buyer_country. Mal ihracatı (gümrük beyannameli) desteklenmiyor; kullanıcıyı Mysoft portalına yönlendir`,
     `- Yurt dışı alıcı: buyer_country ver, VKN/TCKN isteme; döviz cinsinden ise önce kur onayı akışını uygula`,
+    `- İskonto: kullanıcı indirim belirtirse kalemde discount_rate (yüzde) VEYA discount_amount (tutar) gönder; ikisini birden gönderme. KDV iskonto sonrası tutardan hesaplanır; onay özetinde iskontoyu ve matrahı belirt`,
+    `- Vadeli fatura: kullanıcı vade belirtirse due_date gönder; "X gün vadeli" ifadesini fatura tarihinden hesaplayıp onayda tarihi açıkça söyle`,
+    `- Fatura notu: kullanıcı faturaya not/IBAN/açıklama eklenmesini isterse note alanında gönder`,
+    `- İade faturası ("gelen faturayı iade et", "malı geri gönderiyorum"): SADECE bize kesilmiş (gelen) faturanın iadesi desteklenir. Akış: (1) orijinal faturayı gelen faturalardan bul (list_invoices direction=incoming) veya belge no + tarihi kullanıcıdan iste, (2) alıcı = orijinal faturayı KESEN taraf (gönderici ünvan + VKN), (3) kalemler iade edilen mal/hizmet, KDV oranları orijinaldekiyle AYNI olmalı, (4) iade sebebini sor ve return_reason ile gönder, (5) return_ref_invoice_no + return_ref_invoice_date ile create_invoice çağır. Kısmi iade serbest ama toplam orijinal fatura tutarını AŞAMAZ. Belge numarasını asla tahmin etme`,
+    `- İade faturasında tevkifat uygulanamaz (özel düzeltme kuralı); orijinal fatura tevkifatlıysa kullanıcıyı mali müşavirine yönlendir`,
+    `- Kendi kestiğimiz (giden) faturayı geri almak iade değil İPTAL veya alıcının iade faturası konusudur; kullanıcı bunu isterse cancel_invoice akışını veya karşı tarafın iade kesmesi gerektiğini anlat`,
     `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
     `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
     `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,

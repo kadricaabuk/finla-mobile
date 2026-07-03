@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword } from './password.ts'
 import { normalizePhone, normalizeVknTckn } from './phone.ts'
 import { isMockMode } from './invoice-provider/mock-provider.ts'
 import { assertMysoftTenantExists } from './mysoft-tenant.ts'
+import type { FinlaSessionClaims, OnboardingStatus } from './session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -15,6 +16,7 @@ export interface UserRow {
   password_hash: string
   created_at: string
   last_login_at: string | null
+  onboarding_completed: boolean
 }
 
 export interface TenantRow {
@@ -27,7 +29,7 @@ export interface TenantRow {
 export async function findUserByPhone(phone: string): Promise<UserRow | null> {
   const { data, error } = await supabase
     .from('users')
-    .select('id,phone,password_hash,created_at,last_login_at')
+    .select('id,phone,password_hash,created_at,last_login_at,onboarding_completed')
     .eq('phone', phone)
     .maybeSingle()
   if (error) throw error
@@ -37,7 +39,7 @@ export async function findUserByPhone(phone: string): Promise<UserRow | null> {
 export async function findUserById(userId: string): Promise<UserRow | null> {
   const { data, error } = await supabase
     .from('users')
-    .select('id,phone,password_hash,created_at,last_login_at')
+    .select('id,phone,password_hash,created_at,last_login_at,onboarding_completed')
     .eq('id', userId)
     .maybeSingle()
   if (error) throw error
@@ -52,7 +54,7 @@ export async function createUser(phone: string, password: string): Promise<UserR
   const { data, error } = await supabase
     .from('users')
     .insert({ phone, password_hash: passwordHash })
-    .select('id,phone,password_hash,created_at,last_login_at')
+    .select('id,phone,password_hash,created_at,last_login_at,onboarding_completed')
     .single()
   if (error) throw error
   return data as UserRow
@@ -110,7 +112,16 @@ export async function buildSessionClaims(userId: string): Promise<FinlaSessionCl
     tenant_vkn: tenant?.vkn_tckn,
     onboarding_status: onboardingStatus,
     tenant_name: tenant?.display_name ?? undefined,
+    onboarding_completed: user.onboarding_completed,
   }
+}
+
+export async function markOnboardingCompleted(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .update({ onboarding_completed: true })
+    .eq('id', userId)
+  if (error) throw error
 }
 
 export async function linkTenantForUser(

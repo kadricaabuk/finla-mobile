@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 /** Resolves once stored tokens are read; redirects to login when missing. */
 export function useFinlaSession() {
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(true);
   const [bootstrapped, setBootstrapped] = useState(false);
 
   useEffect(() => {
@@ -14,6 +15,7 @@ export function useFinlaSession() {
       if (!tokens) {
         router.replace("/login");
         setSessionLabel(null);
+        setOnboardingCompleted(true);
         setBootstrapped(true);
         return;
       }
@@ -25,6 +27,7 @@ export function useFinlaSession() {
           : null) ??
         "Hesap";
       setSessionLabel(label);
+      setOnboardingCompleted(claims?.onboarding_completed === true);
       setBootstrapped(true);
     });
     return () => {
@@ -32,5 +35,5 @@ export function useFinlaSession() {
     };
   }, []);
 
-  return { sessionLabel, bootstrapped };
+  return { sessionLabel, bootstrapped, onboardingCompleted };
 }

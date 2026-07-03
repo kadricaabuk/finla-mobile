@@ -11,6 +11,7 @@ export {
   authVerifyOtp,
   authSetPassword,
   authLinkTenant,
+  authCompleteOnboarding,
   logoutRequest,
   getUserProfile,
   updateUserProfile,

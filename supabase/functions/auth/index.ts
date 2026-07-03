@@ -12,6 +12,7 @@ import {
   createUser,
   findUserByPhone,
   linkTenantForUser,
+  markOnboardingCompleted,
 } from '../_shared/user-service.ts'
 
 type AuthBody = {
@@ -109,6 +110,7 @@ Deno.serve(async (req) => {
           refreshToken: tokens.refreshToken,
           expiresIn: tokens.expiresIn,
           onboarding_status: claims.onboarding_status,
+          onboarding_completed: claims.onboarding_completed,
         },
         { headers: corsHeaders },
       )
@@ -134,6 +136,7 @@ Deno.serve(async (req) => {
           expiresIn: tokens.expiresIn,
           onboarding_status: claims.onboarding_status,
           tenant_vkn: claims.tenant_vkn,
+          onboarding_completed: claims.onboarding_completed,
         },
         { headers: corsHeaders },
       )
@@ -166,6 +169,31 @@ Deno.serve(async (req) => {
           onboarding_status: claims.onboarding_status,
           tenant_vkn: claims.tenant_vkn,
           tenant_name: claims.tenant_name,
+          onboarding_completed: claims.onboarding_completed,
+        },
+        { headers: corsHeaders },
+      )
+    }
+
+    if (action === 'complete-onboarding') {
+      const { requireFinlaSession } = await import('../_shared/session-auth.ts')
+      const session = await requireFinlaSession(req)
+      if (!isUuid(session.userId)) {
+        throw new SessionAuthError('Oturum geçersiz.', 401)
+      }
+      await markOnboardingCompleted(session.userId)
+      const claims = await buildSessionClaims(session.userId)
+      const tokens = await issueAuthTokensWithClaims(claims)
+      return Response.json(
+        {
+          success: true,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresIn: tokens.expiresIn,
+          onboarding_status: claims.onboarding_status,
+          tenant_vkn: claims.tenant_vkn,
+          tenant_name: claims.tenant_name,
+          onboarding_completed: claims.onboarding_completed,
         },
         { headers: corsHeaders },
       )
@@ -175,7 +203,7 @@ Deno.serve(async (req) => {
       {
         success: false,
         error:
-          'Bilinmeyen action. request-otp, verify-otp, set-password, login, link-tenant kullan.',
+          'Bilinmeyen action. request-otp, verify-otp, set-password, login, link-tenant, complete-onboarding kullan.',
       },
       { status: 400, headers: corsHeaders },
     )

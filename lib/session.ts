@@ -61,6 +61,7 @@ export interface FinlaJwtClaims {
   tenant_vkn?: string
   tenant_name?: string
   onboarding_status?: string
+  onboarding_completed?: boolean
 }
 
 export function decodeJwtClaims(accessToken: string): FinlaJwtClaims | null {

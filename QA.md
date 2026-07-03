@@ -128,6 +128,18 @@ Do this first. If any step fails, fix before deeper QA.
 | 1.17 | Logout while offline | Local logout still succeeds | ☐ | ☐ | — | |
 | 1.18 | Logout spinner | Shows on logout button during process | ☐ | ☐ | — | |
 
+### Onboarding carousel (`/onboarding`)
+
+| ID | Test | Expected | Pass | Fail | Auto | Notes |
+|----|------|----------|------|------|------|-------|
+| 1.19 | New user after register + link-tenant | Carousel shown before chat (3 slides) | ☐ | ☐ | — | `users.onboarding_completed = false` |
+| 1.20 | Existing user (pre-migration) | Carousel **not** shown | ☐ | ☐ | — | Migration backfill sets `onboarding_completed = true` |
+| 1.21 | Swipe / İleri | Advances to next slide; dots update | ☐ | ☐ | — | |
+| 1.22 | Atla (skip) | Marks complete server-side; lands on chat | ☐ | ☐ | — | `complete-onboarding` + new JWT |
+| 1.23 | Başla on last slide | Same as skip; lands on chat | ☐ | ☐ | — | |
+| 1.24 | Re-login after completion | Carousel not shown again | ☐ | ☐ | — | JWT `onboarding_completed: true` |
+| 1.25 | Cold start with incomplete onboarding | Redirect to `/onboarding` from main shell | ☐ | ☐ | — | Guard in `MainAppShellProvider` |
+
 ---
 
 ## 2. Side menu (all main screens)

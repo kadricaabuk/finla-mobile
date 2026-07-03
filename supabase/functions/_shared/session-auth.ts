@@ -42,7 +42,6 @@ export interface FinlaSessionClaims {
   tenant_vkn?: string
   onboarding_status?: OnboardingStatus
   tenant_name?: string
-  onboarding_completed?: boolean
 }
 
 export interface FinlaSession {
@@ -51,7 +50,6 @@ export interface FinlaSession {
   tenantVkn?: string
   onboardingStatus: OnboardingStatus
   tenantName?: string
-  onboardingCompleted: boolean
 }
 
 export interface AuthTokens {
@@ -79,7 +77,6 @@ function buildAccessJwtPayload(claims: FinlaSessionClaims): Record<string, unkno
   if (claims.tenant_vkn) payload.tenant_vkn = claims.tenant_vkn
   if (claims.onboarding_status) payload.onboarding_status = claims.onboarding_status
   if (claims.tenant_name) payload.tenant_name = claims.tenant_name
-  payload.onboarding_completed = claims.onboarding_completed === true
   return payload
 }
 
@@ -182,7 +179,6 @@ export async function verifyAccessTokenClaims(
     tenant_vkn: payload.tenant_vkn,
     onboarding_status: payload.onboarding_status ?? 'pending',
     tenant_name: payload.tenant_name,
-    onboarding_completed: payload.onboarding_completed === true,
   }
 }
 
@@ -209,7 +205,6 @@ export async function requireFinlaSession(req: Request): Promise<FinlaSession> {
     tenantVkn: claims.tenant_vkn,
     onboardingStatus: claims.onboarding_status ?? 'pending',
     tenantName: claims.tenant_name,
-    onboardingCompleted: claims.onboarding_completed === true,
   }
 }
 

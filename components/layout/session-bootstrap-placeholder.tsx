@@ -5,6 +5,7 @@ export function SessionBootstrapPlaceholder() {
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.center}>
+        <View></View>
         <Text style={styles.wordmark}>finla</Text>
         <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color="#000" />
@@ -19,14 +20,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
-  },
-  center: {
-    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
+  center: {
+    alignItems: "center",
+    justifyContent: "space-between",
+    height: "30%",
+  },
   wordmark: {
-    fontSize: 40,
+    fontSize: 64,
     fontWeight: "700",
     letterSpacing: -1,
     color: "#000",

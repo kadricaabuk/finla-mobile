@@ -285,7 +285,6 @@ export interface LoginResponse {
   refreshToken?: string;
   expiresIn?: number;
   onboarding_status?: string;
-  onboarding_completed?: boolean;
   tenant_vkn?: string;
   tenant_name?: string;
   debug_code?: string;
@@ -351,12 +350,6 @@ export async function authLinkTenant(
     },
     accessToken,
   );
-}
-
-export async function authCompleteOnboarding(
-  accessToken: string,
-): Promise<LoginResponse> {
-  return authPost("complete-onboarding", {}, accessToken);
 }
 
 export interface UserProfile {

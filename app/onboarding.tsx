@@ -1,11 +1,10 @@
-import { getTokens, saveTokens } from "@/lib/session";
-import { authCompleteOnboarding, userFacingApiError } from "@/lib/supabase";
+import { setOnboardingSeen } from "@/lib/onboarding-local";
+import { getTokens } from "@/lib/session";
 import { Image, type ImageSource } from "expo-image";
 import { router } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   StyleSheet,
   Text,
@@ -95,25 +94,9 @@ export default function OnboardingScreen() {
     if (loading) return;
     setLoading(true);
     try {
+      await setOnboardingSeen();
       const tokens = await getTokens();
-      if (!tokens) {
-        router.replace("/login");
-        return;
-      }
-      const res = await authCompleteOnboarding(tokens.accessToken);
-      if (!res.success || !res.accessToken || !res.refreshToken) {
-        Alert.alert("Hata", res.error ?? "Tanıtım tamamlanamadı.");
-        return;
-      }
-      const expiresIn = typeof res.expiresIn === "number" ? res.expiresIn : 900;
-      await saveTokens({
-        accessToken: res.accessToken,
-        refreshToken: res.refreshToken,
-        expiresAtMs: Date.now() + expiresIn * 1000,
-      });
-      router.replace("/");
-    } catch (err) {
-      Alert.alert("Bağlantı Hatası", userFacingApiError(err));
+      router.replace(tokens ? "/" : "/login");
     } finally {
       setLoading(false);
     }

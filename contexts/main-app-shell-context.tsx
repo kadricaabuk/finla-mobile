@@ -4,7 +4,6 @@ import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
 import { getUserProfile, type UserProfile } from "@/lib/supabase";
-import { router } from "expo-router";
 import type { PropsWithChildren } from "react";
 import {
   createContext,
@@ -56,7 +55,7 @@ const MainAppShellContext = createContext<MainAppShellContextValue | null>(
 );
 
 export function MainAppShellProvider({ children }: PropsWithChildren) {
-  const { sessionLabel, bootstrapped, onboardingCompleted } = useFinlaSession();
+  const { sessionLabel, bootstrapped } = useFinlaSession();
   const {
     conversations,
     conversationsLoading,
@@ -78,11 +77,6 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
       setUserProfile(null);
     }
   }, []);
-
-  useEffect(() => {
-    if (!bootstrapped || !sessionLabel || onboardingCompleted) return;
-    router.replace("/onboarding");
-  }, [bootstrapped, onboardingCompleted, sessionLabel]);
 
   useEffect(() => {
     if (!bootstrapped || !sessionLabel) {
@@ -154,9 +148,6 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
   }
   if (!sessionLabel) {
     return null;
-  }
-  if (!onboardingCompleted) {
-    return <SessionBootstrapPlaceholder />;
   }
 
   return (

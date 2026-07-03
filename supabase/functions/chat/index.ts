@@ -53,6 +53,7 @@ import {
 } from "./ndjson-stream.ts";
 import { loadAgentChatHistory } from "./chat-history.ts";
 import { jsonChatOk, jsonError } from "./http-response.ts";
+import { insertChatMessage } from "./message-store.ts";
 import { persistableAction } from "./persist-action.ts";
 import { executeTool } from "./tools/index.ts";
 import type { ChatAction, PendingInvoiceState } from "./types.ts";
@@ -133,7 +134,7 @@ Deno.serve(async (req: Request) => {
     const pendingState = await loadPendingInvoice(supabase, cid);
     const skipFinanceFastPaths = shouldSkipFinanceFastPaths(pendingState);
 
-    await supabase.from("messages").insert({
+    await insertChatMessage(supabase, {
       conversation_id: cid,
       role: "user",
       content: hasAction ? "[action]" : (hasMessage ? message! : ""),
@@ -150,7 +151,7 @@ Deno.serve(async (req: Request) => {
         const noDraftMsg = pending?.status === "exchange_rate_pending"
           ? "Önce döviz kurunu onaylamalıyız. Sohbette «onaylıyorum» yazabilirsin."
           : "Onay bekleyen taslak bulunamadı. Önce fatura taslağı oluşturmalıyız.";
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: noDraftMsg,
@@ -167,7 +168,7 @@ Deno.serve(async (req: Request) => {
       ) {
         const mismatchMsg =
           "Onaylanacak taslak değişmiş görünüyor. Lütfen en son önizleme kartını kullan.";
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: mismatchMsg,
@@ -191,7 +192,7 @@ Deno.serve(async (req: Request) => {
         const directMessage = payload?.uuid
           ? `Fatura Mysoft üzerinden GİB'e gönderildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" diyebilirsin.`
           : (payload?.message ?? "Fatura kesildi.");
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -203,7 +204,7 @@ Deno.serve(async (req: Request) => {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Fatura kesilemedi.";
         const failText = `Fatura kesimi başarısız: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -284,7 +285,7 @@ Deno.serve(async (req: Request) => {
           last_tool: "export_invoices_excel",
           last_direction: msgDir ?? undefined,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -299,7 +300,7 @@ Deno.serve(async (req: Request) => {
           ? err.message
           : "Excel dışa aktarılamadı.";
         const failText = `Excel oluşturulamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -326,7 +327,7 @@ Deno.serve(async (req: Request) => {
         const directMessage = previewAction
           ? "Taslak faturanı önizlemede açtım. Kontrol et; uygunsa «Onayla ve Kes» ile GİB'e gönderebiliriz."
           : "Taslak bulunamadı. Önce fatura bilgilerini verip taslak oluşturalım.";
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -348,7 +349,7 @@ Deno.serve(async (req: Request) => {
         const directMessage = who
           ? `${who} faturasını önizlemede açıyorum.`
           : "Faturayı önizlemede açıyorum.";
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -414,7 +415,7 @@ Deno.serve(async (req: Request) => {
           })(),
           last_counterparty: filters.customerName,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -428,7 +429,7 @@ Deno.serve(async (req: Request) => {
           ? err.message
           : "Finansal özet getirilemedi.";
         const failText = `Finansal özet alınamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -472,7 +473,7 @@ Deno.serve(async (req: Request) => {
             ? { startDate: list.start_date, endDate: list.end_date }
             : undefined,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -487,7 +488,7 @@ Deno.serve(async (req: Request) => {
           ? err.message
           : "Gelen faturalar getirilemedi.";
         const failText = `Gelen fatura listesi alınamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -549,7 +550,7 @@ Deno.serve(async (req: Request) => {
           last_direction: direction,
           last_counterparty: filters.customerName,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -568,7 +569,7 @@ Deno.serve(async (req: Request) => {
           ? err.message
           : "Son fatura getirilemedi.";
         const failText = `Son fatura alınamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -621,7 +622,7 @@ Deno.serve(async (req: Request) => {
             ? { startDate: list.start_date, endDate: list.end_date }
             : undefined,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: directMessage,
@@ -638,7 +639,7 @@ Deno.serve(async (req: Request) => {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Faturalar getirilemedi.";
         const failText = `Fatura listesi alınamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -688,7 +689,7 @@ Deno.serve(async (req: Request) => {
           lastListInvoicesResult: acc.lastListInvoicesResult,
           lastExportExcelPayload: acc.lastExportExcelPayload,
         });
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: fin.finalAssistant,
@@ -698,7 +699,7 @@ Deno.serve(async (req: Request) => {
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Beklenmeyen bir hata oluştu.";
         const failText = `Yanıt oluşturulamadı: ${msg}`;
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: failText,
@@ -755,7 +756,7 @@ Deno.serve(async (req: Request) => {
           lastExportExcelPayload: acc.lastExportExcelPayload,
         });
 
-        await supabase.from("messages").insert({
+        await insertChatMessage(supabase, {
           conversation_id: cid,
           role: "assistant",
           content: fin.finalAssistant,
@@ -776,7 +777,7 @@ Deno.serve(async (req: Request) => {
           e instanceof Error ? e.message : "Beklenmeyen bir hata oluştu.";
         const failText = `Yanıt oluşturulamadı: ${msg}`;
         try {
-          await supabase.from("messages").insert({
+          await insertChatMessage(supabase, {
             conversation_id: cid,
             role: "assistant",
             content: failText,

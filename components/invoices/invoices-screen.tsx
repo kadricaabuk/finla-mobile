@@ -26,7 +26,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 export type InvoicesScreenProps = {
   direction?: InvoiceListDirection;
@@ -60,6 +63,7 @@ export default function InvoicesScreen(props: InvoicesScreenProps = {}) {
   const titleTestId = props.titleTestId ?? OUTGOING_DEFAULTS.titleTestId;
 
   const { openMenu } = useMainAppShell();
+  const insets = useSafeAreaInsets();
   const {
     preset,
     setPreset,
@@ -185,7 +189,10 @@ export default function InvoicesScreen(props: InvoicesScreenProps = {}) {
               }
             />
           )}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: 24 + insets.bottom },
+          ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -260,7 +267,6 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 16,
     paddingTop: 4,
-    paddingBottom: 24,
     gap: 10,
     flexGrow: 1,
   },

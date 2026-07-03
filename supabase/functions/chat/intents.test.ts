@@ -4,6 +4,7 @@ import {
   assertFalse,
 } from "jsr:@std/assert";
 import {
+  isAnalysisQuestion,
   isBareInvoiceShowIntent,
   isConfirmLikeMessage,
   isCustomerClarificationIntent,
@@ -107,4 +108,31 @@ Deno.test("parseInvoiceDirectionFromMessage", () => {
 Deno.test("isIncomingInvoiceListIntent — finansal toplam değil", () => {
   assert(isIncomingInvoiceListIntent("gelen faturaları göster"));
   assertFalse(isIncomingInvoiceListIntent("bu ay ne kadar borcum var"));
+});
+
+Deno.test("isFinancialTotalsIntent — vergi soruları fast-path'e girmez", () => {
+  assertFalse(isFinancialTotalsIntent("geçen çeyrekteki gelir vergim?"));
+  assertFalse(isFinancialTotalsIntent("gelir vergisi?"));
+  assertFalse(isFinancialTotalsIntent("muhtasar?"));
+  assertFalse(isFinancialTotalsIntent("geçen çeyrekten devreden KDV tutarı ne?"));
+  assert(isFinancialTotalsIntent("geçen çeyrek ne kadar kazandım"));
+});
+
+Deno.test("isAnalysisQuestion — yorum isteyen sorular", () => {
+  assert(
+    isAnalysisQuestion(
+      "bu ayki gelen giden faturalarıma baktığında mali durumumu nasıl yorumluyorsun?",
+    ),
+  );
+  assert(isAnalysisQuestion("sence ne kadar kar ettim"));
+  assertFalse(isAnalysisQuestion("bu ay ne kadar kazandım"));
+});
+
+Deno.test("isFinancialTotalsIntent — yorum sorusu fast-path'e girmez", () => {
+  assertFalse(isFinancialTotalsIntent("sence ne kadar kar ettim"));
+  assertFalse(
+    isIncomingInvoiceListIntent(
+      "gelen faturalarıma baktığında mali durumumu nasıl yorumluyorsun?",
+    ),
+  );
 });

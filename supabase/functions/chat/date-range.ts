@@ -1,3 +1,5 @@
+import { normalizeTurkish } from "../_shared/turkish.ts";
+
 export const ISTANBUL_TZ = "Europe/Istanbul";
 
 export function istanbulTodayUtc(): Date {
@@ -35,6 +37,20 @@ export function istanbulPreviousMonthRange(
   const prevYear = month === 0 ? year - 1 : year;
   const start = new Date(Date.UTC(prevYear, prevMonth, 1));
   const end = new Date(Date.UTC(prevYear, prevMonth + 1, 0));
+  return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
+}
+
+/** Takvim çeyreği (İstanbul); offset -1 = önceki çeyrek. */
+export function istanbulQuarterRange(
+  today: Date = istanbulTodayUtc(),
+  offset = 0,
+): { startDate: string; endDate: string } {
+  const total = today.getUTCFullYear() * 4 +
+    Math.floor(today.getUTCMonth() / 3) + offset;
+  const year = Math.floor(total / 4);
+  const quarter = total - year * 4;
+  const start = new Date(Date.UTC(year, quarter * 3, 1));
+  const end = new Date(Date.UTC(year, quarter * 3 + 3, 0));
   return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
 }
 
@@ -104,6 +120,33 @@ export function resolveDateRangeFromText(
       const start = new Date(today);
       start.setUTCDate(start.getUTCDate() - days);
       return { startDate: formatTrDate(start), endDate: formatTrDate(today) };
+    }
+  }
+
+  const norm = normalizeTurkish(lower);
+  if (norm.includes("ceyre")) {
+    if (/\b(gecen|onceki)\s+ceyre/.test(norm)) {
+      return istanbulQuarterRange(today, -1);
+    }
+    if (/\bbu\s+ceyre/.test(norm)) {
+      return istanbulQuarterRange(today, 0);
+    }
+    const numQuarter = norm.match(/\b([1-4])\s*\.?\s*ceyre/);
+    const wordQuarter = /\b(ilk|birinci)\s+ceyre/.test(norm)
+      ? 1
+      : /\bikinci\s+ceyre/.test(norm)
+      ? 2
+      : /\bucuncu\s+ceyre/.test(norm)
+      ? 3
+      : /\bdorduncu\s+ceyre/.test(norm)
+      ? 4
+      : null;
+    const quarter = numQuarter ? Number(numQuarter[1]) : wordQuarter;
+    if (quarter) {
+      const year = today.getUTCFullYear();
+      const start = new Date(Date.UTC(year, (quarter - 1) * 3, 1));
+      const end = new Date(Date.UTC(year, (quarter - 1) * 3 + 3, 0));
+      return { startDate: formatTrDate(start), endDate: formatTrDate(end) };
     }
   }
 

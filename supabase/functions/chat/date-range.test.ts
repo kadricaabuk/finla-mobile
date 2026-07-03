@@ -2,6 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert";
 import {
   formatTrDate,
   istanbulPreviousMonthRange,
+  istanbulQuarterRange,
   istanbulTodayUtc,
   parseTrDate,
   resolveDateRangeFromText,
@@ -70,3 +71,39 @@ function assertYearRange(start: string, end: string, year: number): void {
   assertEquals(e.getUTCMonth(), 11);
   assertEquals(e.getUTCDate(), 31);
 }
+
+Deno.test("resolveDateRangeFromText — geçen çeyrek", () => {
+  const parsed = resolveDateRangeFromText("geçen çeyrekteki gelirlerim");
+  assert(parsed !== null);
+  const expected = istanbulQuarterRange(istanbulTodayUtc(), -1);
+  assertEquals(parsed!.startDate, expected.startDate);
+  assertEquals(parsed!.endDate, expected.endDate);
+});
+
+Deno.test("resolveDateRangeFromText — bu çeyrek", () => {
+  const parsed = resolveDateRangeFromText("bu çeyrek ne kazandım");
+  assert(parsed !== null);
+  const expected = istanbulQuarterRange(istanbulTodayUtc(), 0);
+  assertEquals(parsed!.startDate, expected.startDate);
+  assertEquals(parsed!.endDate, expected.endDate);
+});
+
+Deno.test("resolveDateRangeFromText — numaralı ve sözlü çeyrek", () => {
+  const year = istanbulTodayUtc().getUTCFullYear();
+  const q3 = resolveDateRangeFromText("3. çeyrek faturaları");
+  assert(q3 !== null);
+  assertEquals(q3!.startDate, `01/07/${year}`);
+  assertEquals(q3!.endDate, `30/09/${year}`);
+
+  const q2 = resolveDateRangeFromText("ikinci çeyrek özeti");
+  assert(q2 !== null);
+  assertEquals(q2!.startDate, `01/04/${year}`);
+  assertEquals(q2!.endDate, `30/06/${year}`);
+});
+
+Deno.test("istanbulQuarterRange — yıl sınırında önceki çeyrek", () => {
+  const ocak = new Date(Date.UTC(2026, 0, 15));
+  const prev = istanbulQuarterRange(ocak, -1);
+  assertEquals(prev.startDate, "01/10/2025");
+  assertEquals(prev.endDate, "31/12/2025");
+});

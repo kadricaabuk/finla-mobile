@@ -104,8 +104,22 @@ function hasIncomingListSignals(lower: string): boolean {
   );
 }
 
+/** Yorum/analiz isteyen soru — fast-path değil, Claude araçlarla yanıtlamalı. */
+export function isAnalysisQuestion(message: string): boolean {
+  const lower = normalizeTurkish(message);
+  return /\b(yorum\w*|degerlendir\w*|analiz\w*|sence|tavsiye\w*|mali\s+durum\w*)\b/
+    .test(lower);
+}
+
 function hasFinancialTotalsSignals(lower: string): boolean {
   if (/\b(fatura\s+list|faturalarim|listele)\b/.test(lower)) return false;
+  // Vergi/beyanname sorusu ciro toplamı sorusu değildir ("gelir vergisi" ≠ gelir).
+  if (
+    /\b(vergi\w*|muhtasar\w*|stopaj\w*|beyanname\w*|tevkifat\w*|mahsup\w*|devreden\w*)\b/
+      .test(lower)
+  ) {
+    return false;
+  }
   return (
     /\b(gider\w*|borc\w*|harcama\w*|kazanc\w*|gelir\w*|kar\w*|ozet\w*)\b/.test(
       lower,
@@ -119,6 +133,7 @@ function hasFinancialTotalsSignals(lower: string): boolean {
 
 /** Gelen fatura listeleme niyeti. */
 export function isIncomingInvoiceListIntent(userMessage: string): boolean {
+  if (isAnalysisQuestion(userMessage)) return false;
   if (isLatestInvoiceIntent(userMessage)) return false;
   if (isBareInvoiceShowIntent(userMessage)) return false;
 
@@ -129,6 +144,7 @@ export function isIncomingInvoiceListIntent(userMessage: string): boolean {
 
 /** Gider/gelir/borç/kazanç toplamı niyeti ("fatura" kelimesi şart değil). */
 export function isFinancialTotalsIntent(userMessage: string): boolean {
+  if (isAnalysisQuestion(userMessage)) return false;
   const lower = normalizeTurkish(userMessage);
   if (hasIncomingListSignals(lower)) return false;
   if (isLatestInvoiceIntent(userMessage)) return false;
@@ -219,6 +235,7 @@ export function isLatestInvoiceIntent(userMessage: string): boolean {
 
 /** Kestiğin veya gelen faturaları listeleme / getirme niyeti. */
 export function isInvoiceListIntent(userMessage: string): boolean {
+  if (isAnalysisQuestion(userMessage)) return false;
   if (isLatestInvoiceIntent(userMessage)) return false;
   if (isBareInvoiceShowIntent(userMessage)) return false;
   if (isIncomingInvoiceListIntent(userMessage)) return false;

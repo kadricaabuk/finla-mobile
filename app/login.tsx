@@ -182,7 +182,12 @@ export default function LoginScreen() {
   const fadeProgress = useSharedValue(handoff ? 0 : 1);
 
   useEffect(() => {
-    if (!handoff) return;
+    // Handoff yoksa da (Reduce Motion, geç mount) native splash kapatılmalı;
+    // preventAutoHideAsync global olduğundan aksi halde açık kalır.
+    if (!handoff) {
+      void releaseNativeSplash();
+      return;
+    }
     // Native splash zamanlanmış şekilde kapanana kadar bekle: klon katman
     // altta hazır dururken native kapanır, animasyon ondan sonra başlar.
     void releaseNativeSplash().then(() => setSplashHidden(true));
@@ -447,7 +452,7 @@ export default function LoginScreen() {
           ? `+90 ${phone.trim()} numarasına gönderilen 6 haneli kodu gir.`
           : mode === "register_password"
             ? "Girişte kullanacağın 6 haneli PIN'i belirle."
-            : "Mysoft portalda seçtiğin firmanın VKN/TCKN'sini gir.";
+            : "Bağlamak istediğin firmanın VKN/TCKN'sini gir.";
 
   const buttonLabel =
     mode === "login"

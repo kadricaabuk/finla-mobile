@@ -1,3 +1,4 @@
+import { PrivacyCover } from "@/components/layout/privacy-cover";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -21,6 +22,7 @@ export default function RootLayout() {
           <Stack.Screen name="(main)" />
         </Stack>
         <StatusBar style="dark" />
+        <PrivacyCover />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

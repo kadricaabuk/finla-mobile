@@ -1,3 +1,4 @@
+import { PrivacyCover } from "@/components/layout/privacy-cover";
 import { injectHtmlViewport } from "@/lib/inject-html-viewport";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { ChatMessageAction } from "@/types/chat-actions";
@@ -302,6 +303,8 @@ export function InvoicePreviewModal({
           ) : null}
         </SafeAreaView>
       </SafeAreaProvider>
+      {/* Native Modal ayrı pencerede çizilir; kök PrivacyCover'ı örtmez. */}
+      <PrivacyCover />
     </Modal>
   );
 }

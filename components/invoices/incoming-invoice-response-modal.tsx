@@ -1,3 +1,4 @@
+import { PrivacyCover } from "@/components/layout/privacy-cover";
 import { injectHtmlViewport } from "@/lib/inject-html-viewport";
 import { callApi, userFacingApiError } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
@@ -327,6 +328,8 @@ export function IncomingInvoiceResponseModal({
           </KeyboardAvoidingView>
         </SafeAreaView>
       </SafeAreaProvider>
+      {/* Native Modal ayrı pencerede çizilir; kök PrivacyCover'ı örtmez. */}
+      <PrivacyCover />
     </Modal>
   );
 }

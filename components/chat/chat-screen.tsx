@@ -3,6 +3,7 @@ import { ChatMessageBubble } from "@/components/chat/chat-message-bubble";
 import { InvoiceDetailModal } from "@/components/chat/invoice-detail-modal";
 import { InvoicePreviewModal } from "@/components/chat/invoice-preview-modal";
 import { useChatScreen } from "@/components/chat/use-chat-screen";
+import { useExamplePrompts } from "@/components/chat/use-example-prompts";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
@@ -26,17 +27,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const CHAT_SHELL_OWNER_ID = "screen-chat";
 
-// Boş sohbet: finla'nın gerçek fiilleri — dokununca mesaj olarak gönderilir.
-const EXAMPLE_PROMPTS = [
-  {
-    icon: "document-text-outline",
-    text: "Yılmaz İnşaat'a 10.000 TL + KDV fatura kes",
-  },
-  { icon: "albums-outline", text: "Bu ay kestiğim faturaları göster" },
-  { icon: "mail-open-outline", text: "Gelen son faturaları listele" },
-  { icon: "download-outline", text: "Geçen ayın faturalarını Excel'e dök" },
-] as const;
-
 export default function ChatScreen() {
   const keyboardAvoidPaddingStyle = useKeyboardAvoidancePadding();
   const { openMenu } = useMainAppShell();
@@ -54,6 +44,9 @@ export default function ChatScreen() {
     previewAction,
     confirmingDraftUuid,
     openingConversationId,
+    draftInput,
+    consumeDraftInput,
+    prefillInput,
     setDetailAction,
     setPreviewAction,
     handleSend,
@@ -62,6 +55,8 @@ export default function ChatScreen() {
     handleNewChat,
     handleOpenConversation,
   } = useChatScreen();
+
+  const examplePrompts = useExamplePrompts();
 
   const handleShareExcelExport = useCallback(
     async (action: ChatMessageAction | undefined) => {
@@ -100,6 +95,22 @@ export default function ChatScreen() {
 
   useRegisterMainShellSideMenu(CHAT_SHELL_OWNER_ID, sideMenuBindings);
 
+  // Detay aksiyonundan fatura yönünü çıkar: fatura payload'ındaki direction
+  // öncelikli, yoksa aksiyon filtresi. Bilinmiyorsa buton gösterilmez.
+  const detailDirection = useMemo(() => {
+    const invDir = (detailInvoice as { direction?: unknown } | null)?.direction;
+    if (invDir === "outgoing" || invDir === "incoming") return invDir;
+    return detailAction?.filter?.direction;
+  }, [detailInvoice, detailAction]);
+
+  const handleReissueFromDetail = useCallback(
+    (message: string) => {
+      setDetailAction(null);
+      prefillInput(message);
+    },
+    [prefillInput, setDetailAction],
+  );
+
   // Hızlı yanıt çipleri: yalnızca son mesaj bir asistan sorusuysa ve stream
   // bittiyse gösterilir; dokununca metin aynen gönderilir.
   const lastMessage = messages[messages.length - 1];
@@ -137,7 +148,7 @@ export default function ChatScreen() {
               !loading &&
               !openingConversationId && (
                 <View style={styles.emptyState}>
-                  {EXAMPLE_PROMPTS.map((prompt, index) => (
+                  {examplePrompts.map((prompt, index) => (
                     <Animated.View
                       key={prompt.text}
                       entering={FadeInDown.duration(200).delay(index * 40)}
@@ -223,12 +234,16 @@ export default function ChatScreen() {
           onStop={handleCancelStream}
           onFocusChange={setInputFocused}
           onSend={handleSend}
+          draftText={draftInput}
+          onDraftConsumed={consumeDraftInput}
         />
       </Animated.View>
 
       <InvoiceDetailModal
         visible={Boolean(detailAction?.invoice)}
         invoice={detailInvoice}
+        direction={detailDirection}
+        onReissue={handleReissueFromDetail}
         onClose={() => setDetailAction(null)}
       />
 

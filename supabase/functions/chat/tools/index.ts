@@ -47,8 +47,10 @@ import {
   getUserProfile,
   updateUserProfile,
 } from "../../_shared/profile-service.ts";
+import { isForeignBuyerCountry } from "../../_shared/mysoft-mapper.ts";
 import type { FinlaSession } from "../../_shared/session-auth.ts";
 import { normalizeTurkish } from "../../_shared/turkish.ts";
+import { findKnownCustomers, type KnownCustomer } from "./customer-lookup.ts";
 import {
   formatTrDate,
   istanbulTodayUtc,
@@ -203,65 +205,12 @@ export async function executeToolImpl(
 
     case "find_customer": {
       const nameQuery = typeof input.name === "string" ? input.name.trim() : "";
-      const { data, error } = await supabase
-        .from("invoice_facts")
-        .select(
-          "customer_name, customer_tax_id, issue_date, gross_total, currency, direction",
-        )
-        .eq("gib_username", scopeKey)
-        .not("customer_tax_id", "is", null)
-        .not("customer_name", "is", null)
-        .order("issue_date", { ascending: false })
-        .limit(400);
-      if (error) throw error;
-      const rows = Array.isArray(data) ? data : [];
-
-      const normalizedQuery = normalizeTurkish(nameQuery);
-      // VKN başına tek kayıt: en güncel fatura + toplam fatura sayısı.
-      const byTaxId = new Map<string, {
-        customer_name: string;
-        customer_tax_id: string;
-        last_invoice_date: string | null;
-        last_invoice_gross_total: number | null;
-        last_invoice_currency: string;
-        last_invoice_direction: string;
-        invoice_count: number;
-      }>();
-      for (const row of rows) {
-        const name = typeof row.customer_name === "string"
-          ? row.customer_name.trim()
-          : "";
-        const taxId = typeof row.customer_tax_id === "string"
-          ? row.customer_tax_id.trim()
-          : "";
-        if (!name || !taxId) continue;
-        if (normalizedQuery && !normalizeTurkish(name).includes(normalizedQuery)) {
-          continue;
-        }
-        const existing = byTaxId.get(taxId);
-        if (existing) {
-          existing.invoice_count += 1;
-          continue;
-        }
-        byTaxId.set(taxId, {
-          customer_name: name,
-          customer_tax_id: taxId,
-          last_invoice_date: typeof row.issue_date === "string"
-            ? row.issue_date
-            : null,
-          last_invoice_gross_total: typeof row.gross_total === "number"
-            ? row.gross_total
-            : null,
-          last_invoice_currency: typeof row.currency === "string"
-            ? row.currency
-            : "TRY",
-          last_invoice_direction: row.direction === "incoming"
-            ? "incoming"
-            : "outgoing",
-          invoice_count: 1,
-        });
-      }
-      const customers = [...byTaxId.values()].slice(0, nameQuery ? 5 : 8);
+      const customers = await findKnownCustomers(
+        supabase,
+        scopeKey,
+        nameQuery,
+        nameQuery ? 5 : 8,
+      );
 
       if (customers.length === 0) {
         return {
@@ -278,7 +227,7 @@ export async function executeToolImpl(
         query: nameQuery || null,
         customers,
         message: customers.length === 1
-          ? "Tek eşleşme bulundu; VKN'yi kullanıcıya tekrar sormadan kullanabilirsin (alıcıyı onay özetinde belirt)."
+          ? "Tek eşleşme bulundu; VKN'yi kullanıcıya tekrar sormadan kullanabilirsin. last_invoice_* alanları (tutar, KDV, para birimi) 'aynısını kes' önerisi için kullanılabilir; kalem detayı gerekiyorsa latest_invoice çağır."
           : "Birden çok eşleşme var; kullanıcıya hangisi olduğunu sor.",
       };
     }
@@ -339,6 +288,59 @@ export async function executeToolImpl(
           }));
         }
         await savePendingInvoice(supabase, conversationId, null);
+      }
+
+      // Yurt içi faturada buyer_tax_id verilmediyse alıcıyı geçmiş
+      // faturalardaki kayıtlı müşterilerden sunucu tarafında çöz; böylece
+      // model önce find_customer çağırmak zorunda kalmaz (tek tur tasarrufu).
+      const buyerTaxIdInput = typeof input.buyer_tax_id === "string"
+        ? input.buyer_tax_id.replace(/\s/g, "")
+        : "";
+      const buyerCountryInput = typeof input.buyer_country === "string"
+        ? input.buyer_country
+        : undefined;
+      let resolvedBuyer: KnownCustomer | null = null;
+      if (!buyerTaxIdInput && !isForeignBuyerCountry(buyerCountryInput)) {
+        const buyerNameQuery = typeof input.buyer_name === "string"
+          ? input.buyer_name.trim()
+          : "";
+        if (!buyerNameQuery) {
+          return {
+            status: "customer_not_found",
+            message:
+              "Alıcı adı ve VKN/TCKN eksik; taslak oluşturulmadı. Kullanıcıdan alıcı bilgisini iste.",
+          };
+        }
+        const matches = await findKnownCustomers(
+          supabase,
+          scopeKey,
+          buyerNameQuery,
+          5,
+        );
+        if (matches.length === 1) {
+          resolvedBuyer = matches[0];
+          input = { ...input, buyer_tax_id: resolvedBuyer.customer_tax_id };
+        } else if (matches.length > 1) {
+          return {
+            status: "ambiguous_customer",
+            buyer_query: buyerNameQuery,
+            candidates: matches.map((m) => ({
+              customer_name: m.customer_name,
+              customer_tax_id: m.customer_tax_id,
+              last_invoice_date: m.last_invoice_date,
+              invoice_count: m.invoice_count,
+            })),
+            message:
+              "Taslak oluşturulmadı: bu isimle kayıtlı birden çok müşteri var. Adayları kısaca listele ve hangisi olduğunu [öneriler: …] hızlı yanıtlarıyla sor.",
+          };
+        } else {
+          return {
+            status: "customer_not_found",
+            buyer_query: buyerNameQuery,
+            message:
+              `"${buyerNameQuery}" geçmiş faturalarda kayıtlı değil; taslak oluşturulmadı. Kullanıcıdan alıcının VKN/TCKN bilgisini iste.`,
+          };
+        }
       }
 
       const items = input.items as {
@@ -619,6 +621,13 @@ export async function executeToolImpl(
       return {
         status: "preview_ready",
         draft_uuid: preview.draft.uuid,
+        ...(resolvedBuyer
+          ? {
+            buyer_resolved_from_history: true,
+            resolved_buyer_name: resolvedBuyer.customer_name,
+            resolved_buyer_tax_id: resolvedBuyer.customer_tax_id,
+          }
+          : {}),
         ...(isForeignInvoiceCurrency(currency)
           ? { exchange_rate: resolvedRate, currency }
           : {}),

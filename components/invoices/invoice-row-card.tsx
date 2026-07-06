@@ -10,6 +10,7 @@ import { callApi, userFacingApiError } from "@/lib/supabase";
 import type { InvoiceDetail } from "@/types/chat-actions";
 import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -126,6 +127,24 @@ export function InvoiceRowCard({
       title: docNo ? `Fatura ${docNo}` : counterparty,
     });
   }, [item, listDirection, onOpenIncomingResponse]);
+
+  // Giden faturayı sohbette taslak mesajla yeniden kestir: "/" ekranına
+  // draftMessage ile gider; chat input doldurulur, gönderim kullanıcıya kalır.
+  const reissueCustomer =
+    listDirection === "outgoing" ? counterpartyTitle(item, listDirection) : "—";
+  const canReissue = reissueCustomer !== "—";
+
+  const handleReissue = useCallback(() => {
+    if (!canReissue) return;
+    const docNo = item.belgeNumarasi?.trim();
+    const message = docNo
+      ? `${reissueCustomer} için ${docNo} numaralı faturanın aynısını kes`
+      : `${reissueCustomer} için geçen seferkiyle aynı faturayı kes`;
+    router.replace({
+      pathname: "/",
+      params: { draftMessage: message, draftKey: String(Date.now()) },
+    });
+  }, [canReissue, item.belgeNumarasi, reissueCustomer]);
 
   const showPreviewOnly =
     typeof item.ettn === "string" &&
@@ -248,6 +267,19 @@ export function InvoiceRowCard({
             >
               <Ionicons name="document-text-outline" size={18} color="#fff" />
               <Text style={styles.previewBtnText}>Faturayı Gör</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {canReissue ? (
+            <TouchableOpacity
+              style={styles.reissueBtn}
+              onPress={handleReissue}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Aynı müşteriye yeniden fatura kes"
+            >
+              <Ionicons name="repeat-outline" size={18} color="#000" />
+              <Text style={styles.reissueBtnText}>Yeniden fatura kes</Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -375,6 +407,24 @@ const styles = StyleSheet.create({
   },
   previewBtnText: {
     color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  reissueBtn: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#D9D9D9",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  reissueBtnText: {
+    color: "#000",
     fontSize: 14,
     fontWeight: "600",
   },

@@ -1,6 +1,6 @@
 import { useAnimatedChatInputPadding } from "@/hooks/use-keyboard";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,6 +15,10 @@ interface ChatInputProps {
   placeholder?: string;
   onAttach?: () => void;
   onVoice?: () => void;
+  /** Dışarıdan gelen taslak metin: input'a bir kez yazılır, kullanıcı düzenleyebilir. */
+  draftText?: string | null;
+  /** Taslak input'a uygulandığında çağrılır — parent taslağı temizlemeli. */
+  onDraftConsumed?: () => void;
 }
 
 export default function ChatInput({
@@ -26,10 +30,20 @@ export default function ChatInput({
   placeholder = "finla'ya yaz",
   onAttach,
   onVoice,
+  draftText = null,
+  onDraftConsumed,
 }: ChatInputProps) {
   const [text, setText] = useState("");
+  const inputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
   const animatedContainerStyle = useAnimatedChatInputPadding(insets.bottom);
+
+  useEffect(() => {
+    if (!draftText) return;
+    setText(draftText);
+    inputRef.current?.focus();
+    onDraftConsumed?.();
+  }, [draftText, onDraftConsumed]);
 
   const handleSend = async () => {
     if (disabled) return;
@@ -61,6 +75,7 @@ export default function ChatInput({
         )} */}
 
         <TextInput
+          ref={inputRef}
           testID="chat-input"
           accessibilityLabel="Finla'ya sor"
           style={[styles.input, disabled && styles.inputDisabled]}

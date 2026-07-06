@@ -94,6 +94,23 @@ export function getInvoiceCacheEntry(
   return syncCache.get(rangeKey);
 }
 
+/**
+ * Bellekteki taze cache girişlerinden, verilen yöne ait tüm fatura satırlarını
+ * (en yeni fetch edilen giriş önce) döndürür. Ağ çağrısı yapmaz; cache boşsa
+ * boş dizi döner. Önce `hydrateInvoiceCache` çağrılmış olmalı.
+ */
+export function getCachedInvoiceRowsForDirection(
+  direction: "outgoing" | "incoming",
+): CachedInvoiceRow[] {
+  pruneStaleFromMap(syncCache);
+  const entries: InvoiceCacheEntry[] = [];
+  for (const [key, entry] of syncCache.entries()) {
+    if (key.startsWith(`${direction}|`)) entries.push(entry);
+  }
+  entries.sort((a, b) => b.fetchedAt - a.fetchedAt);
+  return entries.flatMap((e) => e.data);
+}
+
 export async function putInvoiceCacheEntry(
   accessToken: string,
   rangeKey: string,

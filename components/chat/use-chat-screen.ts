@@ -35,6 +35,8 @@ export function useChatScreen() {
     loadConversationId?: string;
     loadKey?: string;
     resetKey?: string;
+    draftMessage?: string;
+    draftKey?: string;
   }>();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -160,6 +162,34 @@ export function useChatScreen() {
     typeof routeParams.loadKey === "string" ? routeParams.loadKey : undefined;
   const resetKey =
     typeof routeParams.resetKey === "string" ? routeParams.resetKey : undefined;
+  const draftMessage =
+    typeof routeParams.draftMessage === "string"
+      ? routeParams.draftMessage
+      : undefined;
+  const draftKey =
+    typeof routeParams.draftKey === "string" ? routeParams.draftKey : undefined;
+
+  // Diğer ekranlardan gelen taslak mesaj (ör. "Yeniden fatura kes"):
+  // draftKey başına yalnızca BİR kez input'a yazılır; input tükettiğinde
+  // temizlenir, böylece yeniden odak/render tekrar doldurmaz.
+  const [draftInput, setDraftInput] = useState<string | null>(null);
+  const consumedDraftKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!draftMessage || !draftKey) return;
+    if (consumedDraftKeyRef.current === draftKey) return;
+    consumedDraftKeyRef.current = draftKey;
+    setDraftInput(draftMessage);
+  }, [draftMessage, draftKey]);
+
+  const consumeDraftInput = useCallback(() => {
+    setDraftInput(null);
+  }, []);
+
+  /** Aynı ekrandan (ör. fatura detay modalı) input'u taslakla doldurur. */
+  const prefillInput = useCallback((text: string) => {
+    setDraftInput(text);
+  }, []);
 
   useEffect(() => {
     if (!sessionLabel || !loadConversationId || !loadKey) return;
@@ -384,6 +414,9 @@ export function useChatScreen() {
     previewAction,
     confirmingDraftUuid,
     openingConversationId,
+    draftInput,
+    consumeDraftInput,
+    prefillInput,
     setDetailAction,
     setPreviewAction,
     handleSend,

@@ -61,7 +61,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'find_customer',
     description:
-      'Kullanıcının geçmiş faturalarındaki (giden + gelen) kayıtlı müşteri/tedarikçileri isme göre arar; ünvan + VKN/TCKN döner. Fatura keserken kullanıcı yalnızca isim verdiyse VKN sormadan ÖNCE bunu çağır. name boş verilirse en son çalışılan tarafları listeler.',
+      'Kullanıcının geçmiş faturalarındaki (giden + gelen) kayıtlı müşteri/tedarikçileri isme göre arar; ünvan + VKN/TCKN + son fatura özeti (tarih, brüt/net/KDV toplamı, para birimi, fatura sayısı) döner. Keşif soruları ("kime fatura kesmiştim", "X ile çalışmış mıyım") ve "aynısını kes" tutar önerisi için kullan. Fatura keserken sırf VKN bulmak için ÇAĞIRMANA GEREK YOK: create_invoice buyer_tax_id olmadan çağrılınca kayıtlı müşteriyi kendisi çözer. name boş verilirse en son çalışılan tarafları listeler.',
     input_schema: {
       type: 'object',
       properties: {
@@ -98,7 +98,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
+      'e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Yurt içi alıcıda buyer_tax_id verilmezse sistem alıcıyı geçmiş faturalardaki kayıtlı müşterilerden isimle otomatik çözer (tek eşleşme → taslak; birden çok → ambiguous_customer; yok → customer_not_found, taslak oluşmaz). Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
     input_schema: {
       type: 'object',
       properties: {
@@ -109,7 +109,7 @@ export const TOOLS: Anthropic.Tool[] = [
         buyer_tax_id: {
           type: 'string',
           description:
-            'Alıcının TC Kimlik No veya Vergi Kimlik No. Yurt içi alıcı için zorunlu; yurt dışı alıcıda gönderme. Tevkifatlı faturada zorunlu.',
+            'Alıcının TC Kimlik No veya Vergi Kimlik No. Yurt içi alıcıda opsiyonel: daha önce fatura kesilmiş/alınmış (kayıtlı) müşteride boş bırak, sistem geçmiş faturalardan çözer; yeni müşteride kullanıcıdan iste. Yurt dışı alıcıda gönderme.',
         },
         buyer_address: {
           type: 'string',
@@ -450,7 +450,7 @@ export function assembleSystemPrompt(): string {
     '- Son faturayı bulma (latest_invoice): giden veya gelen; list_invoices değil',
     '- Fatura iptal etme (cancel_invoice)',
     '- Alıcı bilgisi sorgulama (lookup_recipient)',
-    '- Kayıtlı müşteri arama (find_customer): geçmiş faturalardan isim → VKN/TCKN',
+    '- Kayıtlı müşteri arama (find_customer): geçmiş faturalardan isim → VKN/TCKN + son fatura özeti',
     '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv, rapor veya dışarı aktarma isterse bu araçla .xlsx üret',
     '- Kullanıcı profil bilgisi (get_user_profile)',
     '- GİB profil kaydı güncelleme (update_user_profile)',
@@ -467,10 +467,11 @@ export function assembleSystemPrompt(): string {
     `- Fatura akışı: (1) create_invoice → taslak, (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (sistem imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
     `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
     `- Bekleyen taslakta kullanıcı değişiklik isterse (tevkifat ekle, tutar değiştir vb.) create_invoice aracını replace_existing_draft=true ve GÜNCEL parametrelerle çağır; eski taslak otomatik silinir. "Taslak silinemiyor" deme`,
-    `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı, varsa tevkifat/istisna) özetle ve onay al`,
-    `- Kullanıcıya olabildiğince AZ yazı yazdır. Fatura için eksik bilgileri tek tek sorma; eksikleri TEK mesajda topla ve makul varsayılanları öner (KDV belirtilmediyse %20 öner, tarih belirtilmediyse bugün, miktar belirtilmediyse 1 adet). Kullanıcı "evet/onayla" diyerek ilerleyebilmeli`,
-    `- Fatura keserken kullanıcı alıcıyı yalnızca İSİMLE verdiyse VKN/TCKN sormadan önce find_customer çağır: tek eşleşme → kayıtlı VKN'yi kullan ve "kayıtlı bilgilerinden aldım" diye kısaca belirt; birden çok eşleşme → adayları sor; eşleşme yoksa VKN/TCKN iste`,
-    `- Kullanıcı "geçen ayki gibi", "aynısını kes", "her zamanki faturayı kes" derse latest_invoice ile o müşteriye kesilen son faturayı bul; tutar/KDV bilgilerini oradan önerip tek onayla taslağa geç`,
+    `- Taslak-önce akışı: alıcı belli ve tutar biliniyorsa ÖN ONAY İSTEME, doğrudan create_invoice ile taslağı oluştur. Taslak fatura kesmez; gerçek onay adımı önizlemedeki "Onayla ve Kes" düğmesidir. Eksik detaylarda güvenli varsayılanları kullan (KDV belirtilmediyse %20, tarih belirtilmediyse bugün, miktar belirtilmediyse 1 adet) ve varsaydıklarını taslak mesajında kısaca belirt (ör. "%20 KDV varsaydım, önizlemeden kontrol edebilirsin")`,
+    `- Taslaktan ÖNCE soru sormanı gerektiren TEK durumlar: tutar eksik/belirsiz, tevkifat veya istisna gerekip gerekmediği belirsiz, dövizli fatura (kur onayı akışı) veya birden çok müşteri adayı. Bunların dışında "onaylıyor musun?" diye sorma, özet yazıp bekleme`,
+    `- Kullanıcıya olabildiğince AZ yazı yazdır. Soru sorman gereken durumlarda eksikleri tek tek sorma; TEK mesajda topla. Varsayılanla kapanabilen eksikler (KDV, tarih, miktar) için soru sorma, varsayılanı uygulayıp taslağa geç`,
+    `- Fatura keserken kullanıcı alıcıyı yalnızca İSİMLE verdiyse VKN/TCKN sorma ve find_customer çağırmana da gerek yok: create_invoice'u buyer_tax_id olmadan çağır, sistem kayıtlı müşteriden VKN'yi kendisi çözer. Sonuçta buyer_resolved_from_history varsa "alıcı bilgilerini kayıtlı bilgilerinden aldım" diye kısaca belirt; ambiguous_customer dönerse adayları [öneriler: …] çipleriyle sor; customer_not_found dönerse VKN/TCKN iste. find_customer'ı keşif soruları için kullan (ör. "kime fatura kesmiştim")`,
+    `- Kullanıcı "geçen ayki gibi", "aynısını kes", "her zamanki faturayı kes" derse find_customer sonucundaki son fatura özetinden (last_invoice_* tutar/KDV/para birimi) tutarı al; kalem açıklaması gibi detay gerekiyorsa latest_invoice ile son faturayı bul ve ek soru sormadan taslağa geç`,
     `- Cevabı seçeneklerden biri olabilecek bir soru sorduğunda (KDV oranı, tevkifat var mı, para birimi, onay vb.) mesajının EN SONUNA tek satır halinde şu formatta hızlı yanıtlar ekle: [öneriler: seçenek1 | seçenek2 | seçenek3]. En fazla 4 kısa seçenek; her seçenek kullanıcının aynen gönderebileceği doğal bir yanıt olsun (ör. [öneriler: %20 KDV | %10 KDV | KDV yok]). Uygulama bunları dokunulabilir çip olarak gösterir; serbest metin beklediğin sorularda (tutar, açıklama) ekleme`,
     `- Tevkifat: kullanıcı tevkifatlı fatura isterse işlem türüne uygun kodu (601–627) netleştir; kalemde withholding_code gönder. Tevkifat tutarını KENDİN HESAPLAMA, sistem KDV üzerinden koda göre hesaplar. Tevkifat KDV'den kesilir, net tutardan değil. Alıcı VKN/TCKN zorunlu. Kullanıcı oran söylerse (ör. 9/10) koda uygunluğunu doğrula; uyuşmazsa kullanıcıyla netleştir`,
     `- Tevkifat alt sınırı: KDV dahil tutar 12.000 TL ve altındaysa (2026) kısmi tevkifat genelde uygulanmaz (aynı güne ait aynı alıcı faturaları toplamı esas alınır); kullanıcıyı bilgilendir ama kararı ona bırak`,
@@ -482,7 +483,7 @@ export function assembleSystemPrompt(): string {
     `- İade faturası ("gelen faturayı iade et", "malı geri gönderiyorum"): SADECE bize kesilmiş (gelen) faturanın iadesi desteklenir. Akış: (1) orijinal faturayı gelen faturalardan bul (list_invoices direction=incoming) veya belge no + tarihi kullanıcıdan iste, (2) alıcı = orijinal faturayı KESEN taraf (gönderici ünvan + VKN), (3) kalemler iade edilen mal/hizmet, KDV oranları orijinaldekiyle AYNI olmalı, (4) iade sebebini sor ve return_reason ile gönder, (5) return_ref_invoice_no + return_ref_invoice_date ile create_invoice çağır. Kısmi iade serbest ama toplam orijinal fatura tutarını AŞAMAZ. Belge numarasını asla tahmin etme`,
     `- İade faturasında tevkifat uygulanamaz (özel düzeltme kuralı); orijinal fatura tevkifatlıysa kullanıcıyı mali müşavirine yönlendir`,
     `- Kendi kestiğimiz (giden) faturayı geri almak iade değil İPTAL veya alıcının iade faturası konusudur; kullanıcı bunu isterse cancel_invoice akışını veya karşı tarafın iade kesmesi gerektiğini anlat`,
-    `- create_invoice çağrısı sadece önizleme içindir; kullanıcı "onaylıyorum" demeden faturayı kesme`,
+    `- create_invoice sadece taslak/önizleme oluşturur, fatura kesmez; kesim için kullanıcı önizlemeden onay vermeden confirm_invoice_issue çağırma`,
     `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
     `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,
     `- Birim alanında Türkçe yaz (adet, saat, kg); sistem GİB koduna çevirir`,
@@ -517,7 +518,8 @@ export function assembleSystemPrompt(): string {
     `- Cevabı kısa tut (genelde 2-5 cümle).`,
     ``,
     `Fatura arama/filtreleme:`,
-    `- Fatura kesim akışı: (1) create_invoice ile taslak, (2) önizleme, (3) confirm_invoice_issue ile GİB'e gönderim.`,
+    `- Fatura kesim akışı: (1) create_invoice ile taslak (ön onay sorusu YOK), (2) önizleme — kullanıcı burada kontrol eder ve onaylar, (3) confirm_invoice_issue ile GİB'e gönderim.`,
+    `- create_invoice "ambiguous_customer" veya "customer_not_found" döndürürse taslak OLUŞMAMIŞTIR: ambiguous_customer'da adayları kısaca listele ve [öneriler: …] çipleriyle hangisi olduğunu sor; customer_not_found'da alıcının VKN/TCKN'sini iste.`,
     `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR ÇAĞIRMA; kullanıcıya mevcut taslağı önizle.`,
     `- Kullanıcı "taslağı gör", "önizle", "pdf" derse yeni taslak oluşturma; mevcut pending taslak varsa onu aç.`,
     `- list_invoices aracından boş sonuç gelirse, kullanılan tarih ve filtre kriterlerini kullanıcıya bildir (örnek: "Ahmet için bu ay fatura bulunamadı").`,

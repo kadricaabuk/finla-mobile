@@ -1,8 +1,9 @@
 import { setOnboardingSeen } from "@/lib/onboarding-local";
 import { getTokens } from "@/lib/session";
+import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
 import { Image, type ImageSource } from "expo-image";
 import { router } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -89,6 +90,13 @@ export default function OnboardingScreen() {
   const [loading, setLoading] = useState(false);
 
   const isLastSlide = activeIndex === SLIDES.length - 1;
+
+  // Splash geçiş hakkını tüket: onboarding'den sonra açılan login,
+  // splash animasyonunu tekrar oynatmasın.
+  useEffect(() => {
+    claimSplashHandoff();
+    void releaseNativeSplash();
+  }, []);
 
   const handleComplete = useCallback(async () => {
     if (loading) return;

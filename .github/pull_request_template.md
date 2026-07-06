@@ -6,9 +6,9 @@
 
 - [ ] `npm run lint` passes locally (also enforced in CI)
 - [ ] `npm run test:chat` and `npm run test:auth-lock` pass (also enforced in CI)
-- [ ] **`maestro-smoke` passes on the self-hosted runner** (required for merge to `develop`)
+- [ ] `npm run maestro:smoke` passes locally (optional; CI Maestro workflow is disabled for now)
 
-## Maestro (local dry-run, optional)
+## Maestro (local)
 
 ```bash
 cp .maestro/.env.example .maestro/.env   # set TEST_PHONE / TEST_PIN for staging

@@ -1,34 +1,27 @@
-# Maestro P0 smoke on a self-hosted macOS runner.
+# DISABLED — Maestro CI paused until a macOS runner strategy is chosen
+# (self-hosted service, GitHub-hosted macOS, or Maestro Cloud).
 #
-# One-time Mac setup:
-#   1. Install Xcode, Node 22, Maestro (`brew install mobile-dev-inc/tap/maestro`)
-#   2. GitHub repo → Settings → Actions → Runners → New self-hosted runner → macOS
-#      Use labels: self-hosted, macOS, finla
-#   3. Add secrets (repo or `develop` environment):
-#        EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_API_BASE_URL
-#        TEST_PHONE, TEST_PIN  (staging user with tenant + onboarding complete)
-#   4. Branch protection on `develop`: require checks lint, deno-tests, maestro-smoke
+# To re-enable:
+#   1. Restore `pull_request` under `on:` below
+#   2. Remove `if: false` from the job
+#   3. Set `runs-on` to your runner (self-hosted or macos-latest)
 #
-# Staging prerequisites:
-#   - feature_flags.outgoingInvoices enabled
-#   - Mysoft mock or sandbox credentials on the Supabase project
+# Local smoke: npm run maestro:smoke (see .maestro/.env.example)
 
 name: Maestro smoke
 
 on:
-  pull_request:
-    branches:
-      - develop
   workflow_dispatch:
 
 concurrency:
-  group: maestro-smoke-${{ github.head_ref || github.ref_name }}
+  group: maestro-smoke-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   maestro-smoke:
     name: maestro-smoke
-    runs-on: [self-hosted, macOS, finla]
+    if: false
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 90
     environment: develop
 

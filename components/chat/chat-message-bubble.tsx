@@ -218,16 +218,19 @@ const styles = StyleSheet.create({
   userBubble: {
     alignSelf: "flex-end",
     backgroundColor: "#000",
+    borderBottomRightRadius: 6,
   },
   aiBubble: {
     alignSelf: "flex-start",
-    backgroundColor: "#F2F2F2",
+    backgroundColor: "#F3F4F9",
+    borderBottomLeftRadius: 6,
   },
   aiBubblePending: {
     alignSelf: "flex-start",
-    backgroundColor: "#EAEAEA",
+    backgroundColor: "#F3F4F9",
     borderWidth: 1,
-    borderColor: "#E0E0E0",
+    borderColor: "#E4E5EC",
+    borderBottomLeftRadius: 6,
   },
   markdownPendingWrap: {
     opacity: 0.58,

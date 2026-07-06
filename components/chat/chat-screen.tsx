@@ -3,6 +3,7 @@ import { ChatMessageBubble } from "@/components/chat/chat-message-bubble";
 import { InvoiceDetailModal } from "@/components/chat/invoice-detail-modal";
 import { InvoicePreviewModal } from "@/components/chat/invoice-preview-modal";
 import { useChatScreen } from "@/components/chat/use-chat-screen";
+import { useExamplePrompts } from "@/components/chat/use-example-prompts";
 import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
@@ -10,7 +11,8 @@ import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-si
 import { splitQuickReplies } from "@/lib/chat-quick-replies";
 import { shareExcelDownload } from "@/lib/excel-share";
 import type { ChatMessageAction } from "@/types/chat-actions";
-import { useCallback, useMemo } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,7 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import Animated from "react-native-reanimated";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const CHAT_SHELL_OWNER_ID = "screen-chat";
@@ -28,6 +30,7 @@ const CHAT_SHELL_OWNER_ID = "screen-chat";
 export default function ChatScreen() {
   const keyboardAvoidPaddingStyle = useKeyboardAvoidancePadding();
   const { openMenu } = useMainAppShell();
+  const [inputFocused, setInputFocused] = useState(false);
   const {
     scrollRef,
     messages,
@@ -41,6 +44,9 @@ export default function ChatScreen() {
     previewAction,
     confirmingDraftUuid,
     openingConversationId,
+    draftInput,
+    consumeDraftInput,
+    prefillInput,
     setDetailAction,
     setPreviewAction,
     handleSend,
@@ -49,6 +55,8 @@ export default function ChatScreen() {
     handleNewChat,
     handleOpenConversation,
   } = useChatScreen();
+
+  const examplePrompts = useExamplePrompts();
 
   const handleShareExcelExport = useCallback(
     async (action: ChatMessageAction | undefined) => {
@@ -87,6 +95,22 @@ export default function ChatScreen() {
 
   useRegisterMainShellSideMenu(CHAT_SHELL_OWNER_ID, sideMenuBindings);
 
+  // Detay aksiyonundan fatura yönünü çıkar: fatura payload'ındaki direction
+  // öncelikli, yoksa aksiyon filtresi. Bilinmiyorsa buton gösterilmez.
+  const detailDirection = useMemo(() => {
+    const invDir = (detailInvoice as { direction?: unknown } | null)?.direction;
+    if (invDir === "outgoing" || invDir === "incoming") return invDir;
+    return detailAction?.filter?.direction;
+  }, [detailInvoice, detailAction]);
+
+  const handleReissueFromDetail = useCallback(
+    (message: string) => {
+      setDetailAction(null);
+      prefillInput(message);
+    },
+    [prefillInput, setDetailAction],
+  );
+
   // Hızlı yanıt çipleri: yalnızca son mesaj bir asistan sorusuysa ve stream
   // bittiyse gösterilir; dokununca metin aynen gönderilir.
   const lastMessage = messages[messages.length - 1];
@@ -119,6 +143,36 @@ export default function ChatScreen() {
             keyboardDismissMode="none"
             keyboardShouldPersistTaps="always"
           >
+            {messages.length === 0 &&
+              inputFocused &&
+              !loading &&
+              !openingConversationId && (
+                <View style={styles.emptyState}>
+                  {examplePrompts.map((prompt, index) => (
+                    <Animated.View
+                      key={prompt.text}
+                      entering={FadeInDown.duration(200).delay(index * 40)}
+                    >
+                      <TouchableOpacity
+                        style={styles.promptRow}
+                        activeOpacity={0.6}
+                        disabled={loading || streaming}
+                        onPress={() => handleSend(prompt.text)}
+                      >
+                        <View style={styles.promptIconWrap}>
+                          <Ionicons
+                            name={prompt.icon}
+                            size={15}
+                            color="#1A1A2E"
+                          />
+                        </View>
+                        <Text style={styles.promptText}>{prompt.text}</Text>
+                      </TouchableOpacity>
+                    </Animated.View>
+                  ))}
+                </View>
+              )}
+
             {messages.map((msg) => (
               <ChatMessageBubble
                 key={msg.id}
@@ -174,21 +228,22 @@ export default function ChatScreen() {
           </ScrollView>
         </View>
 
-        <ChatInput disabled={loading || streaming} onSend={handleSend} />
-        {streaming && (
-          <TouchableOpacity
-            style={styles.cancelStreamBtn}
-            onPress={handleCancelStream}
-            accessibilityLabel="Yanıtı durdur"
-          >
-            <Text style={styles.cancelStreamText}>Durdur</Text>
-          </TouchableOpacity>
-        )}
+        <ChatInput
+          disabled={loading || streaming}
+          streaming={streaming}
+          onStop={handleCancelStream}
+          onFocusChange={setInputFocused}
+          onSend={handleSend}
+          draftText={draftInput}
+          onDraftConsumed={consumeDraftInput}
+        />
       </Animated.View>
 
       <InvoiceDetailModal
         visible={Boolean(detailAction?.invoice)}
         invoice={detailInvoice}
+        direction={detailDirection}
+        onReissue={handleReissueFromDetail}
         onClose={() => setDetailAction(null)}
       />
 
@@ -219,6 +274,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E4E5EC",
   },
   headerBtnSpacer: {
     width: 40,
@@ -226,8 +283,8 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 22,
-    fontWeight: "600",
-    letterSpacing: -0.5,
+    fontWeight: "700",
+    letterSpacing: -0.8,
     color: "#000",
   },
   messagesContent: {
@@ -235,6 +292,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 8,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingBottom: 4,
+    paddingHorizontal: 4,
+    gap: 4,
+  },
+  promptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+  },
+  promptIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#F2F4FD",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  promptText: {
+    flex: 1,
+    fontSize: 15,
+    color: "#1A1A2E",
   },
   bubble: {
     maxWidth: "80%",
@@ -244,7 +327,7 @@ const styles = StyleSheet.create({
   },
   aiBubble: {
     alignSelf: "flex-start",
-    backgroundColor: "#F2F2F2",
+    backgroundColor: "#F3F4F9",
   },
   loadingBubble: {
     paddingVertical: 12,

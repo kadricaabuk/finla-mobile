@@ -24,13 +24,13 @@ export const chatMarkdownStyles = {
   },
   table: {
     borderWidth: 1,
-    borderColor: "#D7D7D7",
+    borderColor: "#DDE0EA",
     borderRadius: 8,
     marginTop: 4,
     marginBottom: 8,
   },
   thead: {
-    backgroundColor: "#ECECEC",
+    backgroundColor: "#EEF0F7",
   },
   th: {
     paddingVertical: 6,

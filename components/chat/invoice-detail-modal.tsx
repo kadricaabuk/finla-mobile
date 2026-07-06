@@ -7,13 +7,29 @@ interface InvoiceDetailModalProps {
   visible: boolean;
   invoice: InvoiceDetail | null;
   onClose: () => void;
+  /** Yalnızca "outgoing" bilindiğinde "Yeniden fatura kes" gösterilir. */
+  direction?: "outgoing" | "incoming";
+  /** Taslak mesajla çağrılır; parent modalı kapatıp input'u doldurur. */
+  onReissue?: (message: string) => void;
 }
 
 export function InvoiceDetailModal({
   visible,
   invoice,
   onClose,
+  direction,
+  onReissue,
 }: InvoiceDetailModalProps) {
+  const customerName = invoice?.customer_name?.trim();
+  const canReissue = Boolean(
+    direction === "outgoing" && onReissue && customerName,
+  );
+
+  const handleReissue = () => {
+    if (!customerName || !onReissue) return;
+    onReissue(`${customerName} için geçen seferkiyle aynı faturayı kes`);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -51,9 +67,20 @@ export function InvoiceDetailModal({
           <Text style={styles.modalLine}>
             ETTN: {invoice?.invoice_uuid || "—"}
           </Text>
-          <Pressable style={styles.modalCloseBtn} onPress={onClose}>
-            <Text style={styles.modalCloseBtnText}>Kapat</Text>
-          </Pressable>
+          <View style={styles.modalFooter}>
+            {canReissue ? (
+              <Pressable style={styles.modalReissueBtn} onPress={handleReissue}>
+                <Text style={styles.modalReissueBtnText}>
+                  Yeniden fatura kes
+                </Text>
+              </Pressable>
+            ) : (
+              <View />
+            )}
+            <Pressable style={styles.modalCloseBtn} onPress={onClose}>
+              <Text style={styles.modalCloseBtnText}>Kapat</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
       {/* Native Modal ayrı pencerede çizilir; kök PrivacyCover'ı örtmez. */}
@@ -88,13 +115,31 @@ const styles = StyleSheet.create({
     color: "#111",
     lineHeight: 20,
   },
+  modalFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+    gap: 8,
+  },
+  modalReissueBtn: {
+    borderWidth: 1,
+    borderColor: "#D9D9D9",
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  modalReissueBtnText: {
+    color: "#000",
+    fontSize: 13,
+    fontWeight: "600",
+  },
   modalCloseBtn: {
-    alignSelf: "flex-end",
     backgroundColor: "#000",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    marginTop: 4,
   },
   modalCloseBtnText: {
     color: "#fff",

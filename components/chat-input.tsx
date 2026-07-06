@@ -8,6 +8,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 interface ChatInputProps {
   onSend: (text: string) => void | Promise<void>;
   disabled?: boolean;
+  /** Yanıt akarken gönder butonu durdur butonuna dönüşür. */
+  streaming?: boolean;
+  onStop?: () => void;
+  onFocusChange?: (focused: boolean) => void;
   placeholder?: string;
   onAttach?: () => void;
   onVoice?: () => void;
@@ -16,7 +20,10 @@ interface ChatInputProps {
 export default function ChatInput({
   onSend,
   disabled = false,
-  placeholder = "Finla'ya sor",
+  streaming = false,
+  onStop,
+  onFocusChange,
+  placeholder = "finla'ya yaz",
   onAttach,
   onVoice,
 }: ChatInputProps) {
@@ -64,9 +71,21 @@ export default function ChatInput({
           multiline
           editable={!disabled}
           returnKeyType="default"
+          onFocus={() => onFocusChange?.(true)}
+          onBlur={() => onFocusChange?.(false)}
         />
 
-        {hasText && (
+        {streaming && onStop ? (
+          <TouchableOpacity
+            testID="chat-stop"
+            accessibilityLabel="Yanıtı durdur"
+            style={[styles.circleBtn, styles.actionBtn]}
+            onPress={onStop}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="stop" size={16} color="#fff" />
+          </TouchableOpacity>
+        ) : hasText ? (
           <TouchableOpacity
             testID="chat-send"
             accessibilityLabel="Gönder"
@@ -81,7 +100,7 @@ export default function ChatInput({
           >
             <Ionicons name="arrow-up" size={20} color="#fff" />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </Animated.View>
   );
@@ -121,7 +140,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: "#F2F2F2",
+    backgroundColor: "#F3F4F9",
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 11,

@@ -1,4 +1,6 @@
 import { clearLegacyCredentials, saveTokens } from "@/lib/session";
+import { offerBiometricSetupAfterAuth } from "@/lib/biometric-auth";
+import { consumePinFallbackReauth, refreshAppLockSession, unlockAppLockSession } from "@/contexts/app-lock-context";
 import {
   authLinkTenant,
   authRequestOtp,
@@ -290,7 +292,18 @@ export default function LoginScreen() {
         setMode("link_tenant");
         return;
       }
-      router.replace("/");
+      if (consumePinFallbackReauth()) {
+        await refreshAppLockSession();
+        unlockAppLockSession();
+        router.replace("/");
+        return;
+      }
+      const setup = await offerBiometricSetupAfterAuth();
+      await refreshAppLockSession();
+      if (setup.enabled && setup.verified) {
+        unlockAppLockSession();
+      }
+      router.replace(setup.enabled && !setup.verified ? "/unlock" : "/");
     } catch (err) {
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {
@@ -399,7 +412,12 @@ export default function LoginScreen() {
         return;
       }
       await persistAuthResponse(res);
-      router.replace("/");
+      const setup = await offerBiometricSetupAfterAuth();
+      await refreshAppLockSession();
+      if (setup.enabled && setup.verified) {
+        unlockAppLockSession();
+      }
+      router.replace(setup.enabled && !setup.verified ? "/unlock" : "/");
     } catch (err) {
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {

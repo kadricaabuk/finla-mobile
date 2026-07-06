@@ -1,5 +1,5 @@
-# Single login attempt. Called with env TEST_USERNAME / TEST_PASSWORD.
-# On failure: waits for alert after loading ends, dismisses, fails fast (no 30s chat wait).
+# Single login attempt. Env: TEST_PHONE (5XXXXXXXXX), TEST_PIN (6 digits).
+# Staging user must exist with tenant linked and onboarding complete.
 
 appId: com.finla.app
 ---
@@ -12,45 +12,39 @@ appId: com.finla.app
     optional: true
     label: "Dismiss alert (TR)"
 - tapOn:
-    id: "login-username"
+    text: "Şimdi değil"
+    optional: true
+    label: "Decline biometric opt-in"
+- tapOn:
+    id: "login-phone"
 - eraseText
-- inputText: ${TEST_USERNAME}
+- inputText: ${TEST_PHONE}
 - tapOn:
     id: "login-password"
 - eraseText
-- inputText: ${TEST_PASSWORD}
-- tapOn: "finla"
+- inputText: ${TEST_PIN}
 - tapOn:
     id: "login-submit"
-- extendedWaitUntil:
-    notVisible:
-      id: "login-loading"
-    timeout: 45000
-    label: "Wait for login request to finish"
+- tapOn:
+    text: "Şimdi değil"
+    optional: true
+    label: "Decline biometric opt-in after login"
 - runFlow:
     when:
       visible:
-        id: "login-username"
+        id: "login-phone"
     commands:
       - extendedWaitUntil:
-          visible: "GİB Oturumu Açık"
-          timeout: 5000
-          optional: true
-      - extendedWaitUntil:
           visible: "Giriş Başarısız"
-          timeout: 2000
+          timeout: 5000
           optional: true
       - extendedWaitUntil:
           visible: "Bağlantı Hatası"
           timeout: 2000
           optional: true
       - extendedWaitUntil:
-          visible: "OK"
-          timeout: 3000
-          optional: true
-      - extendedWaitUntil:
-          visible: "Tamam"
-          timeout: 3000
+          visible: "Hata"
+          timeout: 2000
           optional: true
       - tapOn:
           text: "OK"

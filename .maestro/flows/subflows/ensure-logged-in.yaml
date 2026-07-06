@@ -1,85 +1,15 @@
-# Tries test users 33333301–33333309 until chat screen appears.
+# Skip onboarding, then log in with TEST_PHONE / TEST_PIN from Maestro env (-e flags).
 
 appId: com.finla.app
 ---
+- runFlow: skip-onboarding.yaml
 - runFlow:
     when:
       notVisible:
         id: "chat-input"
-    optional: true
     file: attempt-login.yaml
     env:
-      TEST_USERNAME: "33333301"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333302"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333303"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333304"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333305"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333306"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333307"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333308"
-      TEST_PASSWORD: "1"
-- runFlow:
-    when:
-      notVisible:
-        id: "chat-input"
-    optional: true
-    file: attempt-login.yaml
-    env:
-      TEST_USERNAME: "33333309"
-      TEST_PASSWORD: "1"
+      TEST_PHONE: ${TEST_PHONE}
+      TEST_PIN: ${TEST_PIN}
+- assertVisible:
+    id: "chat-input"

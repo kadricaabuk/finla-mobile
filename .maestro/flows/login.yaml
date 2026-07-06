@@ -1,4 +1,4 @@
-# Login smoke test — tries test GİB users 33333301–33333309 (password 1).
+# Login smoke test — phone + PIN (TEST_PHONE / TEST_PIN in .maestro/.env or -e flags).
 #
 # Run: npm run maestro:login
 
@@ -7,7 +7,9 @@ appId: com.finla.app
 - launchApp:
     clearState: true
 - assertVisible: "finla"
-- assertVisible: "Kullanıcı Kodu"
+- runFlow: subflows/skip-onboarding.yaml
+- assertVisible:
+    id: "login-phone"
 - runFlow: subflows/ensure-logged-in.yaml
 - assertVisible:
     id: "chat-input"

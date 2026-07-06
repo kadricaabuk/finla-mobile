@@ -1,0 +1,15 @@
+# First launch after clearState shows the intro carousel — skip to login.
+
+appId: com.finla.app
+---
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-skip"
+    commands:
+      - tapOn:
+          id: "onboarding-skip"
+      - extendedWaitUntil:
+          visible:
+            id: "login-phone"
+          timeout: 15000

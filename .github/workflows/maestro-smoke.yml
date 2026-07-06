@@ -1,0 +1,67 @@
+# Maestro P0 smoke on a self-hosted macOS runner.
+#
+# One-time Mac setup:
+#   1. Install Xcode, Node 22, Maestro (`brew install mobile-dev-inc/tap/maestro`)
+#   2. GitHub repo → Settings → Actions → Runners → New self-hosted runner → macOS
+#      Use labels: self-hosted, macOS, finla
+#   3. Add secrets (repo or `develop` environment):
+#        EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_API_BASE_URL
+#        TEST_PHONE, TEST_PIN  (staging user with tenant + onboarding complete)
+#   4. Branch protection on `develop`: require checks lint, deno-tests, maestro-smoke
+#
+# Staging prerequisites:
+#   - feature_flags.outgoingInvoices enabled
+#   - Mysoft mock or sandbox credentials on the Supabase project
+
+name: Maestro smoke
+
+on:
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: maestro-smoke-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  maestro-smoke:
+    name: maestro-smoke
+    runs-on: [self-hosted, macOS, finla]
+    timeout-minutes: 90
+    environment: develop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Write staging Expo env
+        run: |
+          cat > .env.local <<EOF
+          EXPO_PUBLIC_SUPABASE_URL=${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
+          EOF
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build iOS app and run Maestro smoke
+        env:
+          TEST_PHONE: ${{ secrets.TEST_PHONE }}
+          TEST_PIN: ${{ secrets.TEST_PIN }}
+          MAESTRO_SIMULATOR: ${{ vars.MAESTRO_SIMULATOR }}
+        run: bash scripts/ci-maestro-ios.sh
+
+      - name: Upload Maestro debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-debug-${{ github.run_id }}
+          path: ~/.maestro/tests/**/*
+          if-no-files-found: ignore

@@ -2,6 +2,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import { AuthenticationType } from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { Alert, Platform } from "react-native";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
 
 const KEY_ENABLED = "finla_biometric_enabled";
 const KEY_PROMPT_SHOWN = "finla_biometric_prompt_shown";
@@ -165,20 +166,39 @@ export type BiometricSetupResult = {
  * Post-login / post-registration opt-in. Marks the one-time prompt as shown.
  */
 export async function offerBiometricSetupAfterAuth(): Promise<BiometricSetupResult> {
-  if (!(await isBiometricHardwareAvailable())) {
+  const hardware = await isBiometricHardwareAvailable();
+  logAuthLock("biometric.setupAfterAuth.start", { hardware });
+  if (!hardware) {
     return { enabled: false, verified: false };
   }
 
   const labels = await getBiometricLabels();
   const accept = await showEnableBiometricAlert(labels);
   await setBiometricPromptShown();
+  logAuthLock("biometric.setupAfterAuth.optIn", {
+    accept,
+    label: labels.name,
+  });
 
   if (!accept) return { enabled: false, verified: false };
 
   const probe = await authenticateWithBiometric();
-  if (!probe.success) return { enabled: false, verified: false };
+  logAuthLock("biometric.setupAfterAuth.probe", {
+    success: probe.success,
+    ...(probe.success
+      ? {}
+      : { error: probe.error, warning: probe.warning }),
+  });
+  if (!probe.success) {
+    await setBiometricEnabled(false);
+    const storedAfter = await getBiometricEnabled();
+    logAuthLock("biometric.setupAfterAuth.probeFailed", { storedAfter });
+    return { enabled: false, verified: false };
+  }
 
   await setBiometricEnabled(true);
+  const storedAfter = await getBiometricEnabled();
+  logAuthLock("biometric.setupAfterAuth.enabled", { storedAfter });
   return { enabled: true, verified: true };
 }
 
@@ -186,9 +206,12 @@ export async function offerBiometricSetupAfterAuth(): Promise<BiometricSetupResu
  * First cold start for existing users who already have a session.
  */
 export async function offerBiometricSetupOnColdStart(): Promise<BiometricSetupResult> {
-  if (await getBiometricPromptShown()) {
+  const promptShown = await getBiometricPromptShown();
+  if (promptShown) {
     const enabled = await getBiometricEnabled();
+    logAuthLock("biometric.coldStart.cached", { promptShown, enabled });
     return { enabled, verified: false };
   }
+  logAuthLock("biometric.coldStart.offer");
   return offerBiometricSetupAfterAuth();
 }

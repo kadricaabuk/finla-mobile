@@ -3,7 +3,10 @@ import { useAppLock } from "@/contexts/app-lock-context";
 import {
   authenticateWithBiometric,
   getBiometricLabels,
+  setBiometricEnabled,
 } from "@/lib/biometric-auth";
+import { shouldDisableBiometricOnUnlockError } from "@/lib/app-lock-policy";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -40,6 +43,10 @@ export default function UnlockScreen() {
     if (scanInFlightRef.current) return;
 
     if (attemptCountRef.current >= MAX_BIOMETRIC_ATTEMPTS) {
+      logAuthLock("unlock.maxAttempts", {
+        attempts: attemptCountRef.current,
+        keepSession: true,
+      });
       await redirectToPinLogin(true);
       return;
     }
@@ -48,6 +55,13 @@ export default function UnlockScreen() {
 
     try {
       const result = await authenticateWithBiometric();
+      logAuthLock("unlock.scan", {
+        attempt: attemptCountRef.current + 1,
+        success: result.success,
+        ...(result.success
+          ? {}
+          : { error: result.error, warning: result.warning }),
+      });
       if (result.success) {
         attemptCountRef.current = 0;
         unlock();
@@ -55,9 +69,24 @@ export default function UnlockScreen() {
         return;
       }
 
+      // İzin reddedildi / biyometri kullanılamıyor (reinstall sonrası stale flag).
+      if (
+        !result.success &&
+        shouldDisableBiometricOnUnlockError(result.error)
+      ) {
+        logAuthLock("unlock.notAvailable", { disabling: true });
+        await setBiometricEnabled(false);
+        await redirectToPinLogin(true);
+        return;
+      }
+
       attemptCountRef.current += 1;
 
       if (attemptCountRef.current >= MAX_BIOMETRIC_ATTEMPTS) {
+        logAuthLock("unlock.maxAttempts", {
+          attempts: attemptCountRef.current,
+          keepSession: true,
+        });
         await redirectToPinLogin(true);
         return;
       }

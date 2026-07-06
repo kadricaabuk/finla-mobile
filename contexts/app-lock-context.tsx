@@ -1,4 +1,12 @@
 import { SessionBootstrapPlaceholder } from "@/components/layout/session-bootstrap-placeholder";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
+import {
+  computeNeedsUnlock,
+  resolveColdStartLockState,
+  resolveRefreshSessionLockState,
+  shouldRedirectToUnlock,
+  shouldSkipLoginPathRefresh,
+} from "@/lib/app-lock-policy";
 import {
   getBiometricEnabled,
   offerBiometricSetupOnColdStart,
@@ -70,18 +78,46 @@ export function AppLockProvider({ children }: PropsWithChildren) {
   const refreshSession = useCallback(async () => {
     const tokens = await getTokens();
     const sessionActive = !!tokens;
+    logAuthLock("appLock.refreshSession.start", {
+      sessionActive,
+      pathname,
+      pinFallbackActive,
+    });
+
     setHasSession(sessionActive);
 
     if (!sessionActive) {
-      setBiometricEnabled(false);
-      setIsUnlocked(true);
+      const lock = resolveRefreshSessionLockState({
+        sessionActive: false,
+        biometricEnabled: false,
+        pinFallbackActive,
+      });
+      setBiometricEnabled(lock.biometricEnabled);
+      setIsUnlocked(lock.isUnlocked);
+      logAuthLock("appLock.refreshSession.noSession", {
+        isUnlocked: lock.isUnlocked,
+      });
       return;
     }
 
     const enabled = await getBiometricEnabled();
-    setBiometricEnabled(enabled);
-    setIsUnlocked(!enabled);
-  }, []);
+    const lock = resolveRefreshSessionLockState({
+      sessionActive: true,
+      biometricEnabled: enabled,
+      pinFallbackActive,
+    });
+    setBiometricEnabled(lock.biometricEnabled);
+    setIsUnlocked(lock.isUnlocked);
+    logAuthLock(
+      pinFallbackActive
+        ? "appLock.refreshSession.pinFallback"
+        : "appLock.refreshSession.done",
+      {
+        biometricEnabled: lock.biometricEnabled,
+        isUnlocked: lock.isUnlocked,
+      },
+    );
+  }, [pathname, pinFallbackActive]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +127,7 @@ export function AppLockProvider({ children }: PropsWithChildren) {
       if (cancelled) return;
 
       if (!tokens) {
+        logAuthLock("appLock.bootstrap.noTokens");
         setHasSession(false);
         setBiometricEnabled(false);
         setIsUnlocked(true);
@@ -102,8 +139,14 @@ export function AppLockProvider({ children }: PropsWithChildren) {
       const setup = await offerBiometricSetupOnColdStart();
       if (cancelled) return;
 
-      setBiometricEnabled(setup.enabled);
-      setIsUnlocked(!setup.enabled || setup.verified);
+      logAuthLock("appLock.bootstrap.withSession", {
+        setupEnabled: setup.enabled,
+        setupVerified: setup.verified,
+        isUnlocked: resolveColdStartLockState(setup).isUnlocked,
+      });
+      const coldLock = resolveColdStartLockState(setup);
+      setBiometricEnabled(coldLock.biometricEnabled);
+      setIsUnlocked(coldLock.isUnlocked);
       setReady(true);
     })();
 
@@ -113,17 +156,20 @@ export function AppLockProvider({ children }: PropsWithChildren) {
   }, []);
 
   const unlock = useCallback(() => {
+    logAuthLock("appLock.unlock");
     setPinFallbackActive(false);
     setIsUnlocked(true);
   }, []);
 
   const consumePinFallback = useCallback(() => {
     if (!pinFallbackActive) return false;
+    logAuthLock("appLock.consumePinFallback");
     setPinFallbackActive(false);
     return true;
   }, [pinFallbackActive]);
 
   const goToPinLogin = useCallback(async (options?: GoToPinLoginOptions) => {
+    logAuthLock("appLock.goToPinLogin", { keepSession: options?.keepSession });
     if (options?.keepSession) {
       setPinFallbackActive(true);
       setIsUnlocked(true);
@@ -152,24 +198,42 @@ export function AppLockProvider({ children }: PropsWithChildren) {
     };
   }, [consumePinFallback, refreshSession, unlock]);
 
-  const needsUnlock =
-    ready &&
-    hasSession &&
-    biometricEnabled &&
-    !isUnlocked &&
-    !pinFallbackActive;
+  const needsUnlock = computeNeedsUnlock({
+    ready,
+    hasSession,
+    biometricEnabled,
+    isUnlocked,
+    pinFallbackActive,
+  });
 
   useEffect(() => {
-    if (!needsUnlock) return;
-    if (pathname === "/unlock") return;
+    if (
+      !shouldRedirectToUnlock({ needsUnlock, pathname })
+    ) {
+      return;
+    }
+    logAuthLock("appLock.redirectUnlock", {
+      pathname,
+      hasSession,
+      biometricEnabled,
+      isUnlocked,
+      pinFallbackActive,
+    });
     router.replace("/unlock");
-  }, [needsUnlock, pathname]);
+  }, [needsUnlock, pathname, hasSession, biometricEnabled, isUnlocked, pinFallbackActive]);
 
   useEffect(() => {
-    if (!ready) return;
-    if (pathname !== "/login") return;
+    if (
+      shouldSkipLoginPathRefresh({ ready, pathname, pinFallbackActive })
+    ) {
+      if (ready && pathname === "/login" && pinFallbackActive) {
+        logAuthLock("appLock.loginPathRefresh.skipped", { pinFallbackActive });
+      }
+      return;
+    }
+    logAuthLock("appLock.loginPathRefresh", { pathname });
     void refreshSession();
-  }, [pathname, ready, refreshSession]);
+  }, [pathname, pinFallbackActive, ready, refreshSession]);
 
   // Arka plan gizlilik kapağı kök layout'taki PrivacyCover'da (native
   // modallar dahil); burada ayrıca overlay yönetilmez.

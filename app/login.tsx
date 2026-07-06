@@ -1,6 +1,16 @@
 import { clearLegacyCredentials, saveTokens } from "@/lib/session";
-import { offerBiometricSetupAfterAuth } from "@/lib/biometric-auth";
+import {
+  offerBiometricSetupAfterAuth,
+  setBiometricEnabled,
+  getBiometricEnabled,
+} from "@/lib/biometric-auth";
+import {
+  resolvePostLoginRoute,
+  shouldClearBiometricOnPinFallbackReauth,
+  shouldClearBiometricOnSetupDecline,
+} from "@/lib/app-lock-policy";
 import { consumePinFallbackReauth, refreshAppLockSession, unlockAppLockSession } from "@/contexts/app-lock-context";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
 import {
   authLinkTenant,
   authRequestOtp,
@@ -288,6 +298,10 @@ export default function LoginScreen() {
         return;
       }
       await persistAuthResponse(res);
+      logAuthLock("login.persisted", {
+        onboarding_status: res.onboarding_status,
+        hasTenant: !!res.tenant_vkn,
+      });
       if (res.onboarding_status === "pending" || !res.tenant_vkn) {
         setPendingTokens({
           accessToken: res.accessToken!,
@@ -298,18 +312,38 @@ export default function LoginScreen() {
         return;
       }
       if (consumePinFallbackReauth()) {
+        logAuthLock("login.pinFallbackReauth");
+        if (shouldClearBiometricOnPinFallbackReauth()) {
+          await setBiometricEnabled(false);
+        }
         await refreshAppLockSession();
         unlockAppLockSession();
         router.replace("/");
         return;
       }
+      const storedBefore = await getBiometricEnabled();
+      logAuthLock("login.beforeBiometricSetup", { storedBefore });
       const setup = await offerBiometricSetupAfterAuth();
+      if (shouldClearBiometricOnSetupDecline(setup)) {
+        await setBiometricEnabled(false);
+      }
+      const storedAfter = await getBiometricEnabled();
       await refreshAppLockSession();
-      if (setup.enabled && setup.verified) {
+      const target = resolvePostLoginRoute(setup);
+      if (target === "/") {
         unlockAppLockSession();
       }
-      router.replace(setup.enabled && !setup.verified ? "/unlock" : "/");
+      logAuthLock("login.navigate", {
+        setup,
+        storedAfter,
+        target,
+        unlocked: target === "/",
+      });
+      router.replace(target);
     } catch (err) {
+      logAuthLock("login.handleLogin.error", {
+        message: err instanceof Error ? err.message : String(err),
+      });
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {
       setLoading(false);
@@ -418,11 +452,15 @@ export default function LoginScreen() {
       }
       await persistAuthResponse(res);
       const setup = await offerBiometricSetupAfterAuth();
+      if (shouldClearBiometricOnSetupDecline(setup)) {
+        await setBiometricEnabled(false);
+      }
       await refreshAppLockSession();
-      if (setup.enabled && setup.verified) {
+      const target = resolvePostLoginRoute(setup);
+      if (target === "/") {
         unlockAppLockSession();
       }
-      router.replace(setup.enabled && !setup.verified ? "/unlock" : "/");
+      router.replace(target);
     } catch (err) {
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {

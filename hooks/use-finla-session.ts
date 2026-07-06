@@ -1,4 +1,5 @@
 import { getOnboardingSeen } from "@/lib/onboarding-local";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
 import { decodeJwtClaims, getTokens } from "@/lib/session";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
@@ -16,13 +17,19 @@ export function useFinlaSession() {
     void Promise.all([getOnboardingSeen(), getTokens()]).then(
       ([onboardingSeen, tokens]) => {
         if (cancelled) return;
+        logAuthLock("finlaSession.bootstrap", {
+          onboardingSeen,
+          hasTokens: !!tokens,
+        });
         if (!onboardingSeen) {
+          logAuthLock("finlaSession.redirect", { target: "/onboarding" });
           router.replace("/onboarding");
           setSessionLabel(null);
           setBootstrapped(true);
           return;
         }
         if (!tokens) {
+          logAuthLock("finlaSession.redirect", { target: "/login" });
           router.replace("/login");
           setSessionLabel(null);
           setBootstrapped(true);
@@ -37,6 +44,7 @@ export function useFinlaSession() {
           "Hesap";
         setSessionLabel(label);
         setBootstrapped(true);
+        logAuthLock("finlaSession.ready", { label });
       },
     );
     return () => {

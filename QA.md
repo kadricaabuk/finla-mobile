@@ -128,6 +128,21 @@ Do this first. If any step fails, fix before deeper QA.
 | 1.17 | Logout while offline | Local logout still succeeds | ☐ | ☐ | — | |
 | 1.18 | Logout spinner | Shows on logout button during process | ☐ | ☐ | — | |
 
+### Onboarding carousel (`/onboarding`)
+
+Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_onboarding_seen`. Sunucu/JWT ile ilgisi yok.
+
+| ID | Test | Expected | Pass | Fail | Auto | Notes |
+|----|------|----------|------|------|------|-------|
+| 1.19 | Fresh install, first launch | Carousel shown **before** login (3 slides) | ☐ | ☐ | — | `finla_onboarding_seen` yok |
+| 1.20 | Second launch (already seen) | Carousel **not** shown; goes to login/chat | ☐ | ☐ | — | `finla_onboarding_seen = 1` |
+| 1.21 | Swipe / İleri | Advances to next slide; dots update | ☐ | ☐ | — | |
+| 1.22 | Atla (skip) | Sets local flag; lands on login (chat if token var) | ☐ | ☐ | — | Sunucu çağrısı yok |
+| 1.23 | Başla on last slide | Same as skip | ☐ | ☐ | — | |
+| 1.24 | Re-open app after completion | Carousel not shown again | ☐ | ☐ | — | `finla_onboarding_seen = 1` |
+| 1.25 | Cold start with flag unset | Redirect to `/onboarding` before login | ☐ | ☐ | — | Gate in `useFinlaSession` |
+| 1.26 | Reinstall / app data cleared | Carousel shown again | ☐ | ☐ | — | Lokal bayrak silindi (kabul edilen semantik) |
+
 ---
 
 ## 2. Side menu (all main screens)

@@ -1,32 +1,44 @@
+import { getOnboardingSeen } from "@/lib/onboarding-local";
 import { decodeJwtClaims, getTokens } from "@/lib/session";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 
-/** Resolves once stored tokens are read; redirects to login when missing. */
+/**
+ * Resolves the cold-start route. Shows the intro carousel before login when the
+ * device hasn't seen it yet; otherwise redirects to login when no tokens exist.
+ */
 export function useFinlaSession() {
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void getTokens().then((tokens) => {
-      if (cancelled) return;
-      if (!tokens) {
-        router.replace("/login");
-        setSessionLabel(null);
+    void Promise.all([getOnboardingSeen(), getTokens()]).then(
+      ([onboardingSeen, tokens]) => {
+        if (cancelled) return;
+        if (!onboardingSeen) {
+          router.replace("/onboarding");
+          setSessionLabel(null);
+          setBootstrapped(true);
+          return;
+        }
+        if (!tokens) {
+          router.replace("/login");
+          setSessionLabel(null);
+          setBootstrapped(true);
+          return;
+        }
+        const claims = decodeJwtClaims(tokens.accessToken);
+        const label =
+          claims?.tenant_name ??
+          (claims?.phone
+            ? `+${claims.phone.slice(0, 2)} ${claims.phone.slice(2)}`
+            : null) ??
+          "Hesap";
+        setSessionLabel(label);
         setBootstrapped(true);
-        return;
-      }
-      const claims = decodeJwtClaims(tokens.accessToken);
-      const label =
-        claims?.tenant_name ??
-        (claims?.phone
-          ? `+${claims.phone.slice(0, 2)} ${claims.phone.slice(2)}`
-          : null) ??
-        "Hesap";
-      setSessionLabel(label);
-      setBootstrapped(true);
-    });
+      },
+    );
     return () => {
       cancelled = true;
     };

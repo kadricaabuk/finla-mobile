@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword } from './password.ts'
 import { normalizePhone, normalizeVknTckn } from './phone.ts'
 import { isMockMode } from './invoice-provider/mock-provider.ts'
 import { assertMysoftTenantExists } from './mysoft-tenant.ts'
+import type { FinlaSessionClaims, OnboardingStatus } from './session-auth.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,

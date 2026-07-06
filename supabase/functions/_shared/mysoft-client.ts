@@ -29,7 +29,7 @@ function getCredentials(): { username: string; password: string } {
   const password = Deno.env.get('MYSOFT_PASSWORD')?.trim() ?? ''
   if (!username || !password) {
     throw new Error(
-      'Mysoft API kimlik bilgileri eksik. MYSOFT_USERNAME ve MYSOFT_PASSWORD tanımlayın.',
+      'e-Fatura servis kimlik bilgileri sunucuda tanımlı değil (yapılandırma eksik).',
     )
   }
   return { username, password }
@@ -61,7 +61,7 @@ export async function fetchMysoftAccessToken(forceRefresh = false): Promise<stri
   const json = (await res.json().catch(() => ({}))) as MysoftTokenResponse
   if (!res.ok || !json.access_token) {
     const detail = json.error_description ?? json.error ?? res.statusText
-    throw new Error(`Mysoft OAuth başarısız: ${detail}`)
+    throw new Error(`e-Fatura servisi kimlik doğrulaması başarısız: ${detail}`)
   }
 
   const ttlMs = Math.max(60, Number(json.expires_in ?? 3600)) * 1000
@@ -101,7 +101,7 @@ export async function mysoftRequest<T = unknown>(
   const contentType = res.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) {
     if (!res.ok) {
-      throw new Error(`Mysoft API hatası (${res.status}): ${res.statusText}`)
+      throw new Error(`e-Fatura servis hatası (${res.status}): ${res.statusText}`)
     }
     return (await res.arrayBuffer()) as T
   }
@@ -112,13 +112,13 @@ export async function mysoftRequest<T = unknown>(
       (typeof json.message === 'string' && json.message) ||
       (typeof json.error === 'string' && json.error) ||
       res.statusText
-    throw new Error(`Mysoft API hatası (${res.status}): ${detail}`)
+    throw new Error(`e-Fatura servis hatası (${res.status}): ${detail}`)
   }
   if (json.success === false || json.succeed === false) {
     throw new Error(
       typeof json.message === 'string'
         ? json.message
-        : 'Mysoft API işlemi başarısız.',
+        : 'e-Fatura servis işlemi başarısız.',
     )
   }
   return (json.data ?? json) as T
@@ -156,13 +156,13 @@ export async function mysoftRequestEnvelope(
       (typeof json.message === 'string' && json.message) ||
       (typeof json.error === 'string' && json.error) ||
       res.statusText
-    throw new Error(`Mysoft API hatası (${res.status}): ${detail}`)
+    throw new Error(`e-Fatura servis hatası (${res.status}): ${detail}`)
   }
   if (json.success === false || json.succeed === false) {
     throw new Error(
       typeof json.message === 'string'
         ? json.message
-        : 'Mysoft API işlemi başarısız.',
+        : 'e-Fatura servis işlemi başarısız.',
     )
   }
   return json
@@ -191,7 +191,7 @@ export async function mysoftGetBinary(
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new Error(`Mysoft indirme hatası (${res.status}): ${text.slice(0, 200)}`)
+    throw new Error(`Belge indirme hatası (${res.status}): ${text.slice(0, 200)}`)
   }
 
   const buf = new Uint8Array(await res.arrayBuffer())
@@ -210,7 +210,7 @@ export async function mysoftGetBinary(
           throw new Error(
             typeof json.message === 'string'
               ? json.message
-              : 'Mysoft indirme başarısız.',
+              : 'Belge indirilemedi.',
           )
         }
       } catch (err) {

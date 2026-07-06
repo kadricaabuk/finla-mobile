@@ -1,47 +1,48 @@
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { releaseNativeSplash } from "@/lib/splash-handoff";
+import { Image } from "expo-image";
+import { StatusBar } from "expo-status-bar";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 
+// Native splash ile piksel piksel aynı görünür (siyah zemin + 220pt wordmark);
+// splash → bootstrap → login zinciri kesintisiz akar. Bu kare çizildikten
+// sonra native splash zamanlanmış şekilde kapatılır (lib/splash-handoff).
 export function SessionBootstrapPlaceholder() {
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.center}>
-        <View></View>
-        <Text style={styles.wordmark}>finla</Text>
-        <View style={styles.loadingRow}>
-          <ActivityIndicator size="small" color="#000" />
-          <Text style={styles.loadingText}>Yükleniyor...</Text>
-        </View>
-      </View>
-    </SafeAreaView>
+    <View
+      style={styles.container}
+      onLayout={() => {
+        void releaseNativeSplash();
+      }}
+    >
+      <StatusBar style="light" />
+      <Image
+        source={require("@/assets/images/splash-icon.png")}
+        style={styles.wordmark}
+        contentFit="contain"
+      />
+      <ActivityIndicator
+        size="small"
+        color="rgba(255,255,255,0.6)"
+        style={styles.spinner}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#000",
     alignItems: "center",
     justifyContent: "center",
   },
-  center: {
-    alignItems: "center",
-    justifyContent: "space-between",
-    height: "30%",
-  },
   wordmark: {
-    fontSize: 64,
-    fontWeight: "700",
-    letterSpacing: -1,
-    color: "#000",
-    marginBottom: 28,
+    width: 220,
+    aspectRatio: 814 / 395,
   },
-  loadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  loadingText: {
-    fontSize: 15,
-    color: "#666",
+  spinner: {
+    position: "absolute",
+    bottom: 96,
+    alignSelf: "center",
   },
 });

@@ -51,10 +51,17 @@ function getMetroBundledHost(): string | null {
   return null;
 }
 
+function getEnvDevApiHost(): string | null {
+  const raw = process.env.EXPO_PUBLIC_DEV_API_HOST?.trim();
+  if (!raw || isLoopbackHostname(raw)) return null;
+  return raw;
+}
+
 /**
  * Yerel Supabase için cihaza ulaşılabilir host.
- * - Metro LAN IP verdiyse (fiziksel cihaz + çoğu emülatör): onu kullan
- * - Android emülatör + yalnızca loopback: 10.0.2.2 (host makine köprüsü)
+ * - Metro LAN IP verdiyse: onu kullan
+ * - Android emülatör: 10.0.2.2 (host makine köprüsü)
+ * - iOS fiziksel cihaz: EXPO_PUBLIC_DEV_API_HOST (scripts/resolve-local-expo-env.sh → en0)
  * - iOS simülatör: 127.0.0.1
  */
 export function resolveLocalDevHost(): string {
@@ -64,6 +71,10 @@ export function resolveLocalDevHost(): string {
   }
   if (Platform.OS === "android") {
     return "10.0.2.2";
+  }
+  const envHost = getEnvDevApiHost();
+  if (envHost) {
+    return envHost;
   }
   return "127.0.0.1";
 }

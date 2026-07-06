@@ -13,6 +13,7 @@
       "bundleIdentifier": "com.finla.app",
       "buildNumber": "1",
       "infoPlist": {
+        "NSFaceIDUsageDescription": "Finla hesabına güvenli ve hızlı erişim için Face ID kullanılır.",
         "ITSAppUsesNonExemptEncryption": false,
         "UISupportedInterfaceOrientations~ipad": [
           "UIInterfaceOrientationPortrait",
@@ -52,6 +53,12 @@
         }
       ],
       "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Finla hesabına güvenli ve hızlı erişim için Face ID kullanılır."
+        }
+      ],
       "./plugins/with-android-apk-name"
     ],
     "experiments": {

@@ -7,6 +7,7 @@ import { IconHeaderButton } from "@/components/layout/icon-header-button";
 import { useMainAppShell } from "@/contexts/main-app-shell-context";
 import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
+import { splitQuickReplies } from "@/lib/chat-quick-replies";
 import { shareExcelDownload } from "@/lib/excel-share";
 import type { ChatMessageAction } from "@/types/chat-actions";
 import { useCallback, useMemo } from "react";
@@ -86,6 +87,15 @@ export default function ChatScreen() {
 
   useRegisterMainShellSideMenu(CHAT_SHELL_OWNER_ID, sideMenuBindings);
 
+  // Hızlı yanıt çipleri: yalnızca son mesaj bir asistan sorusuysa ve stream
+  // bittiyse gösterilir; dokununca metin aynen gönderilir.
+  const lastMessage = messages[messages.length - 1];
+  const quickReplies = useMemo(() => {
+    if (loading || streaming) return [];
+    if (!lastMessage || lastMessage.role !== "assistant") return [];
+    return splitQuickReplies(lastMessage.text ?? "").replies;
+  }, [lastMessage, loading, streaming]);
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
@@ -143,6 +153,22 @@ export default function ChatScreen() {
                 style={[styles.bubble, styles.aiBubble, styles.loadingBubble]}
               >
                 <ActivityIndicator size="small" color="#888" />
+              </View>
+            )}
+
+            {quickReplies.length > 0 && (
+              <View style={styles.quickReplyRow}>
+                {quickReplies.map((reply) => (
+                  <TouchableOpacity
+                    key={reply}
+                    testID="chat-quick-reply"
+                    style={styles.quickReplyChip}
+                    activeOpacity={0.7}
+                    onPress={() => void handleSend(reply)}
+                  >
+                    <Text style={styles.quickReplyText}>{reply}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             )}
           </ScrollView>
@@ -223,6 +249,25 @@ const styles = StyleSheet.create({
   loadingBubble: {
     paddingVertical: 12,
     paddingHorizontal: 18,
+  },
+  quickReplyRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 2,
+  },
+  quickReplyChip: {
+    borderWidth: 1,
+    borderColor: "#D9D9D9",
+    borderRadius: 999,
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  quickReplyText: {
+    fontSize: 14,
+    color: "#000",
+    fontWeight: "500",
   },
   cancelStreamBtn: {
     alignSelf: "center",

@@ -1,4 +1,5 @@
 import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
+import { stripQuickRepliesForDisplay } from "@/lib/chat-quick-replies";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
@@ -37,7 +38,12 @@ export function ChatMessageBubble({
   onShareExcelExport,
 }: ChatMessageBubbleProps) {
   const pending = Boolean(streamPending && msg.role === "assistant");
-  const messageText = msg.text ?? "";
+  // Öneri çipi satırı ([öneriler: …]) balon metninde gizlenir; çipler
+  // chat-screen tarafından yalnızca son asistan mesajı için çizilir.
+  const messageText =
+    msg.role === "assistant"
+      ? stripQuickRepliesForDisplay(msg.text ?? "")
+      : (msg.text ?? "");
   const showStreamStatusBubble =
     msg.role === "assistant" &&
     pending &&

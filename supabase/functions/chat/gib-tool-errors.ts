@@ -27,9 +27,9 @@ export function classifyGibOperationError(
     (lower.includes("parameter 'g'") || lower.includes("gbalias"))
   ) {
     return {
-      code: "MYSOFT_SEND_CONFIG",
+      code: "SEND_CONFIG_MISSING",
       message:
-        "Mysoft gönderim ayarı eksik (gbAlias). Portalda firma GİB posta kutusu tanımlı mı kontrol et; sandbox tenant: 6271036106.",
+        "Firmanın GİB gönderim ayarı (posta kutusu) tanımlı değil; fatura bu yüzden gönderilemedi. Kullanıcıya hesap yapılandırmasının tamamlanması gerektiğini söyle.",
     };
   }
 

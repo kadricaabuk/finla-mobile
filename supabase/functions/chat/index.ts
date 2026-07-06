@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
         );
         const payload = result as { uuid?: string; message?: string };
         const directMessage = payload?.uuid
-          ? `Fatura Mysoft üzerinden GİB'e gönderildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" diyebilirsin.`
+          ? `Fatura GİB'e gönderildi.\n\nETTN: ${payload.uuid}\n\nİstersen şimdi "faturayı gör" diyebilirsin.`
           : (payload?.message ?? "Fatura kesildi.");
         await insertChatMessage(supabase, {
           conversation_id: cid,

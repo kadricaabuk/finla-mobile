@@ -174,7 +174,7 @@ export function formatPendingInvoiceForPrompt(
     }
     case "otp_pending":
       lines.push(
-        "Eski SMS imza adımı (Mysoft'ta gerekmez); confirm_invoice_issue kullan.",
+        "Eski SMS imza adımı artık gerekmiyor; confirm_invoice_issue kullan.",
       );
       break;
     default:

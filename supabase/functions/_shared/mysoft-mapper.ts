@@ -168,7 +168,7 @@ export function buildMysoftInvoiceOutboxBody(
       // düzeltme tevkif edilmeyen KDV kısmı üzerinden yapılır; standart iade
       // faturası kurgusuna uymaz.
       throw new Error(
-        'Tevkifat uygulanmış faturanın iadesi özel düzeltme kurallarına tabidir ve buradan desteklenmiyor; mali müşavirinle veya Mysoft portalından ilerle.',
+        'Tevkifat uygulanmış faturanın iadesi özel düzeltme kurallarına tabidir ve buradan desteklenmiyor; mali müşavirinle ilerle.',
       )
     }
   }

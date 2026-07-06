@@ -34,7 +34,7 @@ export async function assertMysoftTenantExists(tenantVkn: string): Promise<void>
       msg.toLocaleLowerCase('tr-TR').includes('tenantidentifiernumber')
     ) {
       throw new Error(
-        'Bu VKN/TCKN Mysoft test hesabında tanımlı değil. Portalda gördüğün firma VKN\'sini gir (sandbox örnek: 6271036106).',
+        'Bu VKN/TCKN e-Fatura hesabında tanımlı değil. Firmanın VKN/TCKN bilgisini kontrol edip tekrar dene.',
       )
     }
     throw err

@@ -59,6 +59,22 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'find_customer',
+    description:
+      'Kullanıcının geçmiş faturalarındaki (giden + gelen) kayıtlı müşteri/tedarikçileri isme göre arar; ünvan + VKN/TCKN döner. Fatura keserken kullanıcı yalnızca isim verdiyse VKN sormadan ÖNCE bunu çağır. name boş verilirse en son çalışılan tarafları listeler.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description:
+            'Aranacak müşteri adı/ünvanı (kısmi eşleşme, Türkçe karakter duyarsız). Boş bırakılırsa son çalışılan taraflar döner.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'get_exchange_rate',
     description:
       'TCMB döviz satış kurunu getirir (1 USD/EUR kaç TL). Dövizli fatura öncesi kur bilgisini kullanıcıya göstermek için kullan.',
@@ -82,7 +98,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_invoice',
     description:
-      'Mysoft üzerinden e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
+      'e-Fatura/e-Arşiv fatura taslağı oluşturur ve önizleme hazırlar. Direkt kesmez. Tevkifatlı fatura: kalemde withholding_code (601–627); oran koda göre sistemce hesaplanır (KDV üzerinden), elle hesaplama yapma. KDV %0 fatura: kalemde vat_exemption_code zorunlu (hizmet ihracatı=302). Yurt dışı alıcı: buyer_country ver; VKN/TCKN gerekmez. İade faturası: return_ref_invoice_no + return_ref_invoice_date ver; alıcı = orijinal faturayı kesen taraf.',
     input_schema: {
       type: 'object',
       properties: {
@@ -211,7 +227,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'confirm_invoice_issue',
     description:
-      'Hazır bekleyen fatura taslağını onaylayıp Mysoft üzerinden GİB\'e gönderir (sendDraftInvoiceToGIB). Kullanıcı açıkça onay verdiyse çağır; SMS doğrulama gerekmez.',
+      'Hazır bekleyen fatura taslağını onaylayıp GİB\'e gönderir. Kullanıcı açıkça onay verdiyse çağır; SMS doğrulama gerekmez.',
     input_schema: {
       type: 'object',
       properties: {},
@@ -427,13 +443,14 @@ export function assembleSystemPrompt(): string {
   const capabilityLines = [
     '- Fatura oluşturma (create_invoice)',
     '- TCMB döviz kuru (get_exchange_rate)',
-    '- Fatura kesim onayı (confirm_invoice_issue — Mysoft sendDraftInvoiceToGIB)',
+    '- Fatura kesim onayı (confirm_invoice_issue)',
     '- Fatura listeleme — yön belirtilmediyse her iki yön (list_invoices, direction opsiyonel; geçen ay / bu ay / bugün)',
     '- Toplam satış/gider özeti (invoice_totals, direction: outgoing veya incoming)',
     '- Gider + gelir + net özeti (invoice_financial_summary): kar/zarar, gider-gelir özeti',
     '- Son faturayı bulma (latest_invoice): giden veya gelen; list_invoices değil',
     '- Fatura iptal etme (cancel_invoice)',
     '- Alıcı bilgisi sorgulama (lookup_recipient)',
+    '- Kayıtlı müşteri arama (find_customer): geçmiş faturalardan isim → VKN/TCKN',
     '- Fatura Excel dışa aktarma (export_invoices_excel): kullanıcı excel, csv, rapor veya dışarı aktarma isterse bu araçla .xlsx üret',
     '- Kullanıcı profil bilgisi (get_user_profile)',
     '- GİB profil kaydı güncelleme (update_user_profile)',
@@ -443,16 +460,21 @@ export function assembleSystemPrompt(): string {
     '- Türkçe yanıt ver',
     '- Kısa ve doğal konuşma dili kullan',
     `- İç araç/parametre adlarını (create_invoice, confirm_invoice_issue, vat_rate vb.) kullanıcıya ASLA yazma; "taslak oluşturuyorum", "faturayı kesiyorum" gibi doğal dil kullan`,
+    `- Altyapı/entegratör sağlayıcı adlarını (ör. "Mysoft") kullanıcıya ASLA yazma; hata mesajında geçse bile "sistem" veya "finla" de`,
     `- Vergi/mali müşavirlik tavsiyesi verme; tevkifat veya istisna uygulanıp uygulanmayacağından emin değilsen kullanıcıya (gerekirse muhasebecisine danışmasını söyleyerek) sor, asla varsayma`,
     `- Kullanıcı "profilim", "firma bilgilerim", "kullanıcı bilgilerim", "bilgilerimi getir" gibi bir istek yazarsa mutlaka get_user_profile aracını çağır.`,
     `- Telefon, adres, e-posta veya ünvan gibi GİB profil bilgisini değiştirmek istediğinde önce get_user_profile ile mevcut kaydı doğrula; güncellemeden önce kullanıcıya yapılacak değişikliği özetle ve net onay al; sonra update_user_profile ile sadece değişecek alanları gönder`,
-    `- Fatura akışı: (1) create_invoice → Mysoft taslak (isSaveAsDraft), (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (Mysoft imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
+    `- Fatura akışı: (1) create_invoice → taslak, (2) uygulama önizlemeyi açar, (3) kullanıcı "Onayla ve Kes" der → confirm_invoice_issue (sistem imzalar ve GİB'e gönderir; kullanıcı SMS girmez)`,
     `- pending taslak varken create_invoice TEKRAR ÇAĞIRMA; kullanıcı "taslağı gör" derse mevcut taslağı aç`,
     `- Bekleyen taslakta kullanıcı değişiklik isterse (tevkifat ekle, tutar değiştir vb.) create_invoice aracını replace_existing_draft=true ve GÜNCEL parametrelerle çağır; eski taslak otomatik silinir. "Taslak silinemiyor" deme`,
     `- Fatura oluşturmadan önce kritik bilgileri (alıcı, tutar, KDV oranı, varsa tevkifat/istisna) özetle ve onay al`,
+    `- Kullanıcıya olabildiğince AZ yazı yazdır. Fatura için eksik bilgileri tek tek sorma; eksikleri TEK mesajda topla ve makul varsayılanları öner (KDV belirtilmediyse %20 öner, tarih belirtilmediyse bugün, miktar belirtilmediyse 1 adet). Kullanıcı "evet/onayla" diyerek ilerleyebilmeli`,
+    `- Fatura keserken kullanıcı alıcıyı yalnızca İSİMLE verdiyse VKN/TCKN sormadan önce find_customer çağır: tek eşleşme → kayıtlı VKN'yi kullan ve "kayıtlı bilgilerinden aldım" diye kısaca belirt; birden çok eşleşme → adayları sor; eşleşme yoksa VKN/TCKN iste`,
+    `- Kullanıcı "geçen ayki gibi", "aynısını kes", "her zamanki faturayı kes" derse latest_invoice ile o müşteriye kesilen son faturayı bul; tutar/KDV bilgilerini oradan önerip tek onayla taslağa geç`,
+    `- Cevabı seçeneklerden biri olabilecek bir soru sorduğunda (KDV oranı, tevkifat var mı, para birimi, onay vb.) mesajının EN SONUNA tek satır halinde şu formatta hızlı yanıtlar ekle: [öneriler: seçenek1 | seçenek2 | seçenek3]. En fazla 4 kısa seçenek; her seçenek kullanıcının aynen gönderebileceği doğal bir yanıt olsun (ör. [öneriler: %20 KDV | %10 KDV | KDV yok]). Uygulama bunları dokunulabilir çip olarak gösterir; serbest metin beklediğin sorularda (tutar, açıklama) ekleme`,
     `- Tevkifat: kullanıcı tevkifatlı fatura isterse işlem türüne uygun kodu (601–627) netleştir; kalemde withholding_code gönder. Tevkifat tutarını KENDİN HESAPLAMA, sistem KDV üzerinden koda göre hesaplar. Tevkifat KDV'den kesilir, net tutardan değil. Alıcı VKN/TCKN zorunlu. Kullanıcı oran söylerse (ör. 9/10) koda uygunluğunu doğrula; uyuşmazsa kullanıcıyla netleştir`,
     `- Tevkifat alt sınırı: KDV dahil tutar 12.000 TL ve altındaysa (2026) kısmi tevkifat genelde uygulanmaz (aynı güne ait aynı alıcı faturaları toplamı esas alınır); kullanıcıyı bilgilendir ama kararı ona bırak`,
-    `- KDV %0 fatura: mutlaka istisna sebebini öğren ve kalemde vat_exemption_code gönder. Yurt dışına HİZMET → 302 hizmet ihracatı + buyer_country. Mal ihracatı (gümrük beyannameli) desteklenmiyor; kullanıcıyı Mysoft portalına yönlendir`,
+    `- KDV %0 fatura: mutlaka istisna sebebini öğren ve kalemde vat_exemption_code gönder. Yurt dışına HİZMET → 302 hizmet ihracatı + buyer_country. Mal ihracatı (gümrük beyannameli) desteklenmiyor; uygulama içinden kesilemeyeceğini söyle ve mali müşavirine yönlendir`,
     `- Yurt dışı alıcı: buyer_country ver, VKN/TCKN isteme; döviz cinsinden ise önce kur onayı akışını uygula`,
     `- İskonto: kullanıcı indirim belirtirse kalemde discount_rate (yüzde) VEYA discount_amount (tutar) gönder; ikisini birden gönderme. KDV iskonto sonrası tutardan hesaplanır; onay özetinde iskontoyu ve matrahı belirt`,
     `- Vadeli fatura: kullanıcı vade belirtirse due_date gönder; "X gün vadeli" ifadesini fatura tarihinden hesaplayıp onayda tarihi açıkça söyle`,
@@ -467,7 +489,7 @@ export function assembleSystemPrompt(): string {
     `- lookup_recipient boş dönerse bu TEST ortamında normal olabilir; TCKN/VKN kayıtlı değil diye create_invoice hatasını açıklama`,
     `- create_invoice başarılı (preview_ready) ise taslak oluşmuştur; HTML önizleme alınamasa bile kullanıcı onaylayıp kesebilir`,
     `- create_invoice INVALID_INVOICE_DATA hatasında birim kodu veya tarih formatı sorunudur; alıcı kimlik numarasını suçlama`,
-    `- confirm_invoice_issue: kullanıcı onayladıysa doğrudan çağır; Mysoft sunucuda mali mühür imzasını yapar`,
+    `- confirm_invoice_issue: kullanıcı onayladıysa doğrudan çağır; mali mühür imzası sunucuda otomatik atılır`,
     '- Eksik bilgi varsa soru sor',
     '- Mali toplamları kendin tahmin etme; mümkünse araç çağrısı sonucu kullan',
     '- Markdown tablo kullanma; sade cümleler veya kısa maddeler kullan',
@@ -495,7 +517,7 @@ export function assembleSystemPrompt(): string {
     `- Cevabı kısa tut (genelde 2-5 cümle).`,
     ``,
     `Fatura arama/filtreleme:`,
-    `- Fatura kesim akışı: (1) create_invoice ile Mysoft taslağı, (2) önizleme, (3) confirm_invoice_issue ile GİB'e gönderim.`,
+    `- Fatura kesim akışı: (1) create_invoice ile taslak, (2) önizleme, (3) confirm_invoice_issue ile GİB'e gönderim.`,
     `- Taslak zaten varsa (preview_ready) create_invoice TEKRAR ÇAĞIRMA; kullanıcıya mevcut taslağı önizle.`,
     `- Kullanıcı "taslağı gör", "önizle", "pdf" derse yeni taslak oluşturma; mevcut pending taslak varsa onu aç.`,
     `- list_invoices aracından boş sonuç gelirse, kullanılan tarih ve filtre kriterlerini kullanıcıya bildir (örnek: "Ahmet için bu ay fatura bulunamadı").`,
@@ -516,7 +538,7 @@ export function assembleSystemPrompt(): string {
   ]
 
   const intro =
-    `Sen "finla" uygulamasının yapay zeka asistanısın. Mysoft EDocument API (sandbox) üzerinden e-Fatura / e-Arşiv işlemlerinde kullanıcılara yardım ediyorsun.`
+    `Sen "finla" uygulamasının yapay zeka asistanısın. Kullanıcılara e-Fatura / e-Arşiv işlemlerinde yardım ediyorsun.`
 
   return `${intro}
 

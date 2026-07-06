@@ -1,5 +1,17 @@
 import { clearLegacyCredentials, saveTokens } from "@/lib/session";
 import {
+  offerBiometricSetupAfterAuth,
+  setBiometricEnabled,
+  getBiometricEnabled,
+} from "@/lib/biometric-auth";
+import {
+  resolvePostLoginRoute,
+  shouldClearBiometricOnPinFallbackReauth,
+  shouldClearBiometricOnSetupDecline,
+} from "@/lib/app-lock-policy";
+import { consumePinFallbackReauth, refreshAppLockSession, unlockAppLockSession } from "@/contexts/app-lock-context";
+import { logAuthLock } from "@/lib/auth-lock-dev-log";
+import {
   authLinkTenant,
   authRequestOtp,
   authSetPassword,
@@ -7,21 +19,40 @@ import {
   loginRequest,
   userFacingApiError,
 } from "@/lib/supabase";
+import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
+import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useState } from "react";
+import { StatusBar } from "expo-status-bar";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const SPLASH_LOGO = require("@/assets/images/splash-icon.png");
+// Native splash: 220pt genişlikte wordmark (app.json → expo-splash-screen).
+const SPLASH_LOGO_WIDTH = 220;
+const LOGO_ASPECT_RATIO = 814 / 395;
 
 type Mode =
   | "login"
@@ -29,6 +60,12 @@ type Mode =
   | "register_otp"
   | "register_password"
   | "link_tenant";
+
+const REGISTER_STEPS: Mode[] = [
+  "register_phone",
+  "register_otp",
+  "register_password",
+];
 
 async function persistAuthResponse(res: {
   accessToken?: string;
@@ -51,6 +88,73 @@ function normalizePhone(phone: string): string {
   return `0${phone}`;
 }
 
+function CodeField({
+  value,
+  onChange,
+  secure,
+  testID,
+  autoFocus,
+  textContentType,
+  inputRef: externalInputRef,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  secure?: boolean;
+  testID?: string;
+  autoFocus?: boolean;
+  textContentType?: "oneTimeCode" | "password" | "newPassword";
+  inputRef?: React.RefObject<TextInput | null>;
+}) {
+  const internalInputRef = useRef<TextInput>(null);
+  const inputRef = externalInputRef ?? internalInputRef;
+  const [focused, setFocused] = useState(false);
+  const activeIndex = Math.min(value.length, 5);
+
+  return (
+    <Pressable onPress={() => inputRef.current?.focus()}>
+      <View style={styles.codeRow}>
+        {Array.from({ length: 6 }).map((_, i) => {
+          const char = value[i];
+          const isActive = focused && i === activeIndex;
+          return (
+            <View
+              key={i}
+              style={[
+                styles.codeCell,
+                char != null && styles.codeCellFilled,
+                isActive && styles.codeCellActive,
+              ]}
+            >
+              {char != null ? (
+                secure ? (
+                  <View style={styles.codeDot} />
+                ) : (
+                  <Text style={styles.codeChar}>{char}</Text>
+                )
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+      <TextInput
+        ref={inputRef}
+        testID={testID}
+        style={styles.codeHiddenInput}
+        value={value}
+        onChangeText={(t) => onChange(t.replace(/\D/g, "").slice(0, 6))}
+        keyboardType="number-pad"
+        maxLength={6}
+        autoFocus={autoFocus}
+        caretHidden
+        textContentType={textContentType}
+        autoComplete={textContentType === "oneTimeCode" ? "sms-otp" : "off"}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+    </Pressable>
+  );
+}
+
 export default function LoginScreen() {
   const [mode, setMode] = useState<Mode>("login");
   const [phone, setPhone] = useState("");
@@ -60,12 +164,124 @@ export default function LoginScreen() {
   const [vkn, setVkn] = useState("6271036106");
   const [companyName, setCompanyName] = useState("");
   const [debugOtp, setDebugOtp] = useState<string | null>(null);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
   const [pendingTokens, setPendingTokens] = useState<{
     accessToken: string;
     refreshToken: string;
     expiresIn?: number;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const otpAutoSubmittedRef = useRef(false);
+  const phoneAutoSubmittedRef = useRef(false);
+  const confirmPinInputRef = useRef<TextInput>(null);
+
+  // Splash → login geçiş animasyonu (yalnızca açılıştaki ilk mount'ta oynar).
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  // Native splash (storyboard) logoyu tam ekran merkezine koyar; klon katman
+  // ve animasyon başlangıcı da aynı merkezi kullanır.
+  const splashCenterY = windowHeight / 2;
+  const reducedMotion = useReducedMotion();
+  const [handoff] = useState(() => claimSplashHandoff() && !reducedMotion);
+  const [logoSlot, setLogoSlot] = useState<{
+    dx: number;
+    dy: number;
+    scale: number;
+  } | null>(null);
+  const logoSlotRef = useRef<View>(null);
+  const [splashHidden, setSplashHidden] = useState(!handoff);
+  const logoProgress = useSharedValue(handoff ? 0 : 1);
+  const sheetProgress = useSharedValue(handoff ? 0 : 1);
+  const fadeProgress = useSharedValue(handoff ? 0 : 1);
+
+  useEffect(() => {
+    // Handoff yoksa da (Reduce Motion, geç mount) native splash kapatılmalı;
+    // preventAutoHideAsync global olduğundan aksi halde açık kalır.
+    if (!handoff) {
+      void releaseNativeSplash();
+      return;
+    }
+    // Native splash zamanlanmış şekilde kapanana kadar bekle: klon katman
+    // altta hazır dururken native kapanır, animasyon ondan sonra başlar.
+    void releaseNativeSplash().then(() => setSplashHidden(true));
+  }, [handoff]);
+
+  // Animasyon ancak native splash kapandıktan VE logonun header'daki yeri
+  // ölçüldükten sonra başlar; o ana kadar splash'in birebir kopyası görünür.
+  const handoffReady = handoff && splashHidden && logoSlot != null;
+
+  useEffect(() => {
+    if (!handoffReady) return;
+    logoProgress.value = withDelay(
+      120,
+      withTiming(1, { duration: 520, easing: Easing.bezier(0.3, 0.7, 0, 1) }),
+    );
+    sheetProgress.value = withDelay(
+      200,
+      withTiming(1, { duration: 480, easing: Easing.bezier(0.16, 1, 0.3, 1) }),
+    );
+    fadeProgress.value = withDelay(
+      340,
+      withTiming(1, { duration: 340, easing: Easing.out(Easing.cubic) }),
+    );
+  }, [handoffReady, logoProgress, sheetProgress, fadeProgress]);
+
+  // Slot ölçümü mount sırasında güvenilir değil (ekran konteyneri henüz
+  // yerine oturmamış oluyor); native splash kapandıktan sonra — ekran
+  // kesin yerleşmişken — ölçülür. O ana kadar statik kapak görünür.
+  useEffect(() => {
+    if (!handoff || !splashHidden || logoSlot) return;
+    let cancelled = false;
+    let last: { x: number; y: number } | null = null;
+    const attempt = (triesLeft: number) => {
+      if (cancelled) return;
+      logoSlotRef.current?.measureInWindow((x, y, w, h) => {
+        if (cancelled) return;
+        if (w && h) {
+          const stable =
+            last && Math.abs(last.x - x) < 0.5 && Math.abs(last.y - y) < 0.5;
+          if (stable || triesLeft <= 0) {
+            setLogoSlot({
+              dx: windowWidth / 2 - (x + w / 2),
+              dy: splashCenterY - (y + h / 2),
+              scale: SPLASH_LOGO_WIDTH / w,
+            });
+            return;
+          }
+          last = { x, y };
+        }
+        if (triesLeft > 0) {
+          requestAnimationFrame(() => attempt(triesLeft - 1));
+        }
+      });
+    };
+    attempt(30);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoff, splashHidden, logoSlot]);
+
+  const logoAnimatedStyle = useAnimatedStyle(() => {
+    if (!logoSlot) return { opacity: handoff ? 0 : 1 };
+    const rest = 1 - logoProgress.value;
+    return {
+      opacity: 1,
+      transform: [
+        { translateX: logoSlot.dx * rest },
+        { translateY: logoSlot.dy * rest },
+        { scale: 1 + (logoSlot.scale - 1) * rest },
+      ],
+    };
+  });
+
+  const sheetAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - sheetProgress.value) * windowHeight }],
+  }));
+
+  const fadeAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: fadeProgress.value,
+    transform: [{ translateY: (1 - fadeProgress.value) * 12 }],
+  }));
 
   const handleLogin = async () => {
     const p = normalizePhone(phone.trim());
@@ -82,6 +298,10 @@ export default function LoginScreen() {
         return;
       }
       await persistAuthResponse(res);
+      logAuthLock("login.persisted", {
+        onboarding_status: res.onboarding_status,
+        hasTenant: !!res.tenant_vkn,
+      });
       if (res.onboarding_status === "pending" || !res.tenant_vkn) {
         setPendingTokens({
           accessToken: res.accessToken!,
@@ -91,16 +311,47 @@ export default function LoginScreen() {
         setMode("link_tenant");
         return;
       }
-      router.replace("/");
+      if (consumePinFallbackReauth()) {
+        logAuthLock("login.pinFallbackReauth");
+        if (shouldClearBiometricOnPinFallbackReauth()) {
+          await setBiometricEnabled(false);
+        }
+        await refreshAppLockSession();
+        unlockAppLockSession();
+        router.replace("/");
+        return;
+      }
+      const storedBefore = await getBiometricEnabled();
+      logAuthLock("login.beforeBiometricSetup", { storedBefore });
+      const setup = await offerBiometricSetupAfterAuth();
+      if (shouldClearBiometricOnSetupDecline(setup)) {
+        await setBiometricEnabled(false);
+      }
+      const storedAfter = await getBiometricEnabled();
+      await refreshAppLockSession();
+      const target = resolvePostLoginRoute(setup);
+      if (target === "/") {
+        unlockAppLockSession();
+      }
+      logAuthLock("login.navigate", {
+        setup,
+        storedAfter,
+        target,
+        unlocked: target === "/",
+      });
+      router.replace(target);
     } catch (err) {
+      logAuthLock("login.handleLogin.error", {
+        message: err instanceof Error ? err.message : String(err),
+      });
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRequestOtp = async () => {
-    const p = normalizePhone(phone.trim());
+  const handleRequestOtp = async (phoneOverride?: string) => {
+    const p = normalizePhone((phoneOverride ?? phone).trim());
     if (!p) {
       Alert.alert("Hata", "Telefon numarası gerekli.");
       return;
@@ -113,6 +364,7 @@ export default function LoginScreen() {
         return;
       }
       setDebugOtp(res.debug_code ?? null);
+      otpAutoSubmittedRef.current = false;
       setMode("register_otp");
     } catch (err) {
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
@@ -121,9 +373,9 @@ export default function LoginScreen() {
     }
   };
 
-  const handleVerifyOtp = async () => {
+  const handleVerifyOtp = async (codeOverride?: string) => {
     const p = normalizePhone(phone.trim());
-    const code = otp.trim();
+    const code = (codeOverride ?? otp).trim();
     if (!p || !code) {
       Alert.alert("Hata", "Telefon ve doğrulama kodu gerekli.");
       return;
@@ -199,11 +451,40 @@ export default function LoginScreen() {
         return;
       }
       await persistAuthResponse(res);
-      router.replace("/");
+      const setup = await offerBiometricSetupAfterAuth();
+      if (shouldClearBiometricOnSetupDecline(setup)) {
+        await setBiometricEnabled(false);
+      }
+      await refreshAppLockSession();
+      const target = resolvePostLoginRoute(setup);
+      if (target === "/") {
+        unlockAppLockSession();
+      }
+      router.replace(target);
     } catch (err) {
       Alert.alert("Bağlantı Hatası", userFacingApiError(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const registerStepIndex = REGISTER_STEPS.indexOf(mode);
+  const isRegisterStep = registerStepIndex >= 0;
+
+  const goBack = () => {
+    if (mode === "register_phone") {
+      setMode("login");
+    } else if (mode === "register_otp") {
+      setOtp("");
+      setDebugOtp(null);
+      phoneAutoSubmittedRef.current = false;
+      setMode("register_phone");
+    } else if (mode === "register_password") {
+      setPassword("");
+      setPasswordConfirm("");
+      setOtp("");
+      phoneAutoSubmittedRef.current = false;
+      setMode("register_phone");
     }
   };
 
@@ -212,65 +493,136 @@ export default function LoginScreen() {
       ? "Giriş yap"
       : mode === "link_tenant"
         ? "Firmanı bağla"
-        : "Hesap oluştur";
+        : mode === "register_phone"
+          ? "Hesap oluştur"
+          : mode === "register_otp"
+            ? "Kodu doğrula"
+            : "PIN belirle";
 
   const subtitle =
     mode === "login"
-      ? "Telefon numaran ve şifrenle giriş yap."
+      ? "Telefon numaran ve 6 haneli PIN'in ile giriş yap."
       : mode === "register_phone"
-        ? "Telefon numaranı gir; doğrulama kodu göndereceğiz."
+        ? "Telefon numaranı gir; SMS ile doğrulama kodu göndereceğiz."
         : mode === "register_otp"
-          ? "SMS ile gelen 6 haneli kodu gir."
+          ? `+90 ${phone.trim()} numarasına gönderilen 6 haneli kodu gir.`
           : mode === "register_password"
-            ? "Hesabın için 6 haneli bir şifre belir."
-            : "Mysoft portalda seçtiğin firmanın VKN/TCKN'sini gir. Sandbox test firması: 6271036106";
+            ? "Girişte kullanacağın 6 haneli PIN'i belirle."
+            : "Bağlamak istediğin firmanın VKN/TCKN'sini gir.";
+
+  const buttonLabel =
+    mode === "login"
+      ? "Giriş Yap"
+      : mode === "register_phone"
+        ? "Kod Gönder"
+        : mode === "register_otp"
+          ? "Doğrula"
+          : mode === "register_password"
+            ? "Kaydı Tamamla"
+            : "Firmayı Bağla";
+
+  const handleSubmit = () => {
+    if (mode === "login") void handleLogin();
+    else if (mode === "register_phone") void handleRequestOtp();
+    else if (mode === "register_otp") void handleVerifyOtp();
+    else if (mode === "register_password") void handleSetPassword();
+    else if (mode === "link_tenant") void handleLinkTenant();
+  };
+
+  const showPhoneField = mode === "login" || mode === "register_phone";
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.canvas}>
+      <StatusBar style="light" />
       <KeyboardAvoidingView
-        style={styles.inner}
+        style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          <View style={styles.header}>
-            <Text style={styles.logo}>finla</Text>
-            <Text style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>{subtitle}</Text>
+        <SafeAreaView edges={["top"]} style={styles.header}>
+          <View style={styles.headerTopRow}>
+            <Animated.View style={logoAnimatedStyle}>
+              <View ref={logoSlotRef}>
+                <Image
+                  source={SPLASH_LOGO}
+                  style={styles.logo}
+                  contentFit="contain"
+                />
+              </View>
+            </Animated.View>
+            {isRegisterStep && (
+              <TouchableOpacity
+                onPress={goBack}
+                hitSlop={12}
+                disabled={loading}
+                style={styles.backButton}
+              >
+                <Ionicons name="chevron-back" size={16} color="#fff" />
+                <Text style={styles.backText}>Geri</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
-          <View style={styles.form}>
-            {(mode === "login" ||
-              mode === "register_phone" ||
-              mode === "register_otp" ||
-              mode === "register_password") && (
+          <Animated.View style={fadeAnimatedStyle}>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
+
+            {isRegisterStep && (
+              <View style={styles.progressRow}>
+                {REGISTER_STEPS.map((step, i) => (
+                  <View
+                    key={step}
+                    style={[
+                      styles.progressSegment,
+                      i <= registerStepIndex && styles.progressSegmentDone,
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
+            {mode === "link_tenant" && (
+              <Text style={styles.eyebrow}>SON ADIM</Text>
+            )}
+          </Animated.View>
+        </SafeAreaView>
+
+        <Animated.View style={[styles.sheet, sheetAnimatedStyle]}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.sheetContent}
+          >
+            {showPhoneField && (
               <View style={styles.field}>
                 <Text style={styles.label}>Telefon</Text>
                 <View
-                  style={{
-                    flexDirection: "row",
-                  }}
+                  style={[
+                    styles.phoneRow,
+                    focusedField === "phone" && styles.inputFocused,
+                  ]}
                 >
-                  <View style={styles.phonePrefix}>
-                    <Text style={styles.phonePrefixText}>+90</Text>
-                  </View>
+                  <Text style={styles.phonePrefix}>+90</Text>
+                  <View style={styles.phoneDivider} />
                   <TextInput
                     testID="login-phone"
-                    style={[
-                      styles.input,
-                      {
-                        borderTopLeftRadius: 0,
-                        borderBottomLeftRadius: 0,
-                        flex: 1,
-                      },
-                    ]}
+                    style={styles.phoneInput}
                     value={phone}
-                    onChangeText={setPhone}
+                    onChangeText={(v) => {
+                      setPhone(v);
+                      if (
+                        mode === "register_phone" &&
+                        v.replace(/\D/g, "").length === 10 &&
+                        !phoneAutoSubmittedRef.current &&
+                        !loading
+                      ) {
+                        phoneAutoSubmittedRef.current = true;
+                        void handleRequestOtp(v);
+                      }
+                    }}
                     keyboardType="phone-pad"
-                    editable={mode === "login" || mode === "register_phone"}
+                    placeholder="5XX XXX XX XX"
+                    placeholderTextColor="#B4B4BE"
+                    onFocus={() => setFocusedField("phone")}
+                    onBlur={() => setFocusedField(null)}
                   />
                 </View>
               </View>
@@ -279,47 +631,70 @@ export default function LoginScreen() {
             {mode === "register_otp" && (
               <View style={styles.field}>
                 <Text style={styles.label}>Doğrulama kodu</Text>
-                <TextInput
+                <CodeField
                   testID="login-otp"
-                  style={styles.input}
                   value={otp}
-                  onChangeText={setOtp}
-                  keyboardType="number-pad"
-                  maxLength={6}
+                  onChange={(v) => {
+                    setOtp(v);
+                    if (
+                      v.length === 6 &&
+                      !otpAutoSubmittedRef.current &&
+                      !loading
+                    ) {
+                      otpAutoSubmittedRef.current = true;
+                      void handleVerifyOtp(v);
+                    }
+                  }}
+                  autoFocus
+                  textContentType="oneTimeCode"
                 />
                 {debugOtp ? (
-                  <Text style={styles.devHint}>Test OTP: {debugOtp}</Text>
+                  <View style={styles.devHintChip}>
+                    <Text style={styles.devHintText}>Test OTP: {debugOtp}</Text>
+                  </View>
                 ) : null}
               </View>
             )}
 
-            {(mode === "login" || mode === "register_password") && (
+            {mode === "login" && (
+              <View style={styles.field}>
+                <Text style={styles.label}>PIN</Text>
+                <CodeField
+                  testID="login-password"
+                  value={password}
+                  onChange={setPassword}
+                  secure
+                  textContentType="password"
+                />
+              </View>
+            )}
+
+            {mode === "register_password" && (
               <>
                 <View style={styles.field}>
-                  <Text style={styles.label}>Şifre</Text>
-                  <TextInput
+                  <Text style={styles.label}>Yeni PIN</Text>
+                  <CodeField
                     testID="login-password"
-                    style={styles.input}
                     value={password}
-                    onChangeText={setPassword}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    secureTextEntry
+                    onChange={(v) => {
+                      setPassword(v);
+                      if (v.length === 6) confirmPinInputRef.current?.focus();
+                    }}
+                    secure
+                    autoFocus
+                    textContentType="newPassword"
                   />
                 </View>
-                {mode === "register_password" && (
-                  <View style={styles.field}>
-                    <Text style={styles.label}>Şifre (tekrar)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={passwordConfirm}
-                      onChangeText={setPasswordConfirm}
-                      keyboardType="number-pad"
-                      maxLength={6}
-                      secureTextEntry
-                    />
-                  </View>
-                )}
+                <View style={styles.field}>
+                  <Text style={styles.label}>PIN (tekrar)</Text>
+                  <CodeField
+                    value={passwordConfirm}
+                    onChange={setPasswordConfirm}
+                    secure
+                    textContentType="newPassword"
+                    inputRef={confirmPinInputRef}
+                  />
+                </View>
               </>
             )}
 
@@ -329,23 +704,38 @@ export default function LoginScreen() {
                   <Text style={styles.label}>VKN / TCKN</Text>
                   <TextInput
                     testID="login-vkn"
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      focusedField === "vkn" && styles.inputFocused,
+                    ]}
                     value={vkn}
                     onChangeText={setVkn}
                     placeholder="10 veya 11 hane"
-                    placeholderTextColor="#ABABAB"
+                    placeholderTextColor="#B4B4BE"
                     keyboardType="number-pad"
+                    onFocus={() => setFocusedField("vkn")}
+                    onBlur={() => setFocusedField(null)}
                   />
                 </View>
                 <View style={styles.field}>
                   <Text style={styles.label}>Firma adı (opsiyonel)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      focusedField === "company" && styles.inputFocused,
+                    ]}
                     value={companyName}
                     onChangeText={setCompanyName}
                     placeholder="Unvan"
-                    placeholderTextColor="#ABABAB"
+                    placeholderTextColor="#B4B4BE"
+                    onFocus={() => setFocusedField("company")}
+                    onBlur={() => setFocusedField(null)}
                   />
+                </View>
+                <View style={styles.devHintChip}>
+                  <Text style={styles.devHintText}>
+                    Sandbox test firması: 6271036106
+                  </Text>
                 </View>
               </>
             )}
@@ -353,123 +743,245 @@ export default function LoginScreen() {
             <TouchableOpacity
               testID="login-submit"
               style={[styles.button, loading && styles.buttonDisabled]}
-              onPress={() => {
-                if (mode === "login") void handleLogin();
-                else if (mode === "register_phone") void handleRequestOtp();
-                else if (mode === "register_otp") void handleVerifyOtp();
-                else if (mode === "register_password") void handleSetPassword();
-                else if (mode === "link_tenant") void handleLinkTenant();
-              }}
+              onPress={handleSubmit}
               disabled={loading}
             >
               {loading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.buttonText}>
-                  {mode === "login"
-                    ? "Giriş Yap"
-                    : mode === "register_phone"
-                      ? "Kod Gönder"
-                      : mode === "register_otp"
-                        ? "Doğrula"
-                        : mode === "register_password"
-                          ? "Kaydı Tamamla"
-                          : "Firmayı Bağla"}
-                </Text>
+                <Text style={styles.buttonText}>{buttonLabel}</Text>
               )}
             </TouchableOpacity>
 
             {mode === "login" ? (
               <TouchableOpacity
                 onPress={() => {
-                  setMode("register_phone");
                   setPassword("");
+                  phoneAutoSubmittedRef.current = false;
+                  setMode("register_phone");
                 }}
+                hitSlop={8}
               >
-                <Text style={styles.link}>Hesabın yok mu? Kayıt ol</Text>
+                <Text style={styles.link}>
+                  Hesabın yok mu?{" "}
+                  <Text style={styles.linkStrong}>Kayıt ol</Text>
+                </Text>
               </TouchableOpacity>
-            ) : mode !== "link_tenant" ? (
-              <TouchableOpacity onPress={() => setMode("login")}>
-                <Text style={styles.link}>Zaten hesabın var mı? Giriş yap</Text>
+            ) : isRegisterStep ? (
+              <TouchableOpacity onPress={() => setMode("login")} hitSlop={8}>
+                <Text style={styles.link}>
+                  Zaten hesabın var mı?{" "}
+                  <Text style={styles.linkStrong}>Giriş yap</Text>
+                </Text>
               </TouchableOpacity>
             ) : null}
-          </View>
 
-          <Text style={styles.note}>
-            Test ortamında OTP kodu sunucu logunda görünür. Oturum anahtarları
-            yalnızca cihazında saklanır.
-          </Text>
-        </ScrollView>
+            <Text style={styles.note}>
+              Test ortamında OTP kodu sunucu logunda görünür. Oturum anahtarları
+              yalnızca cihazında saklanır.
+            </Text>
+          </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+
+      {handoff && !handoffReady && (
+        <View style={styles.splashCover} pointerEvents="none">
+          <Image
+            source={SPLASH_LOGO}
+            style={styles.splashCoverLogo}
+            contentFit="contain"
+          />
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  inner: { flex: 1, paddingHorizontal: 28 },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingVertical: 24,
-    paddingBottom: 40,
+  canvas: { flex: 1, backgroundColor: "#000" },
+  flex: { flex: 1 },
+  header: {
+    paddingHorizontal: 28,
+    paddingTop: 12,
+    paddingBottom: 28,
   },
-  header: { marginBottom: 32 },
+  headerTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 28,
+  },
   logo: {
-    fontSize: 36,
-    fontWeight: "700",
-    letterSpacing: -1,
-    color: "#000",
-    marginBottom: 12,
+    width: 76,
+    aspectRatio: LOGO_ASPECT_RATIO,
   },
-  title: { fontSize: 22, fontWeight: "600", color: "#111", marginBottom: 8 },
-  subtitle: { fontSize: 15, color: "#666", lineHeight: 22 },
-  form: { gap: 16, marginBottom: 24 },
-  field: { gap: 6 },
-  label: { fontSize: 13, fontWeight: "500", color: "#444" },
-  input: {
-    height: 50,
-    borderWidth: 1.5,
-    borderColor: "#E0E0E0",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: "#000",
-    backgroundColor: "#FAFAFA",
-  },
-  devHint: { fontSize: 12, color: "#888", marginTop: 4 },
-  button: {
-    height: 52,
-    borderRadius: 12,
+  splashCover: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "#000",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 8,
+    zIndex: 10,
+  },
+  splashCoverLogo: {
+    width: SPLASH_LOGO_WIDTH,
+    aspectRatio: LOGO_ASPECT_RATIO,
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  backText: { fontSize: 13, fontWeight: "600", color: "#fff" },
+  title: {
+    fontSize: 28,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+    color: "#fff",
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "rgba(255,255,255,0.65)",
+  },
+  progressRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 20,
+  },
+  progressSegment: {
+    flex: 1,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.2)",
+  },
+  progressSegmentDone: { backgroundColor: "#fff" },
+  eyebrow: {
+    marginTop: 20,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 2,
+    color: "rgba(255,255,255,0.5)",
+  },
+  sheet: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  sheetContent: {
+    paddingHorizontal: 28,
+    paddingTop: 32,
+    paddingBottom: 40,
+    gap: 20,
+  },
+  field: { gap: 8 },
+  label: { fontSize: 13, fontWeight: "600", color: "#1A1A2E" },
+  input: {
+    height: 52,
+    borderWidth: 1.5,
+    borderColor: "#E4E5EC",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: "#1A1A2E",
+    backgroundColor: "#F7F7FA",
+  },
+  inputFocused: {
+    borderColor: "#1A1A2E",
+    backgroundColor: "#fff",
+  },
+  phoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 52,
+    borderWidth: 1.5,
+    borderColor: "#E4E5EC",
+    borderRadius: 14,
+    backgroundColor: "#F7F7FA",
+    paddingHorizontal: 16,
+  },
+  phonePrefix: { fontSize: 16, fontWeight: "600", color: "#1A1A2E" },
+  phoneDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: "#E4E5EC",
+    marginHorizontal: 12,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 16,
+    color: "#1A1A2E",
+    height: "100%",
+  },
+  codeRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  codeCell: {
+    flex: 1,
+    height: 56,
+    borderWidth: 1.5,
+    borderColor: "#E4E5EC",
+    borderRadius: 14,
+    backgroundColor: "#F7F7FA",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  codeCellFilled: {
+    borderColor: "#1A1A2E",
+    backgroundColor: "#fff",
+  },
+  codeCellActive: {
+    borderColor: "#1A1A2E",
+    backgroundColor: "#fff",
+  },
+  codeChar: { fontSize: 22, fontWeight: "700", color: "#1A1A2E" },
+  codeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#1A1A2E",
+  },
+  codeHiddenInput: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
+  },
+  devHintChip: {
+    alignSelf: "flex-start",
+    backgroundColor: "#F2F4FD",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 4,
+  },
+  devHintText: { fontSize: 12, fontWeight: "500", color: "#3A3A55" },
+  button: {
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
   },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
   link: {
     textAlign: "center",
-    color: "#0066CC",
+    color: "#666",
     fontSize: 14,
-    marginTop: 8,
+    marginTop: 4,
   },
+  linkStrong: { color: "#1A1A2E", fontWeight: "700" },
   note: {
     fontSize: 12,
-    color: "#ABABAB",
+    color: "#B4B4BE",
     textAlign: "center",
     lineHeight: 18,
+    marginTop: 8,
   },
-  phonePrefix: {
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#000",
-    borderWidth: 1.5,
-    borderRadius: 12,
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    paddingHorizontal: 16,
-    height: 50,
-  },
-  phonePrefixText: { fontSize: 16, fontWeight: "500", color: "#FFFFFF" },
 });

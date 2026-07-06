@@ -201,6 +201,88 @@ export async function executeToolImpl(
         input.tax_id as string,
       );
 
+    case "find_customer": {
+      const nameQuery = typeof input.name === "string" ? input.name.trim() : "";
+      const { data, error } = await supabase
+        .from("invoice_facts")
+        .select(
+          "customer_name, customer_tax_id, issue_date, gross_total, currency, direction",
+        )
+        .eq("gib_username", scopeKey)
+        .not("customer_tax_id", "is", null)
+        .not("customer_name", "is", null)
+        .order("issue_date", { ascending: false })
+        .limit(400);
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data : [];
+
+      const normalizedQuery = normalizeTurkish(nameQuery);
+      // VKN başına tek kayıt: en güncel fatura + toplam fatura sayısı.
+      const byTaxId = new Map<string, {
+        customer_name: string;
+        customer_tax_id: string;
+        last_invoice_date: string | null;
+        last_invoice_gross_total: number | null;
+        last_invoice_currency: string;
+        last_invoice_direction: string;
+        invoice_count: number;
+      }>();
+      for (const row of rows) {
+        const name = typeof row.customer_name === "string"
+          ? row.customer_name.trim()
+          : "";
+        const taxId = typeof row.customer_tax_id === "string"
+          ? row.customer_tax_id.trim()
+          : "";
+        if (!name || !taxId) continue;
+        if (normalizedQuery && !normalizeTurkish(name).includes(normalizedQuery)) {
+          continue;
+        }
+        const existing = byTaxId.get(taxId);
+        if (existing) {
+          existing.invoice_count += 1;
+          continue;
+        }
+        byTaxId.set(taxId, {
+          customer_name: name,
+          customer_tax_id: taxId,
+          last_invoice_date: typeof row.issue_date === "string"
+            ? row.issue_date
+            : null,
+          last_invoice_gross_total: typeof row.gross_total === "number"
+            ? row.gross_total
+            : null,
+          last_invoice_currency: typeof row.currency === "string"
+            ? row.currency
+            : "TRY",
+          last_invoice_direction: row.direction === "incoming"
+            ? "incoming"
+            : "outgoing",
+          invoice_count: 1,
+        });
+      }
+      const customers = [...byTaxId.values()].slice(0, nameQuery ? 5 : 8);
+
+      if (customers.length === 0) {
+        return {
+          status: "not_found",
+          query: nameQuery || null,
+          customers: [],
+          message: nameQuery
+            ? `"${nameQuery}" adına kayıtlı müşteri geçmiş faturalarda bulunamadı. Kullanıcıdan VKN/TCKN iste.`
+            : "Geçmiş faturalarda kayıtlı müşteri bulunamadı. Kullanıcıdan VKN/TCKN iste.",
+        };
+      }
+      return {
+        status: "ok",
+        query: nameQuery || null,
+        customers,
+        message: customers.length === 1
+          ? "Tek eşleşme bulundu; VKN'yi kullanıcıya tekrar sormadan kullanabilirsin (alıcıyı onay özetinde belirt)."
+          : "Birden çok eşleşme var; kullanıcıya hangisi olduğunu sor.",
+      };
+    }
+
     case "get_exchange_rate": {
       const currency = input.currency as string;
       if (!isForeignInvoiceCurrency(currency)) {
@@ -551,7 +633,7 @@ export async function executeToolImpl(
           : {}),
         message: preview.html.length > 0
           ? "Taslak oluşturuldu. Önizlemeyi kontrol et; uygunsa onayla ve GİB'e gönderelim."
-          : "Taslak Mysoft'ta oluşturuldu. Önizleme açılacak; uygunsa onayla ve GİB'e gönderelim.",
+          : "Taslak oluşturuldu. Önizleme açılacak; uygunsa onayla ve GİB'e gönderelim.",
       };
     }
 
@@ -560,7 +642,7 @@ export async function executeToolImpl(
       return {
         status: "deprecated",
         message:
-          "Mysoft akışında SMS imza gerekmez. Kullanıcı önizlemeyi onayladıysa confirm_invoice_issue çağır.",
+          "SMS imza adımı gerekmez. Kullanıcı önizlemeyi onayladıysa confirm_invoice_issue çağır.",
       };
     }
 

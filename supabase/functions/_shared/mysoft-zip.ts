@@ -59,7 +59,7 @@ export function normalizeMysoftZipPayload(payload: Uint8Array): Uint8Array {
 
   const text = decodeText(payload).trim()
   if (!text) {
-    throw new Error('Mysoft boş yanıt döndü.')
+    throw new Error('e-Fatura servisi boş yanıt döndü.')
   }
 
   if (text.startsWith('{') || text.startsWith('[')) {
@@ -67,13 +67,13 @@ export function normalizeMysoftZipPayload(payload: Uint8Array): Uint8Array {
     try {
       json = JSON.parse(text) as Record<string, unknown>
     } catch {
-      throw new Error('Mysoft zip yanıtı okunamadı.')
+      throw new Error('Belge yanıtı okunamadı.')
     }
 
     if (json.succeed === false || json.success === false) {
       const msg = typeof json.message === 'string'
         ? json.message
-        : 'Mysoft işlemi başarısız.'
+        : 'Belge işlemi başarısız.'
       throw new Error(msg)
     }
 
@@ -85,7 +85,7 @@ export function normalizeMysoftZipPayload(payload: Uint8Array): Uint8Array {
       if (fromKey) return fromKey
     }
 
-    throw new Error('Mysoft yanıtında zip verisi bulunamadı.')
+    throw new Error('Belge yanıtında zip verisi bulunamadı.')
   }
 
   const compact = text.replace(/\s/g, '')
@@ -98,7 +98,7 @@ export function normalizeMysoftZipPayload(payload: Uint8Array): Uint8Array {
     }
   }
 
-  throw new Error('Geçersiz zip verisi: Mysoft yanıtı ZIP formatında değil.')
+  throw new Error('Geçersiz zip verisi: belge yanıtı ZIP formatında değil.')
 }
 
 export function tryReadDirectHtml(payload: Uint8Array): string | null {
@@ -119,7 +119,7 @@ function unzipEntries(zipBytes: Uint8Array): Record<string, Uint8Array> {
   try {
     return unzipSync(normalized)
   } catch {
-    throw new Error('Mysoft zip dosyası açılamadı.')
+    throw new Error('Belge zip dosyası açılamadı.')
   }
 }
 

@@ -3,6 +3,7 @@ import SideMenu from "@/components/side-menu";
 import { useConversationsList } from "@/hooks/use-conversations-list";
 import { useFinlaSession } from "@/hooks/use-finla-session";
 import { useLogout } from "@/hooks/use-logout";
+import { releaseNativeSplash } from "@/lib/splash-handoff";
 import { getUserProfile, type UserProfile } from "@/lib/supabase";
 import type { PropsWithChildren } from "react";
 import {
@@ -63,6 +64,15 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     refreshConversationList,
   } = useConversationsList(sessionLabel);
   const { logout: performLogout, loading: logoutLoading } = useLogout();
+
+  // Native splash garantisi: bootstrap hızlı biterse placeholder onLayout
+  // tetiklenmeden unmount olabiliyor ve splash'i kapatan kalmıyordu (oturumlu
+  // soğuk açılışta ekran splash'te takılıyordu). Release idempotent; login /
+  // onboarding'e yönlendirilen akışlarda da güvenle tekrar çağrılabilir.
+  useEffect(() => {
+    if (!bootstrapped) return;
+    void releaseNativeSplash();
+  }, [bootstrapped]);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuRegistration, setMenuRegistration] =

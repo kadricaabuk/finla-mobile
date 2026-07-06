@@ -17,6 +17,6 @@ export async function updateUserProfile(
   _patch: Record<string, unknown>,
 ): Promise<UserData> {
   throw new Error(
-    'Profil güncelleme henüz desteklenmiyor. Mysoft entegrasyonu sonrası açılacak.',
+    'Profil güncelleme henüz desteklenmiyor; yakında eklenecek.',
   )
 }

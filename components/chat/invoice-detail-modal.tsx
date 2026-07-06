@@ -1,3 +1,4 @@
+import { PrivacyCover } from "@/components/layout/privacy-cover";
 import { prettyInvoiceStatus } from "@/lib/pretty-invoice-status";
 import type { InvoiceDetail } from "@/types/chat-actions";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
@@ -55,6 +56,8 @@ export function InvoiceDetailModal({
           </Pressable>
         </View>
       </View>
+      {/* Native Modal ayrı pencerede çizilir; kök PrivacyCover'ı örtmez. */}
+      <PrivacyCover />
     </Modal>
   );
 }

@@ -173,7 +173,7 @@ async function fetchOutgoingInvoiceHtmlZip(
     }))
   }
 
-  throw new Error('Mysoft önizleme ZIP içinden HTML/PDF çıkarılamadı.')
+  throw new Error('Fatura önizlemesi hazırlanamadı (ZIP içinden HTML/PDF çıkarılamadı).')
 }
 
 async function fetchIncomingInvoicePdfZip(
@@ -188,7 +188,7 @@ async function fetchIncomingInvoicePdfZip(
   const preview = await previewFromMysoftBinary(raw)
   if (preview) return preview
 
-  throw new Error('Mysoft gelen fatura PDF ZIP içinden çıkarılamadı.')
+  throw new Error('Gelen faturanın PDF\'i hazırlanamadı (ZIP içinden çıkarılamadı).')
 }
 
 export const mysoftInvoiceProvider: InvoiceProvider = {
@@ -224,7 +224,7 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
 
     const ettn = extractMysoftEttn(created)
     if (!ettn) {
-      throw new Error('Mysoft taslak oluşturuldu ancak ETTN dönmedi.')
+      throw new Error('Taslak oluşturuldu ancak ETTN dönmedi.')
     }
 
     const trDate = input.date?.trim() || mysoftDateToTrDate(

@@ -1,50 +1,42 @@
-# Welcome to your Expo app 👋
+# Finla
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+AI-assisted e-invoicing app for Turkish freelancers and small businesses. Users chat with an assistant (Claude) to issue, query, and manage GİB e-invoices — the backend talks to GİB through the Mysoft e-document API. Mobile app built with React Native + Expo; backend runs on Supabase Edge Functions (Deno).
 
-## Get started
+## Prerequisites
 
-1. Install dependencies
+- Node.js 20+, npm
+- Xcode (iOS) / Android Studio (Android)
+- [Supabase CLI](https://supabase.com/docs/guides/local-development) (installed as a dev dependency; `npx supabase` works)
+- Docker (for the local Supabase stack)
+- [Maestro](https://maestro.mobile.dev) (optional, for E2E tests)
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Setup
 
 ```bash
-npm run reset-project
+npm install                      # also applies patches/ via patch-package
+
+cp .env.example .env.local       # Expo env (see comments in the file)
+npm run supabase:bootstrap       # init supabase/.env + start local Supabase
+npm run supabase:status:env      # copy local anon key/url into .env.local
+
+npm run supabase:functions       # serve Edge Functions (separate terminal)
+npm run ios                      # build & run on iOS simulator
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Backend secrets live in `supabase/.env` (template: `supabase/.env.example`). Never commit any `.env*` file.
 
-## Learn more
+## Testing
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm run lint             # ESLint
+npm run test:chat        # Deno unit tests for the chat function
+npm run test:auth-lock   # Deno unit tests for app-lock policy
+npm run maestro:smoke    # E2E smoke: login → chat → menu → invoices → logout
+npm run maestro:test     # all E2E flows
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Manual QA checklist: [QA.md](QA.md).
 
-## Join the community
+## Project layout
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Architecture, critical files, conventions, and security rules are documented in [CLAUDE.md](CLAUDE.md) — it is the single source of truth for how this repo is organized. Run `npm run docs:check` to verify docs still match the codebase.

@@ -28,8 +28,7 @@ Prerequisites: app on simulator (`npm run ios`), test env in `.env.local`, Maest
 | `npm run maestro:logout` | Login + logout → login screen |
 | `npm run maestro:test` | All flows in `.maestro/flows/` (slower; runs each file) |
 
-**Test GİB users** (test env): `33333301` … `33333309`, password `1`.  
-Usernames are hardcoded in [`.maestro/flows/login.yaml`](.maestro/flows/login.yaml) (not read from `.maestro/.env`).
+**Test credentials:** `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` (copy from [`.maestro/.env.example`](.maestro/.env.example); CI passes them via `-e` flags). The staging user must exist with tenant linked and onboarding complete.
 
 **Flows:**
 
@@ -64,8 +63,7 @@ Debug output on failure: `~/.maestro/tests/<timestamp>/` (screenshots + logs).
 | 0.2 | Local Supabase running: `npm run supabase:start` | ☐ | ☐ | — | |
 | 0.3 | Edge Functions running: `npm run supabase:functions` | ☐ | ☐ | — | Needs `supabase/.env` |
 | 0.4 | App starts: `npm start` → iOS simulator or device | ☐ | ☐ | — | |
-| 0.5 | Valid GİB test credentials available | ☐ | ☐ | — | `33333301`–`33333309` / `1` in test env |
-| 0.6 | `feature_flags` table has flags enabled (all default **off** if `/features` fails) | ☐ | ☐ | — | Without this, most screens redirect to chat |
+| 0.5 | Test user available (phone + PIN, tenant linked, onboarding complete) | ☐ | ☐ | — | `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` |
 
 ### Test matrix
 
@@ -97,16 +95,18 @@ Do this first. If any step fails, fix before deeper QA.
 
 ### Login (`/login`)
 
+Login is phone + PIN; registration is phone → OTP (“Doğrulama kodu”) → set PIN → link tenant (VKN/TCKN). See `app/login.tsx` modes: `login`, `register_phone`, `register_otp`, `register_password`, `link_tenant`.
+
 | ID | Test | Expected | Pass | Fail | Auto | Notes |
 |----|------|----------|------|------|------|-------|
-| 1.1 | Empty fields → submit | Alert: kullanıcı kodu ve şifre gereklidir | ☐ | ☐ | — | |
-| 1.2 | Wrong credentials | Alert: kullanıcı kodu veya şifre hatalı | ☐ | ☐ | — | |
-| 1.3 | GİB multi-session (`MULTI_SESSION_PERSISTED`) | Alert with e-Arşiv logout instructions | ☐ | ☐ | Maestro | Flow retries next user |
-| 1.4 | GİB temporary outage (`GIB_TEMPORARY`) | Friendly retry message | ☐ | ☐ | — | |
-| 1.5 | Network offline during login | Bağlantı hatası alert | ☐ | ☐ | — | |
-| 1.6 | Successful login | Tokens saved; `router.replace("/")` to chat | ☐ | ☐ | Maestro | Asserts `chat-input` |
-| 1.7 | Password field “done” key | Triggers login | ☐ | ☐ | — | |
-| 1.8 | IVd link tap | Opens `https://ivd.gib.gov.tr/` in browser | ☐ | ☐ | — | |
+| 1.1 | Empty phone/PIN → submit | Validation alert; no request sent | ☐ | ☐ | — | |
+| 1.2 | Wrong phone or PIN | “Giriş Başarısız” alert | ☐ | ☐ | Maestro | Flow dismisses alert and retries |
+| 1.3 | Network offline during login | Connection error alert | ☐ | ☐ | — | |
+| 1.4 | Successful login (phone + PIN) | Tokens saved; lands on chat | ☐ | ☐ | Maestro | Asserts `chat-input` |
+| 1.5 | Biometric opt-in prompt after login | “Şimdi değil” declines; login still completes | ☐ | ☐ | Maestro | Flow always declines |
+| 1.6 | Register: new phone → OTP step | “Doğrulama kodu” field shown; local dev surfaces code when `AUTH_OTP_DEBUG` is on | ☐ | ☐ | — | |
+| 1.7 | Register: OTP verified → PIN setup | “Yeni PIN” + “PIN (tekrar)” fields | ☐ | ☐ | — | |
+| 1.8 | Link tenant: VKN/TCKN (10–11 digits) + optional company name | Tenant linked; lands on chat | ☐ | ☐ | — | |
 | 1.9 | Login button while loading | Disabled + spinner | ☐ | ☐ | — | |
 | 1.10 | iOS keyboard | Fields stay visible (`KeyboardAvoidingView`) | ☐ | ☐ | — | Android: no KAV |
 
@@ -153,9 +153,9 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 | 2.2 | Backdrop tap closes menu | Menu dismisses | ☐ | ☐ | — | |
 | 2.3 | Menu open dismisses keyboard | Keyboard hidden | ☐ | ☐ | — | |
 | 2.4 | Yeni Sohbet | Clears chat, new thread | ☐ | ☐ | — | |
-| 2.5 | Faturalarım nav | Goes to `/invoices` (if flag on) | ☐ | ☐ | — | |
-| 2.6 | Gelen Faturalar nav | Goes to `/incoming-invoices` (if flag on) | ☐ | ☐ | — | |
-| 2.7 | Profil nav | Goes to `/profile` (if flag on) | ☐ | ☐ | — | |
+| 2.5 | Faturalarım nav | Goes to `/invoices` | ☐ | ☐ | — | |
+| 2.6 | Gelen Faturalar nav | Goes to `/incoming-invoices` | ☐ | ☐ | — | |
+| 2.7 | Profil nav | Goes to `/profile` | ☐ | ☐ | — | |
 | 2.8 | Current screen highlighted | Active nav item styled | ☐ | ☐ | — | |
 | 2.9 | Tap current nav item again | Just closes menu | ☐ | ☐ | — | |
 | 2.10 | Conversations list — loading | Spinner + “Yükleniyor…” | ☐ | ☐ | Maestro | Waits until gone |
@@ -165,7 +165,6 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 | 2.14 | Footer profile row tap | Navigate to profile | ☐ | ☐ | — | |
 | 2.15 | Footer logout icon | Logout flow | ☐ | ☐ | Maestro | |
 | 2.16 | Display name priority | title → name+surname → username | ☐ | ☐ | — | |
-| 2.17 | Feature flags off | Gated nav items hidden | ☐ | ☐ | — | |
 
 ---
 
@@ -217,7 +216,6 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 |----|------|----------|------|------|------|-------|
 | 4.1 | Outgoing list action | Navigate to `/invoices` with date/filter params | ☐ | ☐ | — | |
 | 4.2 | Incoming list action | Navigate to `/incoming-invoices` | ☐ | ☐ | — | |
-| 4.3 | Feature flag off | Button hidden | ☐ | ☐ | — | |
 
 ### `open_invoice_detail` — “Detayı Gör”
 
@@ -242,23 +240,13 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 | 4.15 | Confirm while processing | Disabled + “Onaylanıyor…” | ☐ | ☐ | — | |
 | 4.16 | Re-open saved conversation | Preview action persists (**no HTML** — re-fetched) | ☐ | ☐ | — | |
 
-### `open_sign_otp` — SMS verification
-
-| ID | Test | Expected | Pass | Fail | Auto | Notes |
-|----|------|----------|------|------|------|-------|
-| 4.17 | Auto-open on OTP action | SMS modal appears | ☐ | ☐ | — | |
-| 4.18 | Enter SMS code + doğrula | Verification succeeds | ☐ | ☐ | — | |
-| 4.19 | Kodu Yeniden Gönder | Resends OTP | ☐ | ☐ | — | |
-| 4.20 | Change phone + gönder | Updates number and sends | ☐ | ☐ | — | |
-| 4.21 | Kapat while busy | Blocked during verify/send | ☐ | ☐ | — | |
-| 4.22 | OTP error inline | Error shown in modal | ☐ | ☐ | — | |
-| 4.23 | Re-open saved conversation | OTP action **NOT** persisted | ☐ | ☐ | — | By design |
+> IDs 4.17–4.23 removed: the SMS signing step (`open_sign_otp`) was deprecated — the server now answers sign-OTP tools with “SMS imza adımı gerekmez” and issuing goes straight through `confirm_invoice_issue`.
 
 ### Full invoice issue E2E
 
 | ID | Test | Expected | Pass | Fail | Auto | Notes |
 |----|------|----------|------|------|------|-------|
-| 4.24 | Chat: create draft → preview → confirm → OTP → verify → issue | Invoice issued in GİB | ☐ | ☐ | — | Highest-risk; manual |
+| 4.24 | Chat: create draft → preview → confirm → issue | Invoice issued in GİB | ☐ | ☐ | — | Highest-risk; manual. No SMS/OTP step |
 | 4.25 | GİB session expired mid-flow | `SESSION_EXPIRED` error surfaced | ☐ | ☐ | — | |
 | 4.26 | Draft UUID mismatch | “Doğrulanacak taslak değişmiş görünüyor…” | ☐ | ☐ | — | |
 
@@ -283,7 +271,6 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 
 | ID | Test | Expected | Pass | Fail | Auto | Notes |
 |----|------|----------|------|------|------|-------|
-| 5.1 | Feature flag off → direct URL | Redirect to `/` | ☐ | ☐ | — | |
 | 5.2 | Initial load | Full-screen spinner → list | ☐ | ☐ | Maestro | `maestro:invoices` |
 | 5.3 | Preset: Bu Ay | Correct date range | ☐ | ☐ | Maestro | Asserts `invoice-filter-bu_ay` |
 | 5.4 | Preset: Geçen Ay | Previous calendar month | ☐ | ☐ | — | |
@@ -319,7 +306,6 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 
 | ID | Test | Expected | Pass | Fail | Auto | Notes |
 |----|------|----------|------|------|------|-------|
-| 6.1 | Feature flag off → direct URL | Redirect to `/` | ☐ | ☐ | — | |
 | 6.2 | Loading state | Full-screen spinner | ☐ | ☐ | — | |
 | 6.3 | Error state | Alert icon + message + “Tekrar Dene” | ☐ | ☐ | — | |
 | 6.4 | Hero section | Avatar initial, name, VKN/TCKN | ☐ | ☐ | — | |
@@ -336,15 +322,9 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 
 ---
 
-## 7. Feature flags (`/features` endpoint)
+## 7. Feature flags — removed
 
-| ID | Test | Expected | Pass | Fail | Auto | Notes |
-|----|------|----------|------|------|------|-------|
-| 7.1 | All flags **on** (normal dev) | All routes + chat buttons visible | ☐ | ☐ | — | |
-| 7.2 | `outgoingInvoices` off | `/invoices` redirects; outgoing chat actions hidden | ☐ | ☐ | — | |
-| 7.3 | `incomingInvoices` off | `/incoming-invoices` redirects; incoming actions hidden | ☐ | ☐ | — | |
-| 7.4 | `profile` off | `/profile` redirects; menu item hidden | ☐ | ☐ | — | |
-| 7.5 | `/features` endpoint down | All flags default **false** — app mostly chat-only | ☐ | ☐ | — | High risk on prod deploy |
+The feature-flag system was removed from the client: the `features` edge function no longer exists and no code reads the `feature_flags` table (it still exists in the DB via migration 010 but is unused). All screens are always available. If flags come back, re-add gated-route tests here.
 
 ---
 
@@ -382,7 +362,7 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 
 | ID | Function | Test | Pass | Fail | Auto | Notes |
 |----|----------|------|------|------|------|-------|
-| 10.1 | `login` | GİB auth + JWT issuance | ☐ | ☐ | Maestro | Indirect via app login |
+| 10.1 | `auth` | Phone+OTP login/register/link-tenant + JWT issuance | ☐ | ☐ | Maestro | Indirect via app login |
 | 10.2 | `refresh` | Token rotation | ☐ | ☐ | — | |
 | 10.3 | `logout` | Revokes sessions + GİB logout | ☐ | ☐ | — | |
 | 10.4 | `chat` | NDJSON stream + tool execution | ☐ | ☐ | — | |
@@ -392,21 +372,18 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 | 10.8 | `invoice-html` | HTML preview fetch | ☐ | ☐ | — | |
 | 10.9 | `excel-export` | XLSX + Storage signed URL | ☐ | ☐ | — | |
 | 10.10 | `profile` | GET + PATCH | ☐ | ☐ | — | |
-| 10.11 | `features` | Reads `feature_flags` table | ☐ | ☐ | — | |
-| 10.12 | DB migrations | `supabase db reset` applies cleanly | ☐ | ☐ | — | |
+| 10.12 | DB migrations | `npm run supabase:db:reset` applies cleanly | ☐ | ☐ | — | |
 
 ---
 
 ## Known risk areas (check first)
 
-1. **Feature flags all off** — `/features` fail or empty DB → invoices/profile/chat actions hidden.
-2. **Local vs prod env** — Device builds can’t reach `127.0.0.1`.
-3. **GİB session expiry** — Finla JWT valid while GİB session dead → `SESSION_EXPIRED` in chat.
-4. **Refresh token UX** — Refresh fail shows errors but no auto-redirect to login.
-5. **Excel URL expiry** — 5 min TTL; old conversations show hint only.
-6. **OTP not persisted** — Reopened conversations won’t show SMS modal.
-7. **Supabase + Functions** — `npm start` alone is not enough for local API QA.
-8. **`expo-sharing` patch** — Broken share if `postinstall` / patch-package skipped.
+1. **Local vs prod env** — Device builds can’t reach `127.0.0.1`.
+2. **GİB session expiry** — Finla JWT valid while GİB session dead → `SESSION_EXPIRED` in chat.
+3. **Refresh token UX** — Refresh fail shows errors but no auto-redirect to login.
+4. **Excel URL expiry** — 5 min TTL; old conversations show hint only.
+5. **Supabase + Functions** — `npm start` alone is not enough for local API QA.
+6. **`expo-sharing` patch** — Broken share if `postinstall` / patch-package skipped.
 
 ---
 
@@ -414,7 +391,7 @@ Device-local, **login öncesi** gösterilir. Kalıcılık: AsyncStorage `finla_o
 
 | Day | Focus |
 |-----|--------|
-| 1 | Section 0 + P0 + `npm run maestro:smoke` + Section 7 |
+| 1 | Section 0 + P0 + `npm run maestro:smoke` |
 | 2 | Sections 1–3 (auth, menu, chat) |
 | 3 | Section 4 (invoice draft, OTP, Excel) — manual GİB |
 | 4 | Sections 5–6 (lists, profile) |

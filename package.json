@@ -11,6 +11,7 @@
     "ios:open": "open ios/finla.xcworkspace",
     "web": "expo start --web",
     "lint": "expo lint",
+    "docs:check": "bash scripts/docs-check.sh",
     "test:chat": "bash scripts/deno-test.sh supabase/functions/chat/intents.test.ts supabase/functions/chat/date-range.test.ts supabase/functions/chat/invoice-workflow.test.ts supabase/functions/chat/chat-history.test.ts supabase/functions/chat/invoice-tax.test.ts",
     "test:auth-lock": "bash scripts/deno-test.sh lib/app-lock-policy.test.ts",
     "maestro:login": "bash scripts/maestro-test.sh .maestro/flows/login.yaml",

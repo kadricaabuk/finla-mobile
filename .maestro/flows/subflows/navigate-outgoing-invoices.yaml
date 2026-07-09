@@ -1,4 +1,4 @@
-# Navigate to outgoing invoices (Faturalarım). Requires outgoingInvoices feature flag.
+# Navigate to outgoing invoices (Faturalarım) via the side menu.
 
 appId: com.finla.app
 ---

@@ -1,7 +1,7 @@
 # P0 smoke test: login → chat → menu → invoices → logout
 #
 # Run: npm run maestro:smoke
-# Requires: test env, feature_flags.outgoingInvoices enabled
+# Requires: TEST_PHONE / TEST_PIN in .maestro/.env (staging user, tenant linked)
 
 appId: com.finla.app
 ---

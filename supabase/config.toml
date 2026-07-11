@@ -46,6 +46,9 @@ verify_jwt = false
 [functions.mysoft-smoke]
 verify_jwt = false
 
+[functions.nilvera-smoke]
+verify_jwt = false
+
 [functions.refresh]
 verify_jwt = false
 

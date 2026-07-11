@@ -2,7 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js'
 import { hashPassword, verifyPassword } from './password.ts'
 import { normalizePhone, normalizeVknTckn } from './phone.ts'
 import { isMockMode } from './invoice-provider/mock-provider.ts'
-import { assertMysoftTenantExists } from './mysoft-tenant.ts'
+import { getInvoiceProvider } from './invoice-provider/index.ts'
 import type { FinlaSessionClaims, OnboardingStatus } from './session-auth.ts'
 
 const supabase = createClient(
@@ -23,6 +23,8 @@ export interface TenantRow {
   vkn_tckn: string
   display_name: string | null
   mysoft_status: string
+  provider: string
+  provider_status: string
 }
 
 export async function findUserByPhone(phone: string): Promise<UserRow | null> {
@@ -83,7 +85,7 @@ export async function getPrimaryTenantForUser(
 ): Promise<TenantRow | null> {
   const { data, error } = await supabase
     .from('user_tenants')
-    .select('tenant_id, tenants(id,vkn_tckn,display_name,mysoft_status)')
+    .select('tenant_id, tenants(id,vkn_tckn,display_name,mysoft_status,provider,provider_status)')
     .eq('user_id', userId)
     .limit(1)
     .maybeSingle()
@@ -102,7 +104,7 @@ export async function buildSessionClaims(userId: string): Promise<FinlaSessionCl
   let onboardingStatus: OnboardingStatus = 'pending'
   if (tenant) {
     onboardingStatus =
-      tenant.mysoft_status === 'active' ? 'active' : 'tenant_linked'
+      tenant.provider_status === 'active' ? 'active' : 'tenant_linked'
   }
 
   return {
@@ -122,23 +124,28 @@ export async function linkTenantForUser(
   const vknTckn = normalizeVknTckn(rawVkn)
   const name = displayName?.trim() || `Firma ${vknTckn}`
 
-  await assertMysoftTenantExists(vknTckn)
+  const provider = await getInvoiceProvider({ userId, tenantVkn: vknTckn })
+  await provider.verifyTenantExists(vknTckn)
 
   const { data: existingTenant, error: findErr } = await supabase
     .from('tenants')
-    .select('id,vkn_tckn,display_name,mysoft_status')
+    .select('id,vkn_tckn,display_name,mysoft_status,provider,provider_status')
     .eq('vkn_tckn', vknTckn)
     .maybeSingle()
   if (findErr) throw findErr
 
+  const linkedStatus = isMockMode() ? 'mock_linked' : 'linked'
+
   let tenantId: string
   if (existingTenant?.id) {
     tenantId = existingTenant.id as string
+    // Don't touch the provider column: the CRM may have already assigned Nilvera here.
     await supabase
       .from('tenants')
       .update({
         display_name: name,
-        mysoft_status: isMockMode() ? 'mock_linked' : 'linked',
+        mysoft_status: linkedStatus,
+        provider_status: linkedStatus,
       })
       .eq('id', tenantId)
   } else {
@@ -147,7 +154,8 @@ export async function linkTenantForUser(
       .insert({
         vkn_tckn: vknTckn,
         display_name: name,
-        mysoft_status: isMockMode() ? 'mock_linked' : 'linked',
+        mysoft_status: linkedStatus,
+        provider_status: linkedStatus,
       })
       .select('id')
       .single()
@@ -163,7 +171,7 @@ export async function linkTenantForUser(
 
   const { data: tenant, error: tenantErr } = await supabase
     .from('tenants')
-    .select('id,vkn_tckn,display_name,mysoft_status')
+    .select('id,vkn_tckn,display_name,mysoft_status,provider,provider_status')
     .eq('id', tenantId)
     .single()
   if (tenantErr) throw tenantErr

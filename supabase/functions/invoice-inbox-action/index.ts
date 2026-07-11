@@ -49,8 +49,8 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const provider = getInvoiceProvider()
     const ctx = providerContextFromSession(session)
+    const provider = await getInvoiceProvider(ctx)
 
     if (action === 'accept') {
       await provider.acceptIncomingInvoice(ctx, invoiceUuid)

@@ -11,6 +11,8 @@ import {
 import { toIsoDate } from './invoice-facts.ts'
 import {
   computeLineAmounts,
+  FOREIGN_BUYER_TAX_ID,
+  isForeignBuyerCountry,
   validateInvoiceLinePricing,
   validateReturnRef,
   type CreateInvoiceInput,
@@ -132,15 +134,6 @@ function isEfaturaRecipient(recipient: RecipientLookupResult | null): boolean {
   if (!recipient) return false
   if (recipient.is_efatura) return true
   return Boolean(recipient.pk_alias)
-}
-
-/** Yurt dışı alıcı: GİB kuralı gereği VKN alanına "2222222222" yazılır. */
-const FOREIGN_BUYER_TAX_ID = '2222222222'
-
-export function isForeignBuyerCountry(country: string | undefined): boolean {
-  const c = (country ?? '').trim().toLocaleLowerCase('tr-TR')
-  if (!c) return false
-  return c !== 'türkiye' && c !== 'turkiye' && c !== 'turkey' && c !== 'tr'
 }
 
 export function buildMysoftInvoiceOutboxBody(

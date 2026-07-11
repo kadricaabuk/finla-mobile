@@ -4,8 +4,6 @@ import {
   getInvoiceProvider,
   providerContextFromSession,
 } from '../_shared/invoice-provider/index.ts'
-import { isMockMode } from '../_shared/invoice-provider/mock-provider.ts'
-import { fetchMysoftIncomingInvoiceDetail } from '../_shared/mysoft-invoice-detail.ts'
 import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
@@ -106,25 +104,12 @@ async function fetchDetailFromProvider(
   direction: 'outgoing' | 'incoming',
 ): Promise<InvoiceDetailRow> {
   const ctx = providerContextFromSession(session)
+  const provider = await getInvoiceProvider(ctx)
 
   if (direction === 'incoming') {
-    if (isMockMode()) {
-      return {
-        invoice_uuid: invoiceUuid,
-        issue_date: null,
-        status: 'pending_response',
-        currency: 'TRY',
-        gross_total: 590,
-        vat_total: 90,
-        net_total: 500,
-        customer_tax_id: '9876543210',
-        customer_name: 'Tedarikçi A.Ş.',
-      }
-    }
-    return await fetchMysoftIncomingInvoiceDetail(ctx, invoiceUuid)
+    return await provider.getIncomingInvoiceDetail(ctx, invoiceUuid)
   }
 
-  const provider = getInvoiceProvider()
   const preview = await provider.getInvoicePreview(ctx, {
     invoiceUuid,
     signed: true,
@@ -191,14 +176,13 @@ Deno.serve(async (req: Request) => {
       invoice.net_total == null
     const needsIncomingRefresh =
       direction === 'incoming' &&
-      !isMockMode() &&
       (needsTotals ||
         isBadDisplayName(invoice.customer_name) ||
         invoice.status === 'unknown')
 
     if (needsTotals && direction === 'outgoing') {
       try {
-        const provider = getInvoiceProvider()
+        const provider = await getInvoiceProvider(providerContextFromSession(session))
         const preview = await provider.getInvoicePreview(
           providerContextFromSession(session),
           { invoiceUuid, signed: true },
@@ -221,7 +205,8 @@ Deno.serve(async (req: Request) => {
 
     if (needsIncomingRefresh) {
       try {
-        const fresh = await fetchMysoftIncomingInvoiceDetail(
+        const provider = await getInvoiceProvider(providerContextFromSession(session))
+        const fresh = await provider.getIncomingInvoiceDetail(
           providerContextFromSession(session),
           invoiceUuid,
         )

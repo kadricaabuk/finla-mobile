@@ -36,6 +36,7 @@ import {
   assertReturnMatchesOriginal,
   computeLineAmounts,
   findIncomingInvoiceByDocNo,
+  isForeignBuyerCountry,
   normalizeCurrencyRate,
   summarizeGibInvoicePayload,
   validateInvoiceLinePricing,
@@ -47,7 +48,6 @@ import {
   getUserProfile,
   updateUserProfile,
 } from "../../_shared/profile-service.ts";
-import { isForeignBuyerCountry } from "../../_shared/mysoft-mapper.ts";
 import type { FinlaSession } from "../../_shared/session-auth.ts";
 import { normalizeTurkish } from "../../_shared/turkish.ts";
 import { findKnownCustomers, type KnownCustomer } from "./customer-lookup.ts";
@@ -165,8 +165,8 @@ export async function executeToolImpl(
   userMessage: string,
   conversationId: string,
 ): Promise<unknown> {
-  const provider = getInvoiceProvider();
   const providerCtx = providerContextFromSession(session);
+  const provider = await getInvoiceProvider(providerCtx);
   const scopeKey = session.userId;
   const parsedFromText = parseFiltersFromText(userMessage);
   const amountGteFromInput =

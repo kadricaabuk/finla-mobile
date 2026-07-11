@@ -2,8 +2,10 @@ import {
   buildLocalDraftPreviewHtml,
   type CreateInvoiceInput,
 } from '../invoice-mapper.ts'
+import { fetchMysoftIncomingInvoiceDetail } from '../mysoft-invoice-detail.ts'
 import type { InvoicePreviewContent } from '../invoice-preview.ts'
 import { mysoftGetBinary, mysoftRequest, mysoftRequestEnvelope } from '../mysoft-client.ts'
+import { assertMysoftTenantExists } from '../mysoft-tenant.ts'
 import {
   buildMysoftInvoiceOutboxBody,
   extractMysoftEttn,
@@ -470,6 +472,14 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
     )
     const company = pickMysoftCompanyRow(companyPayload, ctx.tenantVkn)
     return mapMysoftUserProfile(company, userInfo, ctx)
+  },
+
+  async getIncomingInvoiceDetail(ctx, invoiceUuid) {
+    return await fetchMysoftIncomingInvoiceDetail(ctx, invoiceUuid)
+  },
+
+  async verifyTenantExists(vknTckn) {
+    await assertMysoftTenantExists(vknTckn)
   },
 }
 

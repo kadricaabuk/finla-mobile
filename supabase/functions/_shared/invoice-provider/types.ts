@@ -4,7 +4,30 @@ import type { InvoicePreviewContent } from '../invoice-preview.ts'
 export interface InvoiceDraftRef {
   date: string
   uuid: string
+  /** Marks which channel (e-Fatura/e-Arşiv) the invoice went through; unused by Mysoft. */
+  channel?: 'einvoice' | 'earchive'
 }
+
+export interface IncomingInvoiceDetail {
+  invoice_uuid: string
+  issue_date: string | null
+  status: string
+  currency: string
+  gross_total: number | null
+  vat_total: number | null
+  net_total: number | null
+  customer_tax_id: string | null
+  customer_name: string | null
+}
+
+/**
+ * listOutgoing/IncomingInvoices contract: rows must use GİB's Turkish field
+ * names (ettn, belgeNumarasi, belgeTarihi/faturaTarihi "DD/MM/YYYY",
+ * onayDurumu, vergilerDahilToplamTutar, malhizmetToplamTutari, paraBirimi,
+ * aliciVknTckn/aliciUnvan* (outgoing) or gondericiVknTckn/gondericiUnvan* (incoming)).
+ * See mapMysoftHeaderToGibLike / mapMysoftInboxHeaderToGibLike.
+ */
+export type GibLikeInvoiceRow = Record<string, unknown>
 
 export interface RecipientLookupResult {
   tax_id: string
@@ -35,7 +58,7 @@ export interface InvoiceProvider {
     draft: InvoiceDraftRef,
     options?: { resendInput?: CreateInvoiceInput },
   ): Promise<{ uuid: string; html: string }>
-  /** API taslağını siler (best-effort; taslak GİB'e gitmediği için güvenli). */
+  /** Deletes the API draft (best-effort; safe since the draft never reached GİB). */
   deleteDraftInvoice(
     ctx: InvoiceProviderContext,
     ettn: string,
@@ -53,12 +76,12 @@ export interface InvoiceProvider {
     ctx: InvoiceProviderContext,
     startDate: string,
     endDate: string,
-  ): Promise<unknown[]>
+  ): Promise<GibLikeInvoiceRow[]>
   listIncomingInvoices(
     ctx: InvoiceProviderContext,
     startDate: string,
     endDate: string,
-  ): Promise<unknown[]>
+  ): Promise<GibLikeInvoiceRow[]>
   cancelInvoice(
     ctx: InvoiceProviderContext,
     ettn: string,
@@ -74,4 +97,10 @@ export interface InvoiceProvider {
     reason: string,
   ): Promise<{ status: string }>
   getUserProfile(ctx: InvoiceProviderContext): Promise<Record<string, unknown>>
+  getIncomingInvoiceDetail(
+    ctx: InvoiceProviderContext,
+    invoiceUuid: string,
+  ): Promise<IncomingInvoiceDetail>
+  /** Verifies the tenant's VKN/TCKN is registered/authorized on the provider account. */
+  verifyTenantExists(vknTckn: string): Promise<void>
 }

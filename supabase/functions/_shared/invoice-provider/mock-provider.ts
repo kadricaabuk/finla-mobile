@@ -7,6 +7,7 @@ import {
   type CreateInvoiceInput,
 } from '../invoice-mapper.ts'
 import type {
+  GibLikeInvoiceRow,
   InvoiceDraftRef,
   InvoiceProvider,
   InvoiceProviderContext,
@@ -27,7 +28,7 @@ function mockRecipient(taxId: string): RecipientLookupResult {
   }
 }
 
-function mockOutgoingList(tenantVkn?: string): unknown[] {
+function mockOutgoingList(tenantVkn?: string): GibLikeInvoiceRow[] {
   const today = todayGibApiFormatted().replace(/\//g, '/')
   return [
     {
@@ -175,6 +176,24 @@ export const mockInvoiceProvider: InvoiceProvider = {
       fullAddress: '',
       country: 'Türkiye',
     }
+  },
+
+  async getIncomingInvoiceDetail(_ctx, invoiceUuid) {
+    return {
+      invoice_uuid: invoiceUuid,
+      issue_date: null,
+      status: 'pending_response',
+      currency: 'TRY',
+      gross_total: 590,
+      vat_total: 90,
+      net_total: 500,
+      customer_tax_id: '9876543210',
+      customer_name: 'Tedarikçi A.Ş.',
+    }
+  },
+
+  async verifyTenantExists(_vknTckn) {
+    // In mock mode every VKN is considered registered.
   },
 }
 

@@ -44,8 +44,8 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const provider = getInvoiceProvider()
     const ctx = providerContextFromSession(session)
+    const provider = await getInvoiceProvider(ctx)
     const scopeKey = session.userId
     const invoices =
       direction === 'incoming'

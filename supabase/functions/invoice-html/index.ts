@@ -60,8 +60,8 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: 'invoiceUuid zorunludur.' }, { status: 400, headers: corsHeaders })
     }
 
-    const provider = getInvoiceProvider()
     const ctx = providerContextFromSession(session)
+    const provider = await getInvoiceProvider(ctx)
 
     try {
       const preview = await provider.getInvoicePreview(ctx, {

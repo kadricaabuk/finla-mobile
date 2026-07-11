@@ -9,6 +9,15 @@ import {
   normalizeInboxDisplayStatus,
 } from './incoming-invoice-status.ts'
 
+/** Foreign buyer: per GİB rule, the VKN field gets the value "2222222222". */
+export const FOREIGN_BUYER_TAX_ID = '2222222222'
+
+export function isForeignBuyerCountry(country: string | undefined): boolean {
+  const c = (country ?? '').trim().toLocaleLowerCase('tr-TR')
+  if (!c) return false
+  return c !== 'türkiye' && c !== 'turkiye' && c !== 'turkey' && c !== 'tr'
+}
+
 export interface InvoiceLineItem {
   name: string
   quantity: number

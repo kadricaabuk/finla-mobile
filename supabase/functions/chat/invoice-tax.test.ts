@@ -10,13 +10,13 @@ import {
 } from "../_shared/gib-tax-codes.ts";
 import {
   buildMysoftInvoiceOutboxBody,
-  isForeignBuyerCountry,
   mapMysoftGibAccount,
 } from "../_shared/mysoft-mapper.ts";
 import {
   assertReturnMatchesOriginal,
   computeLineAmounts,
   findIncomingInvoiceByDocNo,
+  isForeignBuyerCountry,
   validateInvoiceLinePricing,
   validateReturnRef,
   type CreateInvoiceInput,

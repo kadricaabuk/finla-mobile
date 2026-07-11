@@ -47,8 +47,8 @@ export async function syncFactsForSession(
   factDirection: InvoiceDirection,
 ): Promise<void> {
   const scopeKey = session.userId;
-  const provider = getInvoiceProvider();
   const ctx = providerContextFromSession(session);
+  const provider = await getInvoiceProvider(ctx);
   const invoices =
     factDirection === "outgoing"
       ? await provider.listOutgoingInvoices(ctx, startDate, endDate)

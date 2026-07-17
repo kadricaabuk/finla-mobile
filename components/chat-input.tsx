@@ -1,7 +1,13 @@
 import { useAnimatedChatInputPadding } from "@/hooks/use-keyboard";
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -19,6 +25,10 @@ interface ChatInputProps {
   draftText?: string | null;
   /** Taslak input'a uygulandığında çağrılır — parent taslağı temizlemeli. */
   onDraftConsumed?: () => void;
+  /** True while editing a sent message — shows a cancelable banner. */
+  editing?: boolean;
+  /** Called when the user dismisses edit mode; the input is cleared. */
+  onCancelEdit?: () => void;
 }
 
 export default function ChatInput({
@@ -32,6 +42,8 @@ export default function ChatInput({
   onVoice,
   draftText = null,
   onDraftConsumed,
+  editing = false,
+  onCancelEdit,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const inputRef = useRef<TextInput>(null);
@@ -59,10 +71,32 @@ export default function ChatInput({
 
   const hasText = text.trim().length > 0;
 
+  const handleCancelEdit = () => {
+    setText("");
+    onCancelEdit?.();
+  };
+
   return (
     <Animated.View style={[styles.container, animatedContainerStyle]}>
+      {editing ? (
+        <View style={styles.editBanner}>
+          <Ionicons name="pencil" size={14} color="#555" />
+          <Text style={styles.editBannerText} numberOfLines={1}>
+            Mesajı düzenliyorsun
+          </Text>
+          <TouchableOpacity
+            testID="chat-cancel-edit"
+            accessibilityLabel="Düzenlemeyi iptal et"
+            style={styles.editBannerClose}
+            onPress={handleCancelEdit}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="close" size={16} color="#555" />
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <View style={styles.row}>
-        {/* {onAttach ? (
+        {onAttach ? (
           <TouchableOpacity
             style={styles.circleBtn}
             onPress={onAttach}
@@ -70,9 +104,7 @@ export default function ChatInput({
           >
             <Ionicons name="add" size={22} color="#000" />
           </TouchableOpacity>
-        ) : (
-          <View style={styles.circleBtnGhost} pointerEvents="none" />
-        )} */}
+        ) : null}
 
         <TextInput
           ref={inputRef}
@@ -162,8 +194,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#000",
     maxHeight: 120,
+    minHeight: 44,
   },
   inputDisabled: {
     opacity: 0.65,
+  },
+  editBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: "#F3F4F9",
+  },
+  editBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#555",
+    fontWeight: "500",
+  },
+  editBannerClose: {
+    padding: 2,
   },
 });

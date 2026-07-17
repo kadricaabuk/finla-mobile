@@ -120,6 +120,7 @@
         "npm:@types/react@19.1",
         "npm:eslint-config-expo@10.0",
         "npm:eslint@^9.25.0",
+        "npm:expo-clipboard@~8.0.8",
         "npm:expo-constants@~18.0.13",
         "npm:expo-file-system@~19.0.22",
         "npm:expo-font@~14.0.11",

@@ -34,6 +34,7 @@ Deno.serve(async (req: Request) => {
         .from('conversations')
         .select('id,title,created_at')
         .eq('user_id', session.userId)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(80)
 
@@ -70,8 +71,38 @@ Deno.serve(async (req: Request) => {
       return Response.json({ messages: rows ?? [] }, { headers: corsHeaders })
     }
 
+    if (action === 'delete') {
+      const conversationId =
+        typeof body.conversationId === 'string' ? body.conversationId.trim() : ''
+      if (
+        !conversationId ||
+        !isValidConversationId(conversationId)
+      ) {
+        throw new SessionAuthError('conversationId geçersiz.', 400)
+      }
+
+      const owned = await conversationOwnedByUser(
+        supabase,
+        conversationId,
+        session.userId,
+      )
+      if (!owned) {
+        throw new SessionAuthError('Sohbet bulunamadı.', 404)
+      }
+
+      // Soft delete: rows are never removed; reads filter on deleted_at is null.
+      const { error: delErr } = await supabase
+        .from('conversations')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', conversationId)
+        .eq('user_id', session.userId)
+
+      if (delErr) throw delErr
+      return Response.json({ ok: true }, { headers: corsHeaders })
+    }
+
     return Response.json(
-      { error: 'Bilinmeyen action; list veya messages kullanın.' },
+      { error: 'Bilinmeyen action; list, messages veya delete kullanın.' },
       { status: 400, headers: corsHeaders },
     )
   } catch (err) {

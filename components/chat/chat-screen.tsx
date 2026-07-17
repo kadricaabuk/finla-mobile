@@ -10,8 +10,10 @@ import { useKeyboardAvoidancePadding } from "@/hooks/use-keyboard";
 import { useRegisterMainShellSideMenu } from "@/hooks/use-register-main-shell-side-menu";
 import { splitQuickReplies } from "@/lib/chat-quick-replies";
 import { shareExcelDownload } from "@/lib/excel-share";
-import type { ChatMessageAction } from "@/types/chat-actions";
+import type { ChatMessage, ChatMessageAction } from "@/types/chat-actions";
 import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -45,12 +47,16 @@ export default function ChatScreen() {
     confirmingDraftUuid,
     openingConversationId,
     draftInput,
+    hasRouteDraft,
+    editingMessageId,
     consumeDraftInput,
     prefillInput,
     setDetailAction,
     setPreviewAction,
     handleSend,
     handleCancelStream,
+    handleStartEditMessage,
+    handleCancelEditMessage,
     handleConfirmFromPreview,
     handleNewChat,
     handleOpenConversation,
@@ -120,6 +126,44 @@ export default function ChatScreen() {
     return splitQuickReplies(lastMessage.text ?? "").replies;
   }, [lastMessage, loading, streaming]);
 
+  // Long-press menu on user bubbles: copy always; edit only for the last
+  // user message while idle (editing truncates the last exchange on send).
+  const lastUserMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+
+  // Stable handlers so the memoized ChatMessageBubble doesn't re-render
+  // (and re-parse markdown) for every message on each stream delta.
+  const handleOpenInvoiceDetail = useCallback(
+    (action: ChatMessageAction | undefined) => setDetailAction(action ?? null),
+    [setDetailAction],
+  );
+  const handleOpenInvoicePreview = useCallback(
+    (action: ChatMessageAction | undefined) => setPreviewAction(action ?? null),
+    [setPreviewAction],
+  );
+
+  const handleUserBubbleLongPress = useCallback(
+    (msg: ChatMessage) => {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const canEdit = !loading && !streaming && msg.id === lastUserMessageId;
+      Alert.alert("Mesaj", undefined, [
+        {
+          text: "Kopyala",
+          onPress: () => void Clipboard.setStringAsync(msg.text ?? ""),
+        },
+        ...(canEdit
+          ? [{ text: "Düzenle", onPress: () => handleStartEditMessage(msg) }]
+          : []),
+        { text: "Vazgeç", style: "cancel" as const },
+      ]);
+    },
+    [handleStartEditMessage, lastUserMessageId, loading, streaming],
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
@@ -140,11 +184,12 @@ export default function ChatScreen() {
             style={styles.flex}
             contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
-            keyboardDismissMode="none"
-            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
           >
             {messages.length === 0 &&
               inputFocused &&
+              !hasRouteDraft &&
               !loading &&
               !openingConversationId && (
                 <View style={styles.emptyState}>
@@ -191,14 +236,11 @@ export default function ChatScreen() {
                     ? (streamingStatus ?? "Düşünüyor…")
                     : null
                 }
-                onOpenInvoiceDetail={(action) =>
-                  setDetailAction(action ?? null)
-                }
-                onOpenInvoicePreview={(action) =>
-                  setPreviewAction(action ?? null)
-                }
+                onOpenInvoiceDetail={handleOpenInvoiceDetail}
+                onOpenInvoicePreview={handleOpenInvoicePreview}
                 onConfirmPreview={handleConfirmFromPreview}
                 onShareExcelExport={handleShareExcelExport}
+                onLongPress={handleUserBubbleLongPress}
               />
             ))}
 
@@ -236,6 +278,8 @@ export default function ChatScreen() {
           onSend={handleSend}
           draftText={draftInput}
           onDraftConsumed={consumeDraftInput}
+          editing={editingMessageId !== null}
+          onCancelEdit={handleCancelEditMessage}
         />
       </Animated.View>
 

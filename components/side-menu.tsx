@@ -1,9 +1,10 @@
 import type { ConversationSummary } from "@/types/conversations";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Keyboard,
   RefreshControl,
@@ -14,6 +15,9 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MENU_WIDTH = 280;
@@ -26,6 +30,8 @@ interface SideMenuProps {
   onNewChat: () => void;
   onLogout: () => void;
   onOpenConversation?: (id: string) => void | Promise<void>;
+  onDeleteConversation?: (id: string) => void | Promise<void>;
+  deletingConversationId?: string | null;
   username: string;
   conversations?: ConversationSummary[];
   conversationsLoading?: boolean;
@@ -57,12 +63,109 @@ function formatConvDate(iso: string): string {
   }
 }
 
+interface ConversationRowProps {
+  conversation: ConversationSummary;
+  isActive: boolean;
+  disabled: boolean;
+  opening: boolean;
+  deleting: boolean;
+  onOpen: () => void;
+  onDelete?: () => void;
+  /** Reports the row's swipeable so the parent can keep a single row open. */
+  onSwipeableWillOpen: (methods: SwipeableMethods | null) => void;
+}
+
+function ConversationRow({
+  conversation,
+  isActive,
+  disabled,
+  opening,
+  deleting,
+  onOpen,
+  onDelete,
+  onSwipeableWillOpen,
+}: ConversationRowProps) {
+  const swipeableRef = useRef<SwipeableMethods>(null);
+  const title = conversation.title.trim() ? conversation.title : "Sohbet";
+
+  const confirmDelete = useCallback(() => {
+    Alert.alert("Sohbeti Sil", `"${title}" sohbeti silinsin mi?`, [
+      {
+        text: "Vazgeç",
+        style: "cancel",
+        onPress: () => swipeableRef.current?.close(),
+      },
+      { text: "Sil", style: "destructive", onPress: () => onDelete?.() },
+    ]);
+  }, [title, onDelete]);
+
+  const row = (
+    <TouchableOpacity
+      style={[styles.convRow, isActive && styles.convRowActive]}
+      activeOpacity={0.65}
+      disabled={disabled || deleting}
+      onPress={onOpen}
+    >
+      <Ionicons name="chatbox-ellipses-outline" size={17} color="#555" />
+      <View style={styles.convRowTextWrap}>
+        <Text style={styles.convTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={styles.convMeta} numberOfLines={1}>
+          {formatConvDate(conversation.created_at)}
+        </Text>
+      </View>
+      {opening ? (
+        <ActivityIndicator size="small" color="#000" />
+      ) : (
+        <Ionicons name="chevron-forward" size={15} color="#CCC" />
+      )}
+    </TouchableOpacity>
+  );
+
+  if (!onDelete) {
+    return <View style={styles.convSwipeContainer}>{row}</View>;
+  }
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      friction={2}
+      rightThreshold={32}
+      overshootRight={false}
+      enabled={!deleting}
+      containerStyle={styles.convSwipeContainer}
+      onSwipeableWillOpen={() => onSwipeableWillOpen(swipeableRef.current)}
+      renderRightActions={() => (
+        <TouchableOpacity
+          testID={`side-menu-delete-conversation-${conversation.id}`}
+          accessibilityLabel="Sohbeti sil"
+          style={styles.convDeleteAction}
+          activeOpacity={0.8}
+          disabled={deleting}
+          onPress={confirmDelete}
+        >
+          {deleting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="trash-outline" size={18} color="#fff" />
+          )}
+        </TouchableOpacity>
+      )}
+    >
+      {row}
+    </ReanimatedSwipeable>
+  );
+}
+
 export default function SideMenu({
   isOpen,
   onClose,
   onNewChat,
   onLogout,
   onOpenConversation,
+  onDeleteConversation,
+  deletingConversationId = null,
   username,
   logoutLoading,
   conversations = [],
@@ -77,9 +180,24 @@ export default function SideMenu({
   const translateX = useRef(new Animated.Value(-MENU_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+
+  const handleSwipeableWillOpen = useCallback(
+    (methods: SwipeableMethods | null) => {
+      if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
+        openSwipeableRef.current.close();
+      }
+      openSwipeableRef.current = methods;
+    },
+    [],
+  );
 
   useEffect(() => {
     isOpen && Keyboard.dismiss();
+    if (!isOpen) {
+      openSwipeableRef.current?.close();
+      openSwipeableRef.current = null;
+    }
   }, [isOpen]);
 
   useEffect(() => {
@@ -145,25 +263,7 @@ export default function SideMenu({
           <Text style={styles.logo}>finla</Text>
         </View>
 
-        <ScrollView
-          style={styles.menuScroll}
-          contentContainerStyle={[
-            styles.menuScrollInner,
-            { paddingBottom: insets.bottom + 172 },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            onRefreshConversations ? (
-              <RefreshControl
-                refreshing={conversationsRefreshing}
-                onRefresh={() => void Promise.resolve(onRefreshConversations())}
-                tintColor="#000"
-                colors={["#000"]}
-              />
-            ) : undefined
-          }
-        >
+        <View style={styles.navSection}>
           <TouchableOpacity
             testID="side-menu-new-chat"
             style={[
@@ -240,10 +340,32 @@ export default function SideMenu({
             <Ionicons name="person-outline" size={18} color="#000" />
             <Text style={styles.navBtnLabel}>Profil</Text>
           </TouchableOpacity>
+        </View>
 
-          {onOpenConversation ? (
-            <View style={styles.convSection}>
-              <Text style={styles.sectionLabel}>Sohbetler</Text>
+        {onOpenConversation ? (
+          <View style={styles.convSection}>
+            <Text style={styles.sectionLabel}>Sohbetler</Text>
+            <ScrollView
+              style={styles.menuScroll}
+              contentContainerStyle={[
+                styles.menuScrollInner,
+                { paddingBottom: insets.bottom + 172 },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                onRefreshConversations ? (
+                  <RefreshControl
+                    refreshing={conversationsRefreshing}
+                    onRefresh={() =>
+                      void Promise.resolve(onRefreshConversations())
+                    }
+                    tintColor="#000"
+                    colors={["#000"]}
+                  />
+                ) : undefined
+              }
+            >
               {conversationsLoading ? (
                 <View style={styles.convLoading}>
                   <ActivityIndicator size="small" color="#888" />
@@ -253,42 +375,29 @@ export default function SideMenu({
                 <Text style={styles.convEmpty}>Kayıtlı sohbet yok</Text>
               ) : (
                 conversations.map((c) => (
-                  <TouchableOpacity
+                  <ConversationRow
                     key={c.id}
-                    style={[
-                      styles.convRow,
-                      activeConversationId === c.id && styles.convRowActive,
-                    ]}
-                    activeOpacity={0.65}
+                    conversation={c}
+                    isActive={activeConversationId === c.id}
                     disabled={!!openingConversationId}
-                    onPress={() =>
+                    opening={openingConversationId === c.id}
+                    deleting={deletingConversationId === c.id}
+                    onOpen={() =>
                       void Promise.resolve(onOpenConversation(c.id))
                     }
-                  >
-                    <Ionicons
-                      name="chatbox-ellipses-outline"
-                      size={17}
-                      color="#555"
-                    />
-                    <View style={styles.convRowTextWrap}>
-                      <Text style={styles.convTitle} numberOfLines={1}>
-                        {c.title.trim() ? c.title : "Sohbet"}
-                      </Text>
-                      <Text style={styles.convMeta} numberOfLines={1}>
-                        {formatConvDate(c.created_at)}
-                      </Text>
-                    </View>
-                    {openingConversationId === c.id ? (
-                      <ActivityIndicator size="small" color="#000" />
-                    ) : (
-                      <Ionicons name="chevron-forward" size={15} color="#CCC" />
-                    )}
-                  </TouchableOpacity>
+                    onDelete={
+                      onDeleteConversation
+                        ? () =>
+                            void Promise.resolve(onDeleteConversation(c.id))
+                        : undefined
+                    }
+                    onSwipeableWillOpen={handleSwipeableWillOpen}
+                  />
                 ))
               )}
-            </View>
-          ) : null}
-        </ScrollView>
+            </ScrollView>
+          </View>
+        ) : null}
 
         <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
           <View style={styles.profileRow}>
@@ -420,6 +529,9 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#000",
   },
+  navSection: {
+    paddingTop: 4,
+  },
   menuScroll: {
     flex: 1,
   },
@@ -427,6 +539,8 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   convSection: {
+    flex: 1,
+    minHeight: 0,
     marginTop: 8,
     paddingHorizontal: 10,
   },
@@ -448,15 +562,25 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontStyle: "italic",
   },
+  convSwipeContainer: {
+    marginBottom: 4,
+  },
   convRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 4,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: "#FAFAFA",
+  },
+  convDeleteAction: {
+    width: 56,
+    marginLeft: 6,
+    borderRadius: 10,
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
   },
   convRowActive: {
     backgroundColor: "#EEEEEE",

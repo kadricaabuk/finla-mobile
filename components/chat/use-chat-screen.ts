@@ -62,6 +62,12 @@ export function useChatScreen() {
   const [openingConversationId, setOpeningConversationId] = useState<
     string | null
   >(null);
+  // Long-press "Düzenle": the last user message being edited; on send the
+  // exchange from this message onward is removed and the edit is resent.
+  const [editingMessage, setEditingMessage] = useState<{
+    id: string;
+    text: string;
+  } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -122,6 +128,7 @@ export function useChatScreen() {
     setDetailAction(null);
     setDetailInvoice(null);
     setConfirmingDraftUuid(null);
+    setEditingMessage(null);
   }, []);
 
   const hydrateConversationById = useCallback(
@@ -141,14 +148,14 @@ export function useChatScreen() {
               !isHiddenUserActionContent(String(m.content ?? "")),
           )
           .map((m) => ({
-          id: m.id,
-          text: m.content,
-          role: m.role as "user" | "assistant",
-          action:
-            m.role === "assistant"
-              ? parseStoredChatAction(m.action)
-              : undefined,
-        })),
+            id: m.id,
+            text: m.content,
+            role: m.role as "user" | "assistant",
+            action:
+              m.role === "assistant"
+                ? parseStoredChatAction(m.action)
+                : undefined,
+          })),
       );
     },
     [clearChatChrome],
@@ -169,10 +176,10 @@ export function useChatScreen() {
   const draftKey =
     typeof routeParams.draftKey === "string" ? routeParams.draftKey : undefined;
 
-  // Diğer ekranlardan gelen taslak mesaj (ör. "Yeniden fatura kes"):
-  // draftKey başına yalnızca BİR kez input'a yazılır; input tükettiğinde
-  // temizlenir, böylece yeniden odak/render tekrar doldurmaz.
   const [draftInput, setDraftInput] = useState<string | null>(null);
+  // True when the screen was opened with a ready prompt (e.g. "reissue" from
+  // outgoing invoices) — hides empty-chat suggestions; reset on new chat/reset.
+  const [hasRouteDraft, setHasRouteDraft] = useState(false);
   const consumedDraftKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -180,6 +187,7 @@ export function useChatScreen() {
     if (consumedDraftKeyRef.current === draftKey) return;
     consumedDraftKeyRef.current = draftKey;
     setDraftInput(draftMessage);
+    setHasRouteDraft(true);
   }, [draftMessage, draftKey]);
 
   const consumeDraftInput = useCallback(() => {
@@ -210,12 +218,19 @@ export function useChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [sessionLabel, loadConversationId, loadKey, hydrateConversationById, scrollToBottom]);
+  }, [
+    sessionLabel,
+    loadConversationId,
+    loadKey,
+    hydrateConversationById,
+    scrollToBottom,
+  ]);
 
   useEffect(() => {
     if (!sessionLabel || !resetKey) return;
     setMessages([]);
     setConversationId(null);
+    setHasRouteDraft(false);
     clearChatChrome();
   }, [sessionLabel, resetKey, clearChatChrome]);
 
@@ -223,6 +238,13 @@ export function useChatScreen() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || sendingRef.current) return;
+
+      const editing = editingMessage;
+      if (editing && trimmed === editing.text.trim()) {
+        // Nothing changed — leave edit mode without resending.
+        setEditingMessage(null);
+        return;
+      }
 
       const tokens = await getTokens();
       if (!tokens) {
@@ -234,8 +256,19 @@ export function useChatScreen() {
       abortRef.current = new AbortController();
       const streamSignal = abortRef.current.signal;
 
-      try {
+      // Edit-resend: drop the old exchange locally in the same render as the
+      // new message; the server truncates it inside the chat request itself
+      // (replaceLastExchange) — no extra round trip.
+      const replaceLastExchange = Boolean(editing && conversationId);
+      if (editing) {
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === editing.id);
+          return idx >= 0 ? prev.slice(0, idx) : prev;
+        });
+        setEditingMessage(null);
+      }
 
+      try {
         const userMsg: ChatMessage = {
           id: newChatMessageId(),
           text: trimmed,
@@ -259,7 +292,7 @@ export function useChatScreen() {
         const isNewThread = conversationId === null;
         try {
           const res = await streamChat(
-            { message: trimmed, conversationId },
+            { message: trimmed, conversationId, replaceLastExchange },
             {
               onMeta: (nid) => {
                 setConversationId((prev) => prev ?? nid);
@@ -309,9 +342,7 @@ export function useChatScreen() {
             ...prev.filter((m) => m.id !== assistId),
             {
               id: newChatMessageId(),
-              text: aborted
-                ? "Yanıt durduruldu."
-                : userFacingApiError(err),
+              text: aborted ? "Yanıt durduruldu." : userFacingApiError(err),
               role: "assistant",
             },
           ]);
@@ -332,6 +363,7 @@ export function useChatScreen() {
       armStreamIdleTimer,
       clearStreamIdleTimer,
       conversationId,
+      editingMessage,
       finalizeStreamedText,
       onToolPhase,
       pushDelta,
@@ -345,6 +377,16 @@ export function useChatScreen() {
 
   const handleCancelStream = useCallback(() => {
     abortRef.current?.abort();
+  }, []);
+
+  /** Long-press "Düzenle": puts the message into the input as a draft. */
+  const handleStartEditMessage = useCallback((msg: ChatMessage) => {
+    setEditingMessage({ id: msg.id, text: msg.text ?? "" });
+    setDraftInput(msg.text ?? "");
+  }, []);
+
+  const handleCancelEditMessage = useCallback(() => {
+    setEditingMessage(null);
   }, []);
 
   const handleConfirmFromPreview = useCallback(
@@ -380,6 +422,7 @@ export function useChatScreen() {
   const handleNewChat = useCallback(() => {
     setMessages([]);
     setConversationId(null);
+    setHasRouteDraft(false);
     clearChatChrome();
     closeMenu();
   }, [clearChatChrome, closeMenu]);
@@ -415,12 +458,16 @@ export function useChatScreen() {
     confirmingDraftUuid,
     openingConversationId,
     draftInput,
+    hasRouteDraft,
+    editingMessageId: editingMessage?.id ?? null,
     consumeDraftInput,
     prefillInput,
     setDetailAction,
     setPreviewAction,
     handleSend,
     handleCancelStream,
+    handleStartEditMessage,
+    handleCancelEditMessage,
     handleConfirmFromPreview,
     handleNewChat,
     handleOpenConversation,

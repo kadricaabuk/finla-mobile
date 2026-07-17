@@ -53,7 +53,7 @@ import {
 } from "./ndjson-stream.ts";
 import { loadAgentChatHistory } from "./chat-history.ts";
 import { jsonChatOk, jsonError } from "./http-response.ts";
-import { insertChatMessage } from "./message-store.ts";
+import { deleteLastExchange, insertChatMessage } from "./message-store.ts";
 import { persistableAction } from "./persist-action.ts";
 import { executeTool } from "./tools/index.ts";
 import type { ChatAction, PendingInvoiceState } from "./types.ts";
@@ -85,6 +85,7 @@ Deno.serve(async (req: Request) => {
         draftUuid?: string;
       };
       stream?: boolean;
+      replaceLastExchange?: boolean;
     };
     const { message, conversationId, action: requestAction } = body;
 
@@ -131,6 +132,13 @@ Deno.serve(async (req: Request) => {
     }
 
     const cid = convId;
+
+    // Edit-resend: truncate the old exchange before inserting the edited
+    // message, so history (and any reload) never sees the pre-edit turn.
+    if (body.replaceLastExchange === true && conversationId && hasMessage) {
+      await deleteLastExchange(supabase, cid);
+    }
+
     const pendingState = await loadPendingInvoice(supabase, cid);
     const skipFinanceFastPaths = shouldSkipFinanceFastPaths(pendingState);
 

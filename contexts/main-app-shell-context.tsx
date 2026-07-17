@@ -14,7 +14,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { Alert, StyleSheet, View } from "react-native";
 
 export type MainShellActiveScreen =
   | "chat"
@@ -61,6 +61,8 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     conversations,
     conversationsLoading,
     conversationsRefreshing,
+    deletingConversationId,
+    deleteConversation,
     refreshConversationList,
   } = useConversationsList(sessionLabel);
   const { logout: performLogout, loading: logoutLoading } = useLogout();
@@ -114,6 +116,21 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
     (mode: "indicator" | "pull" | "none" = "indicator") =>
       refreshConversationList(mode),
     [refreshConversationList],
+  );
+
+  const handleDeleteConversation = useCallback(
+    async (id: string) => {
+      try {
+        await deleteConversation(id);
+        // Deleting the conversation that is open in chat resets it to a new chat.
+        if (menuRegistration?.bindings.activeConversationId === id) {
+          menuRegistration.bindings.onNewChat();
+        }
+      } catch {
+        Alert.alert("Sohbet", "Sohbet silinemedi. Lütfen tekrar deneyin.");
+      }
+    },
+    [deleteConversation, menuRegistration],
   );
 
   const onPullRefreshConversations = useCallback(
@@ -175,6 +192,8 @@ export function MainAppShellProvider({ children }: PropsWithChildren) {
         onLogout={performLogout}
         onNewChat={bindings.onNewChat}
         onOpenConversation={bindings.onOpenConversation}
+        onDeleteConversation={handleDeleteConversation}
+        deletingConversationId={deletingConversationId}
         openingConversationId={bindings.openingConversationId}
         activeConversationId={bindings.activeConversationId}
         activeScreen={bindings.activeScreen}

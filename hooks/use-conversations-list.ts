@@ -9,6 +9,9 @@ export function useConversationsList(sessionLabel: string | null) {
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [conversationsRefreshing, setConversationsRefreshing] =
     useState(false);
+  const [deletingConversationId, setDeletingConversationId] = useState<
+    string | null
+  >(null);
 
   const refreshConversationList = useCallback(
     async (mode: "indicator" | "pull" | "none" = "indicator") => {
@@ -35,10 +38,26 @@ export function useConversationsList(sessionLabel: string | null) {
     if (sessionLabel) void refreshConversationList("indicator");
   }, [sessionLabel, refreshConversationList]);
 
+  /** Soft delete on the backend; removes the row from local state on success. */
+  const deleteConversation = useCallback(async (id: string) => {
+    setDeletingConversationId(id);
+    try {
+      await callApi<{ ok: boolean }>("conversations", {
+        action: "delete",
+        conversationId: id,
+      });
+      setConversations((prev) => prev.filter((c) => c.id !== id));
+    } finally {
+      setDeletingConversationId(null);
+    }
+  }, []);
+
   return {
     conversations,
     conversationsLoading,
     conversationsRefreshing,
+    deletingConversationId,
+    deleteConversation,
     refreshConversationList,
   };
 }

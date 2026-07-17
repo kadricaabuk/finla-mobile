@@ -1,16 +1,21 @@
-import { clearLegacyCredentials, saveTokens } from "@/lib/session";
 import {
-  offerBiometricSetupAfterAuth,
-  setBiometricEnabled,
-  getBiometricEnabled,
-} from "@/lib/biometric-auth";
+  consumePinFallbackReauth,
+  refreshAppLockSession,
+  unlockAppLockSession,
+} from "@/contexts/app-lock-context";
 import {
   resolvePostLoginRoute,
   shouldClearBiometricOnPinFallbackReauth,
   shouldClearBiometricOnSetupDecline,
 } from "@/lib/app-lock-policy";
-import { consumePinFallbackReauth, refreshAppLockSession, unlockAppLockSession } from "@/contexts/app-lock-context";
 import { logAuthLock } from "@/lib/auth-lock-dev-log";
+import {
+  getBiometricEnabled,
+  offerBiometricSetupAfterAuth,
+  setBiometricEnabled,
+} from "@/lib/biometric-auth";
+import { clearLegacyCredentials, saveTokens } from "@/lib/session";
+import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
 import {
   authLinkTenant,
   authRequestOtp,
@@ -19,7 +24,6 @@ import {
   loginRequest,
   userFacingApiError,
 } from "@/lib/supabase";
-import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
@@ -85,7 +89,21 @@ async function persistAuthResponse(res: {
 }
 
 function normalizePhone(phone: string): string {
-  return `0${phone}`;
+  return `0${phone.replace(/\D/g, "")}`;
+}
+
+/** Masks a TR mobile number as "(5XX) XXX XX XX" while typing. */
+function formatPhoneInput(value: string): string {
+  let digits = value.replace(/\D/g, "");
+  // Pasted/autofilled numbers may carry a country code or leading zero.
+  if (digits.length > 10 && digits.startsWith("90")) digits = digits.slice(2);
+  digits = digits.replace(/^0+/, "").slice(0, 10);
+  if (digits.length === 0) return "";
+  let out = `(${digits.slice(0, 3)}`;
+  if (digits.length > 3) out += `) ${digits.slice(3, 6)}`;
+  if (digits.length > 6) out += ` ${digits.slice(6, 8)}`;
+  if (digits.length > 8) out += ` ${digits.slice(8, 10)}`;
+  return out;
 }
 
 function CodeField({
@@ -534,58 +552,61 @@ export default function LoginScreen() {
   return (
     <View style={styles.canvas}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <SafeAreaView edges={["top"]} style={styles.header}>
-          <View style={styles.headerTopRow}>
-            <Animated.View style={logoAnimatedStyle}>
-              <View ref={logoSlotRef}>
-                <Image
-                  source={SPLASH_LOGO}
-                  style={styles.logo}
-                  contentFit="contain"
-                />
-              </View>
-            </Animated.View>
-            {isRegisterStep && (
-              <TouchableOpacity
-                onPress={goBack}
-                hitSlop={12}
-                disabled={loading}
-                style={styles.backButton}
-              >
-                <Ionicons name="chevron-back" size={16} color="#fff" />
-                <Text style={styles.backText}>Geri</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <Animated.View style={fadeAnimatedStyle}>
-            <Text style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>{subtitle}</Text>
-
-            {isRegisterStep && (
-              <View style={styles.progressRow}>
-                {REGISTER_STEPS.map((step, i) => (
-                  <View
-                    key={step}
-                    style={[
-                      styles.progressSegment,
-                      i <= registerStepIndex && styles.progressSegmentDone,
-                    ]}
-                  />
-                ))}
-              </View>
-            )}
-            {mode === "link_tenant" && (
-              <Text style={styles.eyebrow}>SON ADIM</Text>
-            )}
+      <SafeAreaView edges={["top"]} style={styles.header}>
+        <View style={styles.headerTopRow}>
+          <Animated.View style={logoAnimatedStyle}>
+            <View ref={logoSlotRef}>
+              <Image
+                source={SPLASH_LOGO}
+                style={styles.logo}
+                contentFit="contain"
+              />
+            </View>
           </Animated.View>
-        </SafeAreaView>
+          {isRegisterStep && (
+            <TouchableOpacity
+              onPress={goBack}
+              hitSlop={12}
+              disabled={loading}
+              style={styles.backButton}
+            >
+              <Ionicons name="chevron-back" size={16} color="#fff" />
+              <Text style={styles.backText}>Geri</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-        <Animated.View style={[styles.sheet, sheetAnimatedStyle]}>
+        <Animated.View style={fadeAnimatedStyle}>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
+
+          {isRegisterStep && (
+            <View style={styles.progressRow}>
+              {REGISTER_STEPS.map((step, i) => (
+                <View
+                  key={step}
+                  style={[
+                    styles.progressSegment,
+                    i <= registerStepIndex && styles.progressSegmentDone,
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+          {mode === "link_tenant" && (
+            <Text style={styles.eyebrow}>SON ADIM</Text>
+          )}
+        </Animated.View>
+      </SafeAreaView>
+
+      <Animated.View style={[styles.sheet, sheetAnimatedStyle]}>
+        {/* KAV lives inside the sheet so the white background stays stretched
+            to the screen bottom (visible behind the keyboard's rounded
+            corners); only the scroll content is padded above the keyboard. */}
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -607,21 +628,23 @@ export default function LoginScreen() {
                     style={styles.phoneInput}
                     value={phone}
                     onChangeText={(v) => {
-                      setPhone(v);
+                      const formatted = formatPhoneInput(v);
+                      setPhone(formatted);
                       if (
                         mode === "register_phone" &&
-                        v.replace(/\D/g, "").length === 10 &&
+                        formatted.replace(/\D/g, "").length === 10 &&
                         !phoneAutoSubmittedRef.current &&
                         !loading
                       ) {
                         phoneAutoSubmittedRef.current = true;
-                        void handleRequestOtp(v);
+                        void handleRequestOtp(formatted);
                       }
                     }}
                     keyboardType="phone-pad"
-                    placeholder="5XX XXX XX XX"
+                    maxLength={15}
+                    placeholder="(5XX) XXX XX XX"
                     placeholderTextColor="#B4B4BE"
-                    onFocus={() => setFocusedField("phone")}
+                    onFocus={(e) => setFocusedField("phone")}
                     onBlur={() => setFocusedField(null)}
                   />
                 </View>
@@ -775,14 +798,9 @@ export default function LoginScreen() {
                 </Text>
               </TouchableOpacity>
             ) : null}
-
-            <Text style={styles.note}>
-              Test ortamında OTP kodu sunucu logunda görünür. Oturum anahtarları
-              yalnızca cihazında saklanır.
-            </Text>
           </ScrollView>
-        </Animated.View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </Animated.View>
 
       {handoff && !handoffReady && (
         <View style={styles.splashCover} pointerEvents="none">
@@ -883,7 +901,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: "600", color: "#1A1A2E" },
   input: {
     height: 52,
-    borderWidth: 1.5,
+    borderWidth: 0.5,
     borderColor: "#E4E5EC",
     borderRadius: 14,
     paddingHorizontal: 16,
@@ -892,14 +910,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#F7F7FA",
   },
   inputFocused: {
-    borderColor: "#1A1A2E",
-    backgroundColor: "#fff",
+    borderColor: "#c7c7c7",
   },
   phoneRow: {
     flexDirection: "row",
     alignItems: "center",
     height: 52,
-    borderWidth: 1.5,
+    borderWidth: 0.5,
     borderColor: "#E4E5EC",
     borderRadius: 14,
     backgroundColor: "#F7F7FA",
@@ -925,7 +942,7 @@ const styles = StyleSheet.create({
   codeCell: {
     flex: 1,
     height: 56,
-    borderWidth: 1.5,
+    borderWidth: 0.5,
     borderColor: "#E4E5EC",
     borderRadius: 14,
     backgroundColor: "#F7F7FA",
@@ -933,14 +950,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   codeCellFilled: {
-    borderColor: "#1A1A2E",
-    backgroundColor: "#fff",
+    borderColor: "#c7c7c7",
   },
   codeCellActive: {
-    borderColor: "#1A1A2E",
-    backgroundColor: "#fff",
+    borderColor: "#c7c7c7",
   },
-  codeChar: { fontSize: 22, fontWeight: "700", color: "#1A1A2E" },
+  codeChar: { fontSize: 18, fontWeight: "700", color: "#1A1A2E" },
   codeDot: {
     width: 10,
     height: 10,

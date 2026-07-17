@@ -13,6 +13,9 @@ import {
 import type { UserProfile } from "@/lib/api";
 import { resolvePublicApiUrls } from "@/lib/dev-api-host";
 import { sanitizeForDevLog as sanitizeForApiDevLog } from "@/shared/log-sanitize";
+// RN's global fetch has no ReadableStream body; expo/fetch does, and the
+// chat typing effect depends on reading NDJSON incrementally.
+import { fetch as expoStreamingFetch } from "expo/fetch";
 
 const { apiBaseUrl: API_BASE_URL, devHost } = resolvePublicApiUrls();
 const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -641,7 +644,12 @@ async function consumeChatNdjson(
  * returns application/json (e.g. eski sürüm).
  */
 export async function streamChat(
-  payload: { message: string; conversationId: string | null },
+  payload: {
+    message: string;
+    conversationId: string | null;
+    /** Edit-resend: server drops the last exchange before this message. */
+    replaceLastExchange?: boolean;
+  },
   handlers: StreamChatHandlers = {},
   options?: { signal?: AbortSignal },
 ): Promise<{
@@ -659,6 +667,7 @@ export async function streamChat(
     message: payload.message,
     conversationId: payload.conversationId,
     stream: true,
+    ...(payload.replaceLastExchange ? { replaceLastExchange: true } : {}),
   };
   devLogApi({
     request_id: requestId,
@@ -672,12 +681,12 @@ export async function streamChat(
   const body = JSON.stringify(requestBody);
 
   const doFetch = async (access: string) =>
-    fetch(`${API_BASE_URL}/chat`, {
+    expoStreamingFetch(`${API_BASE_URL}/chat`, {
       method: "POST",
       headers: authHeaders(access, { Accept: CHAT_STREAM_ACCEPT_HEADER }),
       body,
       signal: options?.signal,
-    });
+    }) as unknown as Promise<Response>;
 
   try {
     let res = await doFetch(tokens.accessToken);

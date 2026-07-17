@@ -17,6 +17,7 @@ export async function conversationOwnedByUser(
     .select("id")
     .eq("id", conversationId)
     .eq("user_id", userId)
+    .is("deleted_at", null)
     .maybeSingle();
   if (error) throw error;
   return !!data?.id;

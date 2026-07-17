@@ -3,8 +3,10 @@ import { stripQuickRepliesForDisplay } from "@/lib/chat-quick-replies";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
+import { memo } from "react";
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -25,9 +27,13 @@ interface ChatMessageBubbleProps {
   onConfirmPreview: (draftUuid: string | undefined) => void;
   /** Excel çıktısı: imzalı URL indir ve paylaş */
   onShareExcelExport?: (action: ChatMessage["action"]) => void;
+  /** Long-press on a user bubble (copy / edit menu). */
+  onLongPress?: (msg: ChatMessage) => void;
 }
 
-export function ChatMessageBubble({
+// Memoized: during streaming every delta updates the messages array, and
+// re-parsing markdown for all bubbles on each delta makes the list janky.
+export const ChatMessageBubble = memo(function ChatMessageBubble({
   msg,
   confirmingDraftUuid,
   streamPending,
@@ -36,18 +42,16 @@ export function ChatMessageBubble({
   onOpenInvoicePreview,
   onConfirmPreview,
   onShareExcelExport,
+  onLongPress,
 }: ChatMessageBubbleProps) {
   const pending = Boolean(streamPending && msg.role === "assistant");
-  // Öneri çipi satırı ([öneriler: …]) balon metninde gizlenir; çipler
-  // chat-screen tarafından yalnızca son asistan mesajı için çizilir.
+
   const messageText =
     msg.role === "assistant"
       ? stripQuickRepliesForDisplay(msg.text ?? "")
       : (msg.text ?? "");
   const showStreamStatusBubble =
-    msg.role === "assistant" &&
-    pending &&
-    messageText.trim().length === 0;
+    msg.role === "assistant" && pending && messageText.trim().length === 0;
 
   if (showStreamStatusBubble) {
     const label =
@@ -76,14 +80,22 @@ export function ChatMessageBubble({
   ];
   const markdownWrap = pending ? styles.markdownPendingWrap : undefined;
 
-  return (
-    <View
-      testID={msg.role === "assistant" ? "chat-assistant-message" : "chat-user-message"}
-      style={bubbleStyles}
-    >
-      {msg.role === "user" ? (
+  if (msg.role === "user") {
+    return (
+      <Pressable
+        testID="chat-user-message"
+        style={bubbleStyles}
+        onLongPress={onLongPress ? () => onLongPress(msg) : undefined}
+        delayLongPress={300}
+      >
         <Text style={[styles.bubbleText, styles.userText]}>{messageText}</Text>
-      ) : hasMarkdownTable(messageText) ? (
+      </Pressable>
+    );
+  }
+
+  return (
+    <View testID="chat-assistant-message" style={bubbleStyles}>
+      {hasMarkdownTable(messageText) ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={markdownWrap}>
             <Markdown style={chatMarkdownStyles}>{messageText}</Markdown>
@@ -102,7 +114,9 @@ export function ChatMessageBubble({
             const filter = msg.action?.filter;
             const isIncoming = filter?.direction === "incoming";
             router.push({
-              pathname: isIncoming ? "/incoming-invoices" : "/outgoing-invoices",
+              pathname: isIncoming
+                ? "/incoming-invoices"
+                : "/outgoing-invoices",
               params: {
                 startDate: filter?.startDate,
                 endDate: filter?.endDate,
@@ -206,7 +220,7 @@ export function ChatMessageBubble({
         )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   bubble: {

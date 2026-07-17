@@ -32,6 +32,7 @@ async function loadLocalPreviewFallback(
     .from('conversations')
     .select('user_id, pending_invoice')
     .eq('id', conversationId)
+    .is('deleted_at', null)
     .single()
   if (error || !data) return null
   if (data.user_id !== userId) return null

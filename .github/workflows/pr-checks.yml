@@ -38,3 +38,6 @@ jobs:
       - run: npm ci
       - run: npm run test:chat
       - run: npm run test:auth-lock
+      # Node-based, unlike the Deno suites above. It lives in this job rather
+      # than its own so it is covered by the existing required-check name.
+      - run: npm run test:linear

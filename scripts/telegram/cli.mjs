@@ -22,6 +22,7 @@ import {
   readAgentToken,
   readGroupChatId,
   resolveAgent,
+  tokenEnvNames,
 } from "./agents.mjs";
 import { buildInbox } from "./inbox.mjs";
 import { createTelegramClient, extractChats } from "./telegram-client.mjs";
@@ -83,7 +84,8 @@ async function commandListAgents() {
       key,
       label: agent.label,
       tokenEnv: agent.tokenEnv,
-      tokenPresent: Boolean(process.env[agent.tokenEnv]),
+      accepted: tokenEnvNames(key),
+      tokenPresent: tokenEnvNames(key).some((name) => Boolean(process.env[name])),
     })),
   };
 }

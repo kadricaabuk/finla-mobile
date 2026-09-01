@@ -12,7 +12,7 @@ path, no per-task billing, no logic living in a UI outside version control.
 | Agent key | Shown as | Token env var |
 | --- | --- | --- |
 | `cofounder` | Co-founder | `TELEGRAM_BOT_TOKEN_COFOUNDER` |
-| `developer` | Fullstack Developer | `TELEGRAM_BOT_TOKEN_DEVELOPER` |
+| `developer` | Fullstack Developer | `TELEGRAM_BOT_TOKEN_DEV_AGENT` (or `..._DEVELOPER`) |
 | `product-analyst` | Product Analyst | `TELEGRAM_BOT_TOKEN_PRODUCT_ANALYST` |
 | `muhasebeci` | Muhasebeci | `TELEGRAM_BOT_TOKEN_MUHASEBECI` |
 | `pr-manager` | PR Manager | `TELEGRAM_BOT_TOKEN_PR_MANAGER` |

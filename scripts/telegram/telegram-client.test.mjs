@@ -52,6 +52,14 @@ describe("agent registry", () => {
     assert.throws(() => readGroupChatId({}), /TELEGRAM_FINLA_GROUP_CHAT_ID is not set/);
   });
 
+  it("accepts either accepted name for the dev agent token", () => {
+    // The agent brief names it _DEV_AGENT; the role-name form matches the
+    // other four. A mismatch here would look like a bot that cannot send.
+    assert.equal(readAgentToken("developer", { TELEGRAM_BOT_TOKEN_DEV_AGENT: "a" }), "a");
+    assert.equal(readAgentToken("developer", { TELEGRAM_BOT_TOKEN_DEVELOPER: "b" }), "b");
+    assert.throws(() => readAgentToken("developer", {}), /TELEGRAM_BOT_TOKEN_DEV_AGENT/);
+  });
+
   it("reads the token for the requested identity only", () => {
     const env = {
       TELEGRAM_BOT_TOKEN_COFOUNDER: "cofounder-token",

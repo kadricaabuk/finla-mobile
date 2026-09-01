@@ -16,7 +16,11 @@ export const AGENTS = Object.freeze({
   },
   developer: {
     label: "Fullstack Developer",
-    tokenEnv: "TELEGRAM_BOT_TOKEN_DEVELOPER",
+    tokenEnv: "TELEGRAM_BOT_TOKEN_DEV_AGENT",
+    // The role-name form matches the other four identities; the canonical name
+    // above is the one the agent brief tells Kadri to configure. Accept both so
+    // a mismatch does not surface as a silent "bot cannot send".
+    aliases: ["TELEGRAM_BOT_TOKEN_DEVELOPER"],
   },
   "product-analyst": {
     label: "Product Analyst",
@@ -53,15 +57,22 @@ export function resolveAgent(key) {
  * `sendMessage` puts the token in the request URL, so error paths have to
  * redact it explicitly.
  */
+export function tokenEnvNames(key) {
+  const agent = resolveAgent(key);
+  return [agent.tokenEnv, ...(agent.aliases ?? [])];
+}
+
 export function readAgentToken(key, env = process.env) {
   const agent = resolveAgent(key);
-  const token = env[agent.tokenEnv];
-  if (!token) {
-    throw new Error(
-      `${agent.tokenEnv} is not set, so the "${agent.label}" bot cannot send. Add it as a Runtime Secret; secrets are injected at VM boot, so a run started before the secret was saved will not see it.`,
-    );
+  const names = tokenEnvNames(key);
+
+  for (const name of names) {
+    if (env[name]) return env[name];
   }
-  return token;
+
+  throw new Error(
+    `${names.join(" / ")} is not set, so the "${agent.label}" bot cannot send. Add it as a Runtime Secret; secrets are injected at VM boot, so a run started before the secret was saved will not see it.`,
+  );
 }
 
 export function readGroupChatId(env = process.env) {

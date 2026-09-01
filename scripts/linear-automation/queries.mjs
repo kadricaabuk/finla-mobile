@@ -27,8 +27,11 @@ export const CANDIDATE_ISSUES_QUERY = /* GraphQL */ `
       first: 50
       after: $after
       filter: {
-        project: { name: { eq: $projectName } }
-        labels: { name: { eq: $labelName } }
+        # eqIgnoreCase, not eq: Linear's eq is case sensitive, so a label
+        # stored as "Development" silently matched nothing against
+        # "development" and the client-side re-check never got a chance to run.
+        project: { name: { eqIgnoreCase: $projectName } }
+        labels: { name: { eqIgnoreCase: $labelName } }
         state: { type: { nin: ["completed", "canceled"] } }
       }
     ) {
@@ -96,7 +99,7 @@ export const DIAGNOSTICS_QUERY = /* GraphQL */ `
         name
       }
     }
-    issues(first: 50, filter: { project: { name: { eq: $projectName } } }) {
+    issues(first: 50, filter: { project: { name: { eqIgnoreCase: $projectName } } }) {
       nodes {
         identifier
         title

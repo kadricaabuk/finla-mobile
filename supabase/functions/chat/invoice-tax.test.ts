@@ -50,6 +50,23 @@ Deno.test("validateInvoiceTaxFields — KDV %0 istisna kodu zorunlu", () => {
   );
 });
 
+Deno.test("validateInvoiceTaxFields — yürürlükteki KDV oranları kabul", () => {
+  for (const vatRate of [1, 10, 20] as const) {
+    validateInvoiceTaxFields([{ vatRate }]);
+  }
+  validateInvoiceTaxFields([{ vatRate: 0, vatExemptionCode: "302" }]);
+});
+
+Deno.test("validateInvoiceTaxFields — eski/geçersiz KDV oranları reddedilir", () => {
+  for (const vatRate of [8, 18, 5, 19, 21, -1, 100, 10.5, NaN]) {
+    assertThrows(
+      () => validateInvoiceTaxFields([{ vatRate }]),
+      Error,
+      "Geçersiz KDV oranı",
+    );
+  }
+});
+
 Deno.test("validateInvoiceTaxFields — bilinmeyen kodlar reddedilir", () => {
   assertThrows(
     () => validateInvoiceTaxFields([{ vatRate: 0, vatExemptionCode: "999" }]),

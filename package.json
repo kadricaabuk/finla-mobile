@@ -15,6 +15,7 @@
     "test:chat": "bash scripts/deno-test.sh supabase/functions/chat/intents.test.ts supabase/functions/chat/date-range.test.ts supabase/functions/chat/invoice-workflow.test.ts supabase/functions/chat/chat-history.test.ts supabase/functions/chat/invoice-tax.test.ts",
     "test:auth-lock": "bash scripts/deno-test.sh lib/app-lock-policy.test.ts",
     "test:linear": "node --test \"scripts/linear-automation/*.test.mjs\"",
+    "test:telegram": "node --test \"scripts/telegram/*.test.mjs\"",
     "maestro:login": "bash scripts/maestro-test.sh .maestro/flows/login.yaml",
     "maestro:smoke": "bash scripts/maestro-test.sh .maestro/flows/smoke.yaml",
     "maestro:chat": "bash scripts/maestro-test.sh .maestro/flows/chat-send.yaml",

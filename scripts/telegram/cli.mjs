@@ -23,6 +23,7 @@ import {
   readGroupChatId,
   resolveAgent,
 } from "./agents.mjs";
+import { buildInbox } from "./inbox.mjs";
 import { createTelegramClient, extractChats } from "./telegram-client.mjs";
 
 const PARSE_MODES = {
@@ -114,6 +115,42 @@ async function commandChatId(flags) {
   };
 }
 
+async function commandInbox(flags) {
+  const agent = requireAgent(flags);
+  const client = clientFor(agent.key);
+  const chatId = typeof flags.chat === "string" ? flags.chat : process.env[GROUP_CHAT_ID_ENV] ?? null;
+
+  const me = await client.getMe();
+  const updates = await client.getUpdates({ limit: 100 });
+  const { directed, context, lastUpdateId } = buildInbox(updates, {
+    botUsername: me?.username,
+    botId: me?.id,
+    chatId,
+  });
+
+  return {
+    agent: agent.key,
+    botUsername: me?.username ?? null,
+    chatId,
+    directed,
+    context,
+    lastUpdateId,
+    ack:
+      lastUpdateId === null
+        ? null
+        : `node scripts/telegram/cli.mjs ack --agent ${agent.key} --through ${lastUpdateId}`,
+  };
+}
+
+async function commandAck(flags) {
+  const agent = requireAgent(flags);
+  const through = Number(flags.through);
+  if (!Number.isInteger(through)) {
+    throw new Error("--through <updateId> is required and must be an integer.");
+  }
+  return { agent: agent.key, ...(await clientFor(agent.key).confirmUpdates(through)) };
+}
+
 async function commandSend(flags) {
   const agent = requireAgent(flags);
   const format = typeof flags.format === "string" ? flags.format : "plain";
@@ -149,11 +186,15 @@ async function main() {
       return commandWhoami(flags);
     case "chat-id":
       return commandChatId(flags);
+    case "inbox":
+      return commandInbox(flags);
+    case "ack":
+      return commandAck(flags);
     case "send":
       return commandSend(flags);
     default:
       throw new Error(
-        `Unknown command "${command ?? ""}". Expected one of: list-agents, whoami, chat-id, send.`,
+        `Unknown command "${command ?? ""}". Expected one of: list-agents, whoami, chat-id, inbox, ack, send.`,
       );
   }
 }

@@ -167,11 +167,28 @@ export function createTelegramClient({
    * Only works before a webhook is set — the two delivery modes are mutually
    * exclusive — and Telegram keeps undelivered updates for just 24 hours.
    */
-  async function getUpdates({ limit = 100 } = {}) {
-    return call("getUpdates", { limit });
+  async function getUpdates({ limit = 100, offset = null } = {}) {
+    const payload = { limit };
+    if (offset !== null) payload.offset = offset;
+    return call("getUpdates", payload);
   }
 
-  return { call, getMe, sendMessage, getUpdates };
+  /**
+   * Acknowledges everything up to and including `throughUpdateId`, so the next
+   * poll only returns newer messages.
+   *
+   * Kept separate from reading so a run that fails mid-work sees the same
+   * messages again instead of losing them.
+   */
+  async function confirmUpdates(throughUpdateId) {
+    if (!Number.isInteger(throughUpdateId)) {
+      throw new TelegramApiError("confirmUpdates requires an integer update id.");
+    }
+    await call("getUpdates", { offset: throughUpdateId + 1, limit: 1 });
+    return { confirmedThrough: throughUpdateId };
+  }
+
+  return { call, getMe, sendMessage, getUpdates, confirmUpdates };
 }
 
 /** Collapses `getUpdates` output into the distinct chats the bot can see. */

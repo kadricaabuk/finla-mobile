@@ -100,3 +100,19 @@ No network access is required; the transport tests drive a stub `fetch`.
 Personal API keys authenticate with the key sent **raw** in the `Authorization` header, with
 no `Bearer` prefix — `Bearer` applies to OAuth2 access tokens only. Rate limit is 1,500
 requests/hour, far above what a three-issue run needs.
+
+## End-of-run: Telegram status (required)
+
+The Cursor automation that drives this client must finish every run with one Telegram
+status in the FINLA group, as the `developer` identity — including when no issue was
+selected or work was blocked:
+
+```bash
+node scripts/telegram/cli.mjs send --agent developer --status --text "..."
+```
+
+Plain text, no emoji, cite `FIN-123`, include PR URLs when PRs opened. Only one `--status`
+send is allowed per run. Details: `scripts/telegram/README.md`.
+
+The automation dashboard prompt must spell out this step; a run that only follows the
+template and never opens this README can otherwise exit without messaging the group.

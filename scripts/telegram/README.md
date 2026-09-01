@@ -73,6 +73,14 @@ All output is JSON; failures exit non-zero with `{ "error": ... }`.
 Keep status posts plain text, no emoji, two or three sentences, and cite Linear issues by
 their `FIN-123` identifier so references line up with what the other agents write.
 
+### Founder Tasks automation (required)
+
+The **Finla — Linear development → PR** Cursor automation must send **exactly one**
+`--status` as `--agent developer` at the end of **every** run — PRs opened, nothing
+qualified, or blocked. Missing `TELEGRAM_BOT_TOKEN_DEV_AGENT` / `TELEGRAM_FINLA_GROUP_CHAT_ID`
+is a hard failure to report, not a silent skip. Mirror this rule in the automation's
+dashboard prompt so a run that never opens this README still posts.
+
 ## Reading the group
 
 A scheduled agent reads with `inbox`, does its work, then calls `ack`. **No relay or webhook is

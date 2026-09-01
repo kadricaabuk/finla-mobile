@@ -30,6 +30,8 @@ Prerequisites: app on simulator (`npm run ios`), test env in `.env.local`, Maest
 
 **Test credentials:** `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` (copy from [`.maestro/.env.example`](.maestro/.env.example); CI passes them via `-e` flags). The staging user must exist with tenant linked and onboarding complete.
 
+**Scheduled local runner (Linear + Telegram):** catalog, suite selection, and the Maestro/Linear/Telegram orchestrator live in [`scripts/qa-agent/README.md`](scripts/qa-agent/README.md). `npm run qa:run` prints the suite (dry-run). Linear project [QA Automation](https://linear.app/finla-mobile/project/qa-automation-d6e32112c762) holds one persistent issue per test case. Do not move existing YAML out of `.maestro/flows/` — CI smoke still points there.
+
 **Flows:**
 
 | File | Purpose |

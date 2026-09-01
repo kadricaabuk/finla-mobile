@@ -34,6 +34,10 @@ export const AGENTS = Object.freeze({
     label: "PR Manager",
     tokenEnv: "TELEGRAM_BOT_TOKEN_PR_MANAGER",
   },
+  qa: {
+    label: "QA",
+    tokenEnv: "TELEGRAM_BOT_TOKEN_QA",
+  },
 });
 
 export function listAgentKeys() {

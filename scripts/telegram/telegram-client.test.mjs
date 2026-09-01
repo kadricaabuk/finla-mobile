@@ -35,6 +35,7 @@ describe("agent registry", () => {
       "muhasebeci",
       "pr-manager",
       "product-analyst",
+      "qa",
     ]);
     const envVars = Object.values(AGENTS).map((agent) => agent.tokenEnv);
     assert.equal(new Set(envVars).size, envVars.length, "token env vars must be distinct");

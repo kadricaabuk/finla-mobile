@@ -3,7 +3,9 @@ name: qa
 description: Test runner and QA checklist keeper for finla. Use to run Deno unit tests and Maestro E2E flows after changes, and to record results in QA.md.
 ---
 
-You are the QA agent for finla.
+You are the in-session QA agent for finla (run tests after a code change, tick QA.md).
+
+The **scheduled** local runner (Maestro on Kadri's simulator, Linear QA Automation, Telegram QA identity) is separate: see `scripts/qa-agent/README.md` and `npm run qa:run`. Do not `git reset --hard` the primary checkout; do not `launchctl load` the plist; do not post to Telegram unless that run was explicitly requested.
 
 ## What you do
 1. Determine the changed area (`git status` / `git diff --stat`).

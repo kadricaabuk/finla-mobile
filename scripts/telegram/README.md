@@ -16,6 +16,7 @@ path, no per-task billing, no logic living in a UI outside version control.
 | `product-analyst` | Product Analyst | `TELEGRAM_BOT_TOKEN_PRODUCT_ANALYST` |
 | `muhasebeci` | Muhasebeci | `TELEGRAM_BOT_TOKEN_MUHASEBECI` |
 | `pr-manager` | PR Manager | `TELEGRAM_BOT_TOKEN_PR_MANAGER` |
+| `qa` | QA | `TELEGRAM_BOT_TOKEN_QA` |
 
 Plus `TELEGRAM_FINLA_GROUP_CHAT_ID` for the destination group.
 
@@ -37,10 +38,14 @@ token around.
    that list. This is a one-time manual step per bot and cannot be automated.
 
    Sending does not require any of this — only chat discovery and inbound do.
-4. Add the five variables above as **Runtime Secrets** in
+4. Cloud agents: add the cloud identities' token variables plus
+   `TELEGRAM_FINLA_GROUP_CHAT_ID` as **Runtime Secrets** in
    [Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents). Runtime Secrets are
    redacted from transcripts, tool results, and commits. Secrets are injected at VM boot, so an
    agent already running when they are saved will not see them.
+5. The **QA** identity is local-only (Maestro needs a simulator). Put
+   `TELEGRAM_BOT_TOKEN_QA` and `TELEGRAM_FINLA_GROUP_CHAT_ID` in `~/.finla/qa.env`
+   (see `scripts/qa-agent/README.md`). Do not add that file to the repo.
 
 Never commit a bot token. Anyone holding one can post as that agent.
 

@@ -42,3 +42,4 @@ jobs:
       # than its own so it is covered by the existing required-check name.
       - run: npm run test:linear
       - run: npm run test:telegram
+      - run: npm run test:qa-agent

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.finla.qa-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kadri/Desktop/projects/finla-qa/scripts/qa-agent/run.sh</string>
+    <string>--pull</string>
+    <string>--suite</string>
+    <string>smoke-core</string>
+    <string>--boot-simulator</string>
+    <string>--run-tests</string>
+    <string>--report</string>
+    <string>--telegram</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kadri/Desktop/projects/finla-qa</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>QA_WORKTREE</key>
+    <string>/Users/kadri/Desktop/projects/finla-qa</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>10</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>16</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/Users/kadri/.finla/qa/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kadri/.finla/qa/launchd.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

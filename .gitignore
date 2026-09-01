@@ -58,3 +58,6 @@ ds-bundle/
 .env.development.local
 .env.test.local
 .env.production.local
+
+# QA runner secrets live in ~/.finla/qa.env — never in this repo
+qa.env

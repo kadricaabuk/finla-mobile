@@ -416,7 +416,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'cancel_invoice',
     description:
-      'Fatura veya bekleyen taslağı iptal eder. Sohbette bekleyen taslak varsa ETTN vermeden çağrılabilir (taslak silinir). Kesilmiş fatura için önce list_invoices ile ETTN öğren.',
+      'Fatura veya bekleyen taslağı iptal eder. Sohbette bekleyen taslak varsa ETTN vermeden çağrılabilir (taslak silinir). Kesilmiş e-Arşiv faturalar iptal edilebilir; e-Fatura iptali GİB İptal/İtiraz Portalı üzerinden yapılır ve bu araçla desteklenmez — e-Fatura için kullanıcıyı yönlendir. Kesilmiş fatura için önce list_invoices ile ETTN öğren.',
     input_schema: {
       type: 'object',
       properties: {
@@ -483,6 +483,7 @@ export function assembleSystemPrompt(): string {
     `- İade faturası ("gelen faturayı iade et", "malı geri gönderiyorum"): SADECE bize kesilmiş (gelen) faturanın iadesi desteklenir. Akış: (1) orijinal faturayı gelen faturalardan bul (list_invoices direction=incoming) veya belge no + tarihi kullanıcıdan iste, (2) alıcı = orijinal faturayı KESEN taraf (gönderici ünvan + VKN), (3) kalemler iade edilen mal/hizmet, KDV oranları orijinaldekiyle AYNI olmalı, (4) iade sebebini sor ve return_reason ile gönder, (5) return_ref_invoice_no + return_ref_invoice_date ile create_invoice çağır. Kısmi iade serbest ama toplam orijinal fatura tutarını AŞAMAZ. Belge numarasını asla tahmin etme`,
     `- İade faturasında tevkifat uygulanamaz (özel düzeltme kuralı); orijinal fatura tevkifatlıysa kullanıcıyı mali müşavirine yönlendir`,
     `- Kendi kestiğimiz (giden) faturayı geri almak iade değil İPTAL veya alıcının iade faturası konusudur; kullanıcı bunu isterse cancel_invoice akışını veya karşı tarafın iade kesmesi gerektiğini anlat`,
+    `- İptal: cancel_invoice yalnızca e-Arşiv faturaları (ve sohbetteki kesilmemiş taslakları) iptal eder. e-Fatura iptali GİB e-Fatura İptal/İtiraz Portalı üzerinden alıcı onayıyla yapılır; araç e-Fatura için hata dönerse kullanıcıya portalı ve mali müşavirini öner, "iptal ettim" deme`,
     `- create_invoice sadece taslak/önizleme oluşturur, fatura kesmez; kesim için kullanıcı önizlemeden onay vermeden confirm_invoice_issue çağırma`,
     `- USD veya EUR faturada önce get_exchange_rate ile TCMB kurunu göster; kullanıcı onayladıktan sonra create_invoice çağır ve exchange_rate gönder`,
     `- create_invoice exchange_rate olmadan çağrılırsa TCMB kuru otomatik önerilir; kullanıcı onayı olmadan taslağa geçme`,

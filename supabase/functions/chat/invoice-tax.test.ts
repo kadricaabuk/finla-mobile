@@ -10,6 +10,7 @@ import {
 } from "../_shared/gib-tax-codes.ts";
 import {
   buildMysoftInvoiceOutboxBody,
+  classifyMysoftOutboxDocument,
   isForeignBuyerCountry,
   mapMysoftGibAccount,
 } from "../_shared/mysoft-mapper.ts";
@@ -558,4 +559,29 @@ Deno.test("assertReturnMatchesOriginal — VKN, tutar ve para birimi kontrolü",
     grossTotal: 2360,
     currency: "TRY",
   });
+});
+
+Deno.test("classifyMysoftOutboxDocument — e-Arşiv / e-Fatura / unknown", () => {
+  assertEquals(
+    classifyMysoftOutboxDocument({ eDocumentType: "EARSIVFATURA" }),
+    "earsiv",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ data: { profile: "EARSIVFATURA" } }),
+    "earsiv",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ eDocumentType: "EFATURA" }),
+    "efatura",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ profile: "TEMELFATURA" }),
+    "efatura",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ belgeTuru: "TICARIFATURA" }),
+    "efatura",
+  );
+  assertEquals(classifyMysoftOutboxDocument({ status: "Sent" }), "unknown");
+  assertEquals(classifyMysoftOutboxDocument(null), "unknown");
 });

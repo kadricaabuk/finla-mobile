@@ -438,6 +438,83 @@ export function extractMysoftEttn(payload: unknown): string | null {
   return null
 }
 
+/** e-Arşiv vs e-Fatura — iptal endpoint seçimi için. */
+export type MysoftOutboxDocumentKind = 'earsiv' | 'efatura' | 'unknown'
+
+const OUTBOX_DOC_TYPE_KEYS = [
+  'eDocumentType',
+  'edocumenttype',
+  'EDocumentType',
+  'profile',
+  'Profile',
+  'belgeTuru',
+  'belge_turu',
+  'documentType',
+]
+
+function normalizeMysoftTypeToken(raw: string): string {
+  return raw
+    .trim()
+    .toLocaleUpperCase('tr-TR')
+    .replace(/İ/g, 'I')
+    .replace(/İ/g, 'I')
+    .replace(/\s+/g, '')
+}
+
+/**
+ * Mysoft status/list yanıtından belge türü ipucunu (eDocumentType / profile) çıkarır.
+ */
+export function extractMysoftOutboxDocumentType(
+  payload: unknown,
+  depth = 0,
+): string | null {
+  if (payload == null || depth > 8) return null
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = extractMysoftOutboxDocumentType(item, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+  if (typeof payload !== 'object') return null
+
+  const row = payload as Record<string, unknown>
+  for (const key of OUTBOX_DOC_TYPE_KEYS) {
+    const value = row[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  for (const value of Object.values(row)) {
+    if (value && typeof value === 'object') {
+      const found = extractMysoftOutboxDocumentType(value, depth + 1)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+/**
+ * Mysoft belge türü / profil alanını e-Arşiv veya e-Fatura olarak sınıflandırır.
+ * Bilinmeyen değerlerde fail-closed (`unknown`) — e-Fatura'ya yanlışlıkla
+ * cancelEArchiveInvoice çağrılmasını engeller.
+ */
+export function classifyMysoftOutboxDocument(
+  payload: unknown,
+): MysoftOutboxDocumentKind {
+  const hint = extractMysoftOutboxDocumentType(payload)
+  if (!hint) return 'unknown'
+  const token = normalizeMysoftTypeToken(hint)
+  // EARSIV önce: EARSIVFATURA içinde "EFATURA" geçmez ama güvenli sıra.
+  if (token.includes('EARSIV')) return 'earsiv'
+  if (
+    token.includes('EFATURA') ||
+    token.includes('TEMELFATURA') ||
+    token.includes('TICARIFATURA')
+  ) {
+    return 'efatura'
+  }
+  return 'unknown'
+}
+
 /** Mysoft liste yanıtından satır dizisini çıkarır (iç içe data/list anahtarları). */
 export function extractMysoftListRows(payload: unknown): Record<string, unknown>[] {
   if (!payload) return []

@@ -25,6 +25,7 @@ import {
   tokenEnvNames,
 } from "./agents.mjs";
 import { buildInbox } from "./inbox.mjs";
+import { consumeSendAllowance } from "./rate-limit.mjs";
 import { createTelegramClient, extractChats } from "./telegram-client.mjs";
 
 const PARSE_MODES = {
@@ -168,13 +169,22 @@ async function commandSend(flags) {
   const chatId = typeof flags.chat === "string" ? flags.chat : readGroupChatId();
   const text = await resolveText(flags);
 
+  const { remaining } = consumeSendAllowance(agent.key);
+
   const sent = await client.sendMessage({
     chatId,
     text,
     parseMode: PARSE_MODES[format],
   });
 
-  return { agent: agent.key, label: agent.label, chatId, format, messages: sent };
+  return {
+    agent: agent.key,
+    label: agent.label,
+    chatId,
+    format,
+    messages: sent,
+    sendsRemainingInWindow: remaining,
+  };
 }
 
 async function main() {

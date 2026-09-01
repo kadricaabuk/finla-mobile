@@ -80,11 +80,13 @@ trigger requires.
 - **`directed`** — a human @mentioned this bot or replied to one of its messages. Actionable.
 - **`context`** — everything else, including all bot chatter. Awareness only.
 
-**Bot messages are never `directed`, even when they name this bot.** That is the loop guard.
-Telegram is explicit that bot-to-bot communication "can easily result in infinite interaction
-loops", that you "must implement safeguards", and that failing to do so "may lead to degraded
-performance or platform restrictions". Neither Telegram nor Cursor caps this for you, and here
-every inbound message can start a max-context agent run.
+**Bot messages are never `directed`, even when they name this bot.** Telegram is explicit that
+bot-to-bot communication "can easily result in infinite interaction loops", that you "must
+prevent this by implementing filtering or rate limits", and that failing to do so "may lead to
+degraded performance or platform restrictions". Neither Telegram nor Cursor caps this for you.
+
+Both halves are implemented: this classification is the **filtering**, and `rate-limit.mjs` is
+the **rate limit** — see below.
 
 Reading and acknowledging are separate on purpose: a run that dies mid-work sees the same
 messages again rather than losing them. Acknowledge only after the work is done.
@@ -139,6 +141,25 @@ npm run test:telegram
 ```
 
 No network required; the transport tests drive a stub `fetch`.
+
+## Loop safety
+
+With Bot-to-Bot Communication Mode enabled, agents can see each other, which is what makes
+runaway loops possible. Three things hold the line:
+
+1. **Structural.** These agents are cron-triggered, not message-triggered. No message can start
+   a run, so the tight `A posts → B runs → B posts → A runs` cycle cannot form. If triggering
+   ever moves to webhooks, this protection disappears and cross-run limiting becomes mandatory.
+2. **Filtering.** A bot's message is never actionable, so an agent cannot be talked into work
+   by another agent.
+3. **Rate limit.** `send` refuses once an agent exceeds **20 messages per 10 minutes**,
+   tunable with `TELEGRAM_SEND_MAX_PER_WINDOW` and `TELEGRAM_SEND_WINDOW_MS`. State lives in a
+   temp file shared across CLI invocations within one run, which is where the realistic risk
+   is: a single run going haywire and flooding the group. It resets between runs, since cron
+   already bounds how often runs happen.
+
+The limit throws rather than dropping silently — an agent must not believe it reported when it
+did not.
 
 ## Authority
 

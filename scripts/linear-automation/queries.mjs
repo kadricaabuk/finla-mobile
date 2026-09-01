@@ -27,8 +27,11 @@ export const CANDIDATE_ISSUES_QUERY = /* GraphQL */ `
       first: 50
       after: $after
       filter: {
-        project: { name: { eq: $projectName } }
-        labels: { name: { eq: $labelName } }
+        # eqIgnoreCase, not eq: Linear's eq is case sensitive, so a label
+        # stored as "Development" silently matched nothing against
+        # "development" and the client-side re-check never got a chance to run.
+        project: { name: { eqIgnoreCase: $projectName } }
+        labels: { name: { eqIgnoreCase: $labelName } }
         state: { type: { nin: ["completed", "canceled"] } }
       }
     ) {
@@ -70,6 +73,43 @@ export const CANDIDATE_ISSUES_QUERY = /* GraphQL */ `
           emoji
           user {
             id
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Diagnostics for the case where `list` returns nothing without erroring.
+ *
+ * A valid query with zero matches means the scope is wrong somewhere: the
+ * project name, the label name, or every issue being closed. This shows all
+ * three at once instead of guessing one at a time.
+ */
+export const DIAGNOSTICS_QUERY = /* GraphQL */ `
+  query AutomationDiagnostics($projectName: String!) {
+    projects(first: 50) {
+      nodes {
+        name
+      }
+    }
+    issueLabels(first: 100) {
+      nodes {
+        name
+      }
+    }
+    issues(first: 50, filter: { project: { name: { eqIgnoreCase: $projectName } } }) {
+      nodes {
+        identifier
+        title
+        state {
+          name
+          type
+        }
+        labels {
+          nodes {
+            name
           }
         }
       }

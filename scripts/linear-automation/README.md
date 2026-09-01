@@ -63,8 +63,14 @@ Re-reacting is treated as success, so a retried run is safe.
 `selectIssues` applies, in order:
 
 1. **Scope** — must be in the `Founder Tasks` project and carry the `development` label.
-   Both are matched case-insensitively, and both are re-checked client-side even though the
-   GraphQL query already filters on them, so a drifting query cannot silently widen scope.
+   Both are matched case-insensitively on **both** sides: the GraphQL filter uses
+   `eqIgnoreCase`, and the same predicates are re-checked client-side so a drifting query
+   cannot silently widen scope.
+
+   The server-side half matters more than it looks. Linear's `eq` is case sensitive, so a
+   label stored as `Development` matched nothing against `development` and the API returned an
+   empty list **with no error** — the client-side check never ran, because nothing came back
+   to check. If `list` is ever empty again, run `doctor` rather than guessing.
 2. **Open** — Linear state type must not be `completed` or `canceled`.
 3. **Not already handled** — skipped if any comment contains a GitHub PR URL, or if the
    completion reaction is present from the bot user. PR-link detection ignores authorship on

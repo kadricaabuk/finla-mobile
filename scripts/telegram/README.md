@@ -28,10 +28,15 @@ token around.
 1. Create one bot per identity via [@BotFather](https://t.me/BotFather) (`/newbot`), or read an
    existing token from `/mybots` → the bot → API Token.
 2. Add every bot to the FINLA group.
-3. **Mention each bot once in the group** (`@bot_username hi`) or send it a command. Telegram's
-   group privacy mode means a bot otherwise sees nothing, and it needs one inbound event before
-   the group shows up in `getUpdates`. This is a one-time manual step per bot; it cannot be
-   automated from code. Sending does not require it — only chat discovery does.
+3. **Send each bot a command in the group** — `/start@bot_username` — or reply to one of its
+   messages, so the group shows up in `getUpdates`.
+
+   A plain `@bot_username` mention does **not** work. Under Telegram's group privacy mode a bot
+   receives only commands addressed to it, general commands when it sent the last message,
+   inline messages, replies to its own messages, and service messages. Bare mentions are not on
+   that list. This is a one-time manual step per bot and cannot be automated.
+
+   Sending does not require any of this — only chat discovery and inbound do.
 4. Add the five variables above as **Runtime Secrets** in
    [Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents). Runtime Secrets are
    redacted from transcripts, tool results, and commits. Secrets are injected at VM boot, so an
@@ -96,7 +101,27 @@ No network required; the transport tests drive a stub `fetch`.
 
 ## Scope
 
-Outbound only. Nothing here reads the group or reacts to messages. Inbound would need a relay
-(Telegram cannot send the `Authorization` header Cursor's webhook trigger requires) plus
-dedupe, bot-author filtering and a rate cap, since neither Telegram nor Cursor provides a loop
-guard. Treat that as a separate design.
+Outbound only. Nothing here reads the group or reacts to messages.
+
+### If reading the group is added later
+
+**A bot must see the messages first.** By default it does not. Two ways to change that:
+
+- **Promote the bot to group admin.** Admins always receive every message, and the change
+  takes effect immediately.
+- **Disable privacy mode** in BotFather (`/mybots` → the bot → Bot Settings → Group Privacy →
+  Turn off) **and then remove and re-add the bot to the group.** Telegram only applies the new
+  setting on re-join, which is the step people miss.
+
+**A polling agent does not need a relay.** A scheduled agent can call `getUpdates` during its
+own run using nothing but the bot token. The relay is only required for *real-time* triggering,
+because Telegram's `setWebhook` can attach only `X-Telegram-Bot-Api-Secret-Token` and cannot
+send the `Authorization: Bearer` header Cursor's webhook trigger requires.
+
+Polling has its own constraints. `getUpdates` and webhooks are mutually exclusive; Telegram
+keeps undelivered updates for 24 hours; and confirming an offset **consumes** updates, so two
+pollers sharing one bot token will steal each other's messages — give each reader its own bot.
+
+Either way, an agent that both reads and posts needs a loop guard: dedupe on `update_id`, drop
+messages where `from.is_bot` is true, and cap runs per hour. Neither Telegram nor Cursor
+provides one.

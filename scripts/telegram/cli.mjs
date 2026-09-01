@@ -15,7 +15,14 @@
 
 import { readFile } from "node:fs/promises";
 
-import { AGENTS, listAgentKeys, readAgentToken, readGroupChatId, resolveAgent } from "./agents.mjs";
+import {
+  AGENTS,
+  GROUP_CHAT_ID_ENV,
+  listAgentKeys,
+  readAgentToken,
+  readGroupChatId,
+  resolveAgent,
+} from "./agents.mjs";
 import { createTelegramClient, extractChats } from "./telegram-client.mjs";
 
 const PARSE_MODES = {
@@ -102,8 +109,8 @@ async function commandChatId(flags) {
     chats,
     hint:
       chats.length === 0
-        ? "No chats visible. Add the bot to the group and mention it once (@bot_username hello), then retry. Group privacy mode means the bot only sees mentions, commands and replies."
-        : `Set ${"TELEGRAM_FINLA_GROUP_CHAT_ID"} to the id of the FINLA group.`,
+        ? "No chats visible. A privacy-mode bot receives only commands addressed to it, replies to its own messages, and service messages -- a plain @mention does NOT reach it. Send `/start@<bot_username>` in the group, or reply to one of the bot's messages, then retry. To receive every message instead, promote the bot to group admin."
+        : `Set ${GROUP_CHAT_ID_ENV} to the id of the FINLA group.`,
   };
 }
 

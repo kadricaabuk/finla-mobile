@@ -16,12 +16,20 @@ function bySuite(catalog, suite) {
  * so two runs on the same calendar day (Istanbul vs a CI clock) still agree.
  */
 export function utcDayIndex(now = new Date()) {
-  return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 86400000);
+  return Math.floor(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) /
+      86400000,
+  );
 }
 
-export function selectSuite(catalog, { cadence = "smoke-core", now = new Date() } = {}) {
+export function selectSuite(
+  catalog,
+  { cadence = "smoke-core", now = new Date() } = {},
+) {
   if (!CADENCES.includes(cadence)) {
-    throw new Error(`Unknown cadence "${cadence}". Expected one of: ${CADENCES.join(", ")}.`);
+    throw new Error(
+      `Unknown cadence "${cadence}". Expected one of: ${CADENCES.join(", ")}.`,
+    );
   }
 
   const smoke = bySuite(catalog, "smoke");

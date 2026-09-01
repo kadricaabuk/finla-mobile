@@ -20,7 +20,7 @@ appId: com.finla.app
 - eraseText
 - inputText: ${TEST_PHONE}
 - tapOn:
-    id: "login-password"
+    id: "login-password-pin_login"
 - eraseText
 - inputText: ${TEST_PIN}
 - tapOn:

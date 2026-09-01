@@ -144,6 +144,16 @@ describe("linear-sync", () => {
     assert.match(body, /2 tests \(smoke-core\): 1 pass, 1 fail, 0 flaky/);
     assert.match(body, /\[Core\] Login: Fail/);
     assert.match(body, /Product bugs: none/);
+
+    const stopped = formatTelegramBody({
+      cadence: "smoke-core",
+      results: [
+        { title: "[Smoke] P0", result: "Fail" },
+        { title: "[Core] Login", result: "Fail" },
+      ],
+      earlyStop: "Stopped after 2 consecutive failures; remaining tests not run.",
+    });
+    assert.match(stopped, /Stopped after 2 consecutive failures/);
   });
 });
 

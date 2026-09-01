@@ -259,6 +259,7 @@ if (( DO_RUN_TESTS )); then
   BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
   COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
   DEVICE="$(device_label)"
+  consecutive_fails=0
 
   while IFS=$'\t' read -r flow title; do
     echo "Running $flow"
@@ -268,6 +269,7 @@ if (( DO_RUN_TESTS )); then
     set -e
     log_dir="$(latest_maestro_log)"
     if [[ $status -eq 0 ]]; then
+      consecutive_fails=0
       append_result "$flow" "$title" "Pass" "" "$log_dir"
       if (( DO_REPORT )); then
         "${CLI[@]}" report --flow "$flow" --result Pass \
@@ -275,12 +277,25 @@ if (( DO_RUN_TESTS )); then
           --cadence "$CADENCE" --log-dir "$log_dir"
       fi
     else
+      consecutive_fails=$((consecutive_fails + 1))
       append_result "$flow" "$title" "Fail" "maestro exit $status" "$log_dir"
       if (( DO_REPORT )); then
         "${CLI[@]}" report --flow "$flow" --result Fail \
           --branch "$BRANCH" --commit "$COMMIT" --device "$DEVICE" \
           --cadence "$CADENCE" --log-dir "$log_dir" \
           --error "maestro exit $status"
+      fi
+      if (( consecutive_fails >= 2 )); then
+        echo "Stopping suite: 2 consecutive failures."
+        EARLY_STOP="Stopped after 2 consecutive failures; remaining tests not run." \
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const file = process.argv[1];
+            const data = JSON.parse(readFileSync(file, "utf8"));
+            data.earlyStop = process.env.EARLY_STOP;
+            writeFileSync(file, JSON.stringify(data, null, 2));
+          ' "$RESULTS_FILE"
+        break
       fi
     fi
   done < <(node --input-type=module -e '

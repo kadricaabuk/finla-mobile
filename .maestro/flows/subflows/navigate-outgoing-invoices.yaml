@@ -13,7 +13,7 @@ appId: com.finla.app
     id: "side-menu-outgoing-invoices"
 - extendedWaitUntil:
     visible:
-      id: "invoices-title"
+      id: "outgoing-invoices-title"
     timeout: 60000
 - assertVisible:
     id: "invoice-filter-bu_ay"

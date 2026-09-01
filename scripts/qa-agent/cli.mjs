@@ -78,7 +78,10 @@ async function fetchAllQaIssues(request) {
   const nodes = [];
   let after = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const data = await request(QA_ISSUES_QUERY, { projectName: QA_PROJECT, after });
+    const data = await request(QA_ISSUES_QUERY, {
+      projectName: QA_PROJECT,
+      after,
+    });
     const connection = data?.issues;
     if (!connection) break;
     nodes.push(...(connection.nodes ?? []));
@@ -96,10 +99,14 @@ async function loadContext(request) {
   const team = data?.teams?.nodes?.[0] ?? null;
   const project = data?.projects?.nodes?.[0] ?? null;
   if (!team?.id) {
-    throw new Error(`Linear team "${QA_TEAM}" was not found with this API key.`);
+    throw new Error(
+      `Linear team "${QA_TEAM}" was not found with this API key.`,
+    );
   }
   if (!project?.id) {
-    throw new Error(`Linear project "${QA_PROJECT}" was not found with this API key.`);
+    throw new Error(
+      `Linear project "${QA_PROJECT}" was not found with this API key.`,
+    );
   }
   const states = team.states?.nodes ?? [];
   const todo = states.find((state) => state.name === "Todo") ?? null;
@@ -117,16 +124,27 @@ async function loadContext(request) {
 }
 
 function commandCatalog() {
-  return { project: QA_PROJECT, team: QA_TEAM, cases: TEST_CASES.map(summarizeCase) };
+  return {
+    project: QA_PROJECT,
+    team: QA_TEAM,
+    cases: TEST_CASES.map(summarizeCase),
+  };
 }
 
 function commandSuite(flags) {
-  const cadence = typeof flags.cadence === "string" ? flags.cadence : "smoke-core";
+  const cadence =
+    typeof flags.cadence === "string" ? flags.cadence : "smoke-core";
   if (!CADENCES.includes(cadence)) {
-    throw new Error(`Unknown --cadence "${cadence}". Expected one of: ${CADENCES.join(", ")}.`);
+    throw new Error(
+      `Unknown --cadence "${cadence}". Expected one of: ${CADENCES.join(", ")}.`,
+    );
   }
   const selected = selectSuite(TEST_CASES, { cadence });
-  return { cadence, count: selected.length, cases: selected.map(summarizeCase) };
+  return {
+    cadence,
+    count: selected.length,
+    cases: selected.map(summarizeCase),
+  };
 }
 
 async function commandWhoami(request) {
@@ -176,7 +194,9 @@ async function commandSeed(request) {
   const existing = [];
 
   for (const testCase of TEST_CASES) {
-    const match = issues.find((issue) => matchIssueToCase(issue)?.key === testCase.key);
+    const match = issues.find(
+      (issue) => matchIssueToCase(issue)?.key === testCase.key,
+    );
     if (match) {
       existing.push({
         key: testCase.key,
@@ -222,14 +242,20 @@ async function commandReport(request, flags) {
   const testCase = findCase({ key: flags.key, flow: flags.flow });
   const ctx = await loadContext(request);
   const issues = await fetchAllQaIssues(request);
-  const issue = issues.find((row) => matchIssueToCase(row)?.key === testCase.key);
+  const issue = issues.find(
+    (row) => matchIssueToCase(row)?.key === testCase.key,
+  );
   if (!issue) {
     throw new Error(
       `No Linear issue for "${testCase.key}" (${testCase.flow}). Run \`node scripts/qa-agent/cli.mjs seed\` first.`,
     );
   }
 
-  const labelIds = nextLabelIds(issue.labels?.nodes ?? [], result, ctx.labelsByName);
+  const labelIds = nextLabelIds(
+    issue.labels?.nodes ?? [],
+    result,
+    ctx.labelsByName,
+  );
   const comment = formatRunComment({
     result,
     branch: flags.branch,
@@ -301,6 +327,8 @@ main()
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   })
   .catch((error) => {
-    process.stderr.write(`${JSON.stringify({ error: error.message }, null, 2)}\n`);
+    process.stderr.write(
+      `${JSON.stringify({ error: error.message }, null, 2)}\n`,
+    );
     process.exitCode = 1;
   });

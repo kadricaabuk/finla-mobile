@@ -89,6 +89,7 @@ export function formatTelegramBody({
   refactors = "none",
   bugs = "none",
   skippedReason = null,
+  earlyStop = null,
 } = {}) {
   if (skippedReason) {
     return `Skipped: ${skippedReason}\nNew tests: ${newTests}. Refactors: ${refactors}. Product bugs: ${bugs}.`;
@@ -104,6 +105,7 @@ export function formatTelegramBody({
   for (const row of results) {
     lines.push(`${row.title}: ${row.result}`);
   }
+  if (earlyStop) lines.push(earlyStop);
   lines.push(`New tests: ${newTests}. Refactors: ${refactors}. Product bugs: ${bugs}.`);
   return lines.join("\n");
 }

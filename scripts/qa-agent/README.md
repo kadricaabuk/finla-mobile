@@ -70,6 +70,12 @@ later; do not move the existing six.
    that in `scripts/ci-maestro-ios.sh`). `--boot-simulator` only boots
    `MAESTRO_SIMULATOR` (default `iPhone 16`).
 
+Flows use `clearState` **and** `clearKeychain`. iOS `clearState` wipes
+AsyncStorage (onboarding flag) but leaves expo-secure-store tokens in the
+Keychain, so the next launch can show onboarding while still being logged in.
+`--run-tests` stops the suite after **two consecutive** Fail results; remaining
+cases are not executed.
+
 ## Commands
 
 ```bash

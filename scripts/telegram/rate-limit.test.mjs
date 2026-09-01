@@ -124,6 +124,18 @@ describe("per-run cap", () => {
     assert.equal(consumeSendAllowance(key, { now: 1200, env }).sentThisRun, 3);
     assert.throws(() => consumeSendAllowance(key, { now: 1300, env }));
   });
+
+  it("starts a new run when TELEGRAM_RUN_ID changes", () => {
+    const key = scope();
+    consumeSendAllowance(key, { now: 1000, env: { TELEGRAM_RUN_ID: "run-a" } });
+    assert.throws(() =>
+      consumeSendAllowance(key, { now: 1100, env: { TELEGRAM_RUN_ID: "run-a" } }),
+    );
+    assert.equal(
+      consumeSendAllowance(key, { now: 1200, env: { TELEGRAM_RUN_ID: "run-b" } }).sentThisRun,
+      1,
+    );
+  });
 });
 
 describe("consumeSendAllowance", () => {

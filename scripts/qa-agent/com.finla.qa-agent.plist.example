@@ -7,8 +7,9 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/kadri/Desktop/projects/finla-qa/scripts/qa-agent/run.sh</string>
+    <string>/Users/kadri/Desktop/projects/finla/scripts/qa-agent/run.sh</string>
     <string>--pull</string>
+    <string>--seed</string>
     <string>--suite</string>
     <string>smoke-core</string>
     <string>--boot-simulator</string>
@@ -17,19 +18,27 @@
     <string>--telegram</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/kadri/Desktop/projects/finla-qa</string>
+  <string>/Users/kadri/Desktop/projects/finla</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>/Users/kadri</string>
     <key>QA_WORKTREE</key>
     <string>/Users/kadri/Desktop/projects/finla-qa</string>
+    <key>QA_REMOTE</key>
+    <string>finla-mobile</string>
+    <key>QA_ENV_FILE</key>
+    <string>/Users/kadri/.finla/qa.env</string>
+    <key>MAESTRO_SIMULATOR</key>
+    <string>REPLACE_WITH_SIMULATOR_UDID</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin</string>
   </dict>
   <key>StartCalendarInterval</key>
   <array>
     <dict>
       <key>Hour</key>
-      <integer>10</integer>
+      <integer>11</integer>
       <key>Minute</key>
       <integer>0</integer>
     </dict>
@@ -44,7 +53,11 @@
   <string>/Users/kadri/.finla/qa/launchd.out.log</string>
   <key>StandardErrorPath</key>
   <string>/Users/kadri/.finla/qa/launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
   <false/>
 </dict>
 </plist>

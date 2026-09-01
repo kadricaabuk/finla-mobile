@@ -86,11 +86,13 @@ node scripts/qa-agent/cli.mjs list
 node scripts/qa-agent/cli.mjs seed
 bash scripts/qa-agent/run.sh                  # dry-run: print suite
 bash scripts/qa-agent/run.sh --seed
-bash scripts/qa-agent/run.sh --pull --suite smoke-core --boot-simulator --run-tests --report --telegram
+bash scripts/qa-agent/run.sh --pull --seed --suite smoke-core --boot-simulator --run-tests --report --telegram
 ```
 
 `seed` is idempotent: it matches existing QA Automation issues by the
-`**Maestro flow:** \`path\`` line in the description.
+`**Maestro flow:** \`path\`` line in the description (else exact title). A
+second run only creates catalog keys that still have no match; it does not
+update or duplicate matched issues.
 
 `--pull` refuses to run if `QA_WORKTREE` is the primary clone, not a linked
 worktree.
@@ -112,17 +114,39 @@ There are no Flow/Feature catalog entries yet. `rotate` currently equals
 
 ## launchd
 
-Copy `scripts/qa-agent/com.finla.qa-agent.plist.example` to
-`~/Library/LaunchAgents/com.finla.qa-agent.plist`, fix paths if needed, then
-**Kadri** loads it:
+Mac calendar trigger (11:00 and 16:00 local). It is not a Cursor/Cowork
+agent: no LLM, no rebuild. The job pulls the QA worktree to remote `develop`,
+**seeds** missing QA Automation issues from `catalog.mjs`, runs Maestro, writes
+Linear Result labels, and sends one Telegram status.
+
+The LaunchAgent runs **this checkout's** `run.sh` (so orchestrator fixes apply
+before they are pushed) and `--pull`s `~/Desktop/projects/finla-qa` for the
+Maestro YAML. `--pull` still refuses to reset the primary working tree.
+
+Install (machine-specific UDID — this example uses a placeholder):
 
 ```bash
 mkdir -p ~/.finla/qa
-launchctl load ~/Library/LaunchAgents/com.finla.qa-agent.plist
+cp scripts/qa-agent/com.finla.qa-agent.plist.example \
+  ~/Library/LaunchAgents/com.finla.qa-agent.plist
+# Set MAESTRO_SIMULATOR to `xcrun simctl list devices booted` UDID
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.finla.qa-agent.plist
+launchctl enable gui/$(id -u)/com.finla.qa-agent
 ```
 
-Do not load this from an agent session. Default example: 10:00 and 16:00 local,
-`smoke-core` only. Revisit after measuring wall-clock including simulator boot.
+Unload:
+
+```bash
+launchctl bootout gui/$(id -u)/com.finla.qa-agent
+```
+
+Do not `kickstart` from an agent session unless Kadri asked for a full suite.
+`RunAtLoad` is false. If the Mac is asleep at 11:00 / 16:00 the slot is skipped.
+Logs: `~/.finla/qa/launchd.out.log` and `launchd.err.log`.
+
+Overlapping runs (manual + calendar) exit with "Another QA run is in progress".
+Each invocation sets `TELEGRAM_RUN_ID` so the 16:00 Telegram status is not
+blocked by the 11:00 send.
 
 ## Linear rules
 

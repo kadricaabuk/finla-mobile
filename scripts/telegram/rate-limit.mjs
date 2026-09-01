@@ -6,12 +6,12 @@
  * Filtering lives in `inbox.mjs` (bot messages are never actionable). This is
  * the second half: a ceiling on how much one agent can say in a window.
  *
- * The state file lives in the OS temp dir, so it is shared by every CLI
- * invocation inside a single agent run and resets between runs. That matches
- * where the risk actually is. A cron-triggered agent cannot form a tight loop,
- * because no message can start a run; the realistic failure is one run going
- * haywire and flooding the group. Cross-run limiting would need durable
- * storage and only becomes necessary if triggering ever moves to webhooks.
+ * The state file lives in the OS temp dir. On a throwaway VM that file dies
+ * with the machine, so "per run" and "per VM" are the same. On a developer Mac
+ * the file is sticky: set TELEGRAM_RUN_ID (qa-agent/run.sh does this) so each
+ * orchestrator invocation is a new run. The 20-per-10-minutes window still
+ * spans processes. Cross-day flooding would need durable storage and only
+ * becomes necessary if triggering ever moves to webhooks.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -22,8 +22,8 @@ export const DEFAULT_WINDOW_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_IN_WINDOW = 20;
 
 /**
- * One status message per run, per the agent brief. The temp dir lives and dies
- * with the VM, so "per run" and "per VM" are the same thing here.
+ * One status message per run, per the agent brief. Pair with TELEGRAM_RUN_ID
+ * when the same Mac runs more than one job (launchd 10:00 then 16:00).
  *
  * Long reports are unaffected: splitting past 4096 characters happens inside a
  * single `send`, which spends one allowance regardless of how many chunks it
@@ -67,9 +67,10 @@ function readState(path) {
     return {
       timestamps: Array.isArray(parsed?.timestamps) ? parsed.timestamps : [],
       runCount: Number.isInteger(parsed?.runCount) ? parsed.runCount : 0,
+      runId: typeof parsed?.runId === "string" ? parsed.runId : "",
     };
   } catch {
-    return { timestamps: [], runCount: 0 };
+    return { timestamps: [], runCount: 0, runId: "" };
   }
 }
 
@@ -96,6 +97,11 @@ export function consumeSendAllowance(scope, { now = Date.now(), env = process.en
   const limits = resolveLimits(env);
   const path = stateFile(scope);
   const state = readState(path);
+  const incomingRunId = typeof env.TELEGRAM_RUN_ID === "string" ? env.TELEGRAM_RUN_ID.trim() : "";
+  if (incomingRunId && incomingRunId !== state.runId) {
+    state.runCount = 0;
+    state.runId = incomingRunId;
+  }
 
   if (state.runCount >= limits.maxPerRun) {
     throw new Error(
@@ -112,6 +118,10 @@ export function consumeSendAllowance(scope, { now = Date.now(), env = process.en
   }
 
   const runCount = state.runCount + 1;
-  writeFileSync(path, JSON.stringify({ timestamps: result.timestamps, runCount }), "utf8");
+  writeFileSync(
+    path,
+    JSON.stringify({ timestamps: result.timestamps, runCount, runId: state.runId }),
+    "utf8",
+  );
   return { remaining: result.remaining, sentThisRun: runCount, maxPerRun: limits.maxPerRun };
 }

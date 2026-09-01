@@ -6,10 +6,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ORCHESTRATOR_ROOT="$ROOT"
 cd "$ROOT"
 
 QA_ENV_FILE="${QA_ENV_FILE:-$HOME/.finla/qa.env}"
 QA_WORKTREE="${QA_WORKTREE:-$HOME/Desktop/projects/finla-qa}"
+QA_STATE_DIR="${QA_STATE_DIR:-$HOME/.finla/qa}"
 CADENCE="smoke-core"
 DO_PULL=0
 DO_INIT_WORKTREE=0
@@ -37,6 +39,7 @@ Usage: bash scripts/qa-agent/run.sh [options]
 Env: QA_WORKTREE, QA_ENV_FILE (~/.finla/qa.env), QA_REMOTE (optional; default origin
      or the first configured remote), MAESTRO_SIMULATOR, LINEAR_API_KEY,
      TELEGRAM_BOT_TOKEN_QA, TELEGRAM_FINLA_GROUP_CHAT_ID.
+     TELEGRAM_RUN_ID is set automatically (one Telegram status per invocation).
 EOF
 }
 
@@ -81,6 +84,42 @@ fi
 ACTION=0
 if (( DO_INIT_WORKTREE || DO_PULL || DO_SEED || DO_RUN_TESTS || DO_REPORT || DO_TELEGRAM )); then
   ACTION=1
+fi
+
+LOCK_FILE=""
+RESULTS_FILE=""
+cleanup() {
+  if [[ -n "$LOCK_FILE" && -f "$LOCK_FILE" ]]; then
+    local lock_pid
+    lock_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
+    if [[ "$lock_pid" == "$$" ]]; then
+      rm -f "$LOCK_FILE"
+    fi
+  fi
+  if [[ -n "$RESULTS_FILE" && -f "$RESULTS_FILE" ]]; then
+    rm -f "$RESULTS_FILE"
+  fi
+}
+trap cleanup EXIT
+
+acquire_run_lock() {
+  mkdir -p "$QA_STATE_DIR"
+  LOCK_FILE="$QA_STATE_DIR/run.lock"
+  if [[ -f "$LOCK_FILE" ]]; then
+    local old
+    old="$(cat "$LOCK_FILE" 2>/dev/null || true)"
+    if [[ "$old" =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null; then
+      echo "Another QA run is in progress (pid $old)." >&2
+      LOCK_FILE=""
+      exit 1
+    fi
+  fi
+  printf '%s\n' "$$" > "$LOCK_FILE"
+}
+
+if (( ACTION == 1 )); then
+  acquire_run_lock
+  export TELEGRAM_RUN_ID="${TELEGRAM_RUN_ID:-$(uuidgen)}"
 fi
 
 is_primary_checkout() {
@@ -152,9 +191,10 @@ pull_worktree() {
   echo "QA worktree now at $(git -C "$QA_WORKTREE" rev-parse --short HEAD) (qa-sync tracking $remote/develop)"
 }
 
-if (( DO_INIT_WORKTREE )); then
-  init_worktree
-fi
+# Pipeline order is fixed (flag order on the command line does not matter):
+# pull worktree → seed missing QA Automation issues → suite → tests → report → telegram.
+# Seed must run after pull so catalog.mjs is current, and before report so a
+# newly merged case has a Linear issue.
 
 if (( DO_PULL )); then
   pull_worktree
@@ -174,14 +214,6 @@ fi
 if (( DO_SEED )); then
   "${CLI[@]}" seed
 fi
-
-RESULTS_FILE=""
-cleanup() {
-  if [[ -n "$RESULTS_FILE" && -f "$RESULTS_FILE" ]]; then
-    rm -f "$RESULTS_FILE"
-  fi
-}
-trap cleanup EXIT
 
 if (( DO_RUN_TESTS || DO_REPORT || DO_TELEGRAM )); then
   RESULTS_FILE="$(mktemp -t finla-qa-results.XXXXXX)"
@@ -320,5 +352,5 @@ if (( DO_TELEGRAM )); then
     const payload = JSON.parse(readFileSync(0, "utf8"));
     process.stdout.write(payload.text);
   ')"
-  node "$ROOT/scripts/telegram/cli.mjs" send --agent qa --status --text "$BODY"
+  node "$ORCHESTRATOR_ROOT/scripts/telegram/cli.mjs" send --agent qa --status --text "$BODY"
 fi

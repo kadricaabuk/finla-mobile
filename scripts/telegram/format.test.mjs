@@ -5,6 +5,7 @@ import {
   containsSecretLike,
   escapeHtml,
   escapeMarkdownV2,
+  formatStatusMessage,
   redactSecrets,
   splitForTelegram,
   TELEGRAM_MAX_MESSAGE_CHARS,
@@ -43,6 +44,29 @@ describe("escapeHtml", () => {
   it("does not touch characters that break MarkdownV2", () => {
     // The reason HTML is the safer parse mode for generated text.
     assert.equal(escapeHtml("invoice-detail.v2 (draft)"), "invoice-detail.v2 (draft)");
+  });
+});
+
+describe("formatStatusMessage", () => {
+  const now = new Date(2026, 8, 1, 9, 5);
+
+  it("puts the role and timestamp on the first line", () => {
+    const message = formatStatusMessage({
+      label: "Fullstack Developer",
+      body: "FIN-24 icin PR acildi.",
+      now,
+    });
+    assert.equal(message, "Fullstack Developer — 2026-09-01 09:05\nFIN-24 icin PR acildi.");
+  });
+
+  it("zero-pads so the header width is stable across agents", () => {
+    const message = formatStatusMessage({ label: "Muhasebeci", body: "x", now: new Date(2026, 0, 5, 3, 7) });
+    assert.match(message, /^Muhasebeci — 2026-01-05 03:07\n/);
+  });
+
+  it("trims the body and survives an empty one", () => {
+    assert.match(formatStatusMessage({ label: "R", body: "  hi  ", now }), /\nhi$/);
+    assert.match(formatStatusMessage({ label: "R", body: undefined, now }), /09:05\n$/);
   });
 });
 

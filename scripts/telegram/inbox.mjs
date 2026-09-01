@@ -23,6 +23,33 @@
 export const DIRECTED = "directed";
 export const CONTEXT = "context";
 
+/**
+ * Humans whose messages may become actionable. Everyone else in the group is
+ * read-only as far as the agents are concerned.
+ *
+ * An allowlist rather than "any human" because the group is an untrusted input
+ * channel: whoever can post could otherwise steer code changes on a fintech
+ * repo. Override with TELEGRAM_DIRECTED_USERNAMES (comma separated).
+ */
+export const DEFAULT_DIRECTED_USERNAMES = ["kadricaabuk"];
+
+export function resolveDirectedUsernames(env = process.env) {
+  const raw = env.TELEGRAM_DIRECTED_USERNAMES;
+  if (!raw) return DEFAULT_DIRECTED_USERNAMES;
+  const names = String(raw)
+    .split(",")
+    .map((name) => name.trim().replace(/^@/, "").toLowerCase())
+    .filter(Boolean);
+  return names.length > 0 ? names : DEFAULT_DIRECTED_USERNAMES;
+}
+
+export function isAllowedSender(message, allowedUsernames) {
+  if (message.fromIsBot) return false;
+  if (!allowedUsernames || allowedUsernames.length === 0) return true;
+  const username = String(message.fromUsername ?? "").toLowerCase();
+  return allowedUsernames.some((name) => name.toLowerCase() === username);
+}
+
 const textOf = (message) => message?.text ?? message?.caption ?? "";
 
 /** Flattens the message-bearing part of an update, ignoring service events. */
@@ -64,8 +91,8 @@ export function isReplyToBot(message, botId) {
  * said, is directed. Everything else — including bot chatter that names this
  * bot — is context.
  */
-export function classify(message, { botUsername, botId }) {
-  if (message.fromIsBot) return CONTEXT;
+export function classify(message, { botUsername, botId, allowedUsernames = null }) {
+  if (!isAllowedSender(message, allowedUsernames)) return CONTEXT;
   if (mentionsBot(message.text, botUsername)) return DIRECTED;
   if (isReplyToBot(message, botId)) return DIRECTED;
   return CONTEXT;
@@ -78,7 +105,10 @@ export function classify(message, { botUsername, botId }) {
  * acknowledging are separate on purpose: a run that dies mid-work should see
  * the same messages again rather than lose them.
  */
-export function buildInbox(updates, { botUsername, botId, chatId = null } = {}) {
+export function buildInbox(
+  updates,
+  { botUsername, botId, chatId = null, allowedUsernames = null } = {},
+) {
   const directed = [];
   const context = [];
   let lastUpdateId = null;
@@ -92,7 +122,7 @@ export function buildInbox(updates, { botUsername, botId, chatId = null } = {}) 
     if (!message) continue;
     if (chatId !== null && String(message.chatId) !== String(chatId)) continue;
 
-    if (classify(message, { botUsername, botId }) === DIRECTED) {
+    if (classify(message, { botUsername, botId, allowedUsernames }) === DIRECTED) {
       directed.push(message);
     } else {
       context.push(message);

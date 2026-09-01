@@ -53,6 +53,21 @@ export function containsSecretLike(text) {
 }
 
 /**
+ * Formats a status post as `<Role> — <date>` followed by the body.
+ *
+ * Every agent in the group uses this shape, so a reader (human or agent) can
+ * tell who is speaking from the first line. Local date, minute precision;
+ * seconds would be noise.
+ */
+export function formatStatusMessage({ label, body, now = new Date() }) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp =
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return `${label} — ${stamp}\n${String(body ?? "").trim()}`;
+}
+
+/**
  * Splits text into chunks Telegram will accept, preferring line boundaries so
  * agent reports do not get cut mid-sentence. Falls back to a hard split when a
  * single line is longer than the limit.

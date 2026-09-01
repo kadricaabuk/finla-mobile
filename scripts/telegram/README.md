@@ -52,7 +52,7 @@ node scripts/telegram/cli.mjs whoami   --agent product-analyst
 node scripts/telegram/cli.mjs chat-id  --agent product-analyst
 node scripts/telegram/cli.mjs inbox    --agent product-analyst
 node scripts/telegram/cli.mjs ack      --agent product-analyst --through 156850172
-node scripts/telegram/cli.mjs send     --agent product-analyst --text "Rapor hazir"
+node scripts/telegram/cli.mjs send     --agent product-analyst --text "FIN-24 icin PR acildi" --status
 node scripts/telegram/cli.mjs send     --agent muhasebeci --file report.md
 some-command | node scripts/telegram/cli.mjs send --agent cofounder --stdin
 ```
@@ -67,6 +67,11 @@ All output is JSON; failures exit non-zero with `{ "error": ... }`.
 - `inbox` returns the agent's unread messages, split into `directed` and `context`.
 - `ack` marks messages as processed so the next `inbox` only returns newer ones.
 - `send` targets `TELEGRAM_FINLA_GROUP_CHAT_ID` unless `--chat <id>` overrides it.
+- `--status` stamps the shared `<Role> — <date>` header every agent uses. Use it for the
+  end-of-run report so a reader can tell who is speaking from the first line.
+
+Keep status posts plain text, no emoji, two or three sentences, and cite Linear issues by
+their `FIN-123` identifier so references line up with what the other agents write.
 
 ## Reading the group
 
@@ -77,8 +82,14 @@ trigger requires.
 
 `inbox` sorts messages into two buckets:
 
-- **`directed`** — a human @mentioned this bot or replied to one of its messages. Actionable.
+- **`directed`** — an **allowed human** @mentioned this bot or replied to one of its messages.
+  Actionable.
 - **`context`** — everything else, including all bot chatter. Awareness only.
+
+Only humans on the allowlist can produce `directed` messages. It defaults to `kadricaabuk` and
+is overridable with `TELEGRAM_DIRECTED_USERNAMES` (comma separated). An allowlist rather than
+"any human" because the group is an untrusted input channel: whoever can post could otherwise
+steer code changes on a fintech repo.
 
 **Bot messages are never `directed`, even when they name this bot.** Telegram is explicit that
 bot-to-bot communication "can easily result in infinite interaction loops", that you "must
@@ -152,11 +163,13 @@ runaway loops possible. Three things hold the line:
    ever moves to webhooks, this protection disappears and cross-run limiting becomes mandatory.
 2. **Filtering.** A bot's message is never actionable, so an agent cannot be talked into work
    by another agent.
-3. **Rate limit.** `send` refuses once an agent exceeds **20 messages per 10 minutes**,
-   tunable with `TELEGRAM_SEND_MAX_PER_WINDOW` and `TELEGRAM_SEND_WINDOW_MS`. State lives in a
-   temp file shared across CLI invocations within one run, which is where the realistic risk
-   is: a single run going haywire and flooding the group. It resets between runs, since cron
-   already bounds how often runs happen.
+3. **Rate limit.** Two ceilings, both held in a temp file shared across CLI invocations within
+   one run — which is where the realistic risk sits, a single run flooding the group.
+   - **One message per run** (`TELEGRAM_SEND_MAX_PER_RUN`, default 1). Post a single status
+     message summarising everything, not one per finding. Chunking a long report does not cost
+     extra: splitting happens inside one `send`.
+   - **20 messages per 10 minutes** (`TELEGRAM_SEND_MAX_PER_WINDOW`, `TELEGRAM_SEND_WINDOW_MS`)
+     as a backstop.
 
 The limit throws rather than dropping silently — an agent must not believe it reported when it
 did not.

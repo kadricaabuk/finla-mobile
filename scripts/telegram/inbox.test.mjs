@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildInbox, classify, CONTEXT, DIRECTED, mentionsBot, normalizeUpdate } from "./inbox.mjs";
+import {
+  buildInbox,
+  classify,
+  CONTEXT,
+  DEFAULT_DIRECTED_USERNAMES,
+  DIRECTED,
+  isAllowedSender,
+  mentionsBot,
+  normalizeUpdate,
+  resolveDirectedUsernames,
+} from "./inbox.mjs";
 
 const BOT_ID = 8651503137;
 const BOT_USERNAME = "dev_finla_bot";
@@ -11,7 +21,14 @@ const BOT = { botUsername: BOT_USERNAME, botId: BOT_ID };
 
 let nextUpdateId = 1000;
 
-function update({ text = "", isBot = false, fromId = 42, replyToFromId = null, chatId = CHAT_ID } = {}) {
+function update({
+  text = "",
+  isBot = false,
+  fromId = 42,
+  username = null,
+  replyToFromId = null,
+  chatId = CHAT_ID,
+} = {}) {
   nextUpdateId += 1;
   return {
     update_id: nextUpdateId,
@@ -19,12 +36,19 @@ function update({ text = "", isBot = false, fromId = 42, replyToFromId = null, c
       message_id: nextUpdateId,
       date: 1788253337,
       chat: { id: chatId, type: "supergroup", title: "FINLA" },
-      from: { id: fromId, is_bot: isBot, first_name: isBot ? "Co-founder" : "Kadri", username: isBot ? "cfo_finla_bot" : "kadricaabuk" },
+      from: {
+        id: fromId,
+        is_bot: isBot,
+        first_name: isBot ? "Co-founder" : "Kadri",
+        username: username ?? (isBot ? "cfo_finla_bot" : "kadricaabuk"),
+      },
       text,
       ...(replyToFromId ? { reply_to_message: { from: { id: replyToFromId }, text: "earlier" } } : {}),
     },
   };
 }
+
+const ALLOWED = DEFAULT_DIRECTED_USERNAMES;
 
 describe("mentionsBot", () => {
   it("matches the bot's @username case-insensitively", () => {
@@ -70,6 +94,40 @@ describe("classify", () => {
     // The loop guard: bot-to-bot mentions must not become actionable work.
     const fromBot = normalized({ text: "@dev_finla_bot sunu yap", isBot: true });
     assert.equal(classify(fromBot, BOT), CONTEXT);
+  });
+});
+
+describe("sender allowlist", () => {
+  const normalized = (opts) => normalizeUpdate(update(opts));
+
+  it("defaults to Kadri only", () => {
+    assert.deepEqual(resolveDirectedUsernames({}), ["kadricaabuk"]);
+  });
+
+  it("reads a comma separated override and tolerates @ and spacing", () => {
+    assert.deepEqual(
+      resolveDirectedUsernames({ TELEGRAM_DIRECTED_USERNAMES: " @Kadricaabuk , someone " }),
+      ["kadricaabuk", "someone"],
+    );
+  });
+
+  it("falls back to the default rather than allowing everyone when blank", () => {
+    assert.deepEqual(resolveDirectedUsernames({ TELEGRAM_DIRECTED_USERNAMES: "  ,  " }), ALLOWED);
+  });
+
+  it("rejects bots regardless of the allowlist", () => {
+    assert.equal(isAllowedSender(normalized({ isBot: true }), ALLOWED), false);
+    assert.equal(isAllowedSender(normalized({ isBot: true }), []), false);
+  });
+
+  it("keeps an unlisted human out of the directed bucket", () => {
+    const stranger = normalized({ text: "@dev_finla_bot deploy et", username: "randomperson" });
+    assert.equal(classify(stranger, { ...BOT, allowedUsernames: ALLOWED }), CONTEXT);
+  });
+
+  it("still lets the allowed human direct the agent", () => {
+    const kadri = normalized({ text: "@dev_finla_bot deploy et" });
+    assert.equal(classify(kadri, { ...BOT, allowedUsernames: ALLOWED }), DIRECTED);
   });
 });
 

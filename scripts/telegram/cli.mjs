@@ -7,7 +7,7 @@
  *   node scripts/telegram/cli.mjs list-agents
  *   node scripts/telegram/cli.mjs whoami --agent product-analyst
  *   node scripts/telegram/cli.mjs chat-id --agent product-analyst
- *   node scripts/telegram/cli.mjs send --agent product-analyst --text "..."
+ *   node scripts/telegram/cli.mjs send --agent product-analyst --text "..." --status
  *   ... | node scripts/telegram/cli.mjs send --agent muhasebeci --stdin
  *
  * Text longer than Telegram's 4096-character limit is split automatically.
@@ -24,7 +24,8 @@ import {
   resolveAgent,
   tokenEnvNames,
 } from "./agents.mjs";
-import { buildInbox } from "./inbox.mjs";
+import { formatStatusMessage } from "./format.mjs";
+import { buildInbox, resolveDirectedUsernames } from "./inbox.mjs";
 import { consumeSendAllowance } from "./rate-limit.mjs";
 import { createTelegramClient, extractChats } from "./telegram-client.mjs";
 
@@ -125,16 +126,19 @@ async function commandInbox(flags) {
 
   const me = await client.getMe();
   const updates = await client.getUpdates({ limit: 100 });
+  const allowedUsernames = resolveDirectedUsernames();
   const { directed, context, lastUpdateId } = buildInbox(updates, {
     botUsername: me?.username,
     botId: me?.id,
     chatId,
+    allowedUsernames,
   });
 
   return {
     agent: agent.key,
     botUsername: me?.username ?? null,
     chatId,
+    actionableFrom: allowedUsernames,
     directed,
     context,
     lastUpdateId,
@@ -167,9 +171,12 @@ async function commandSend(flags) {
   // so reporting it before the shared chat id avoids a second round trip.
   const client = clientFor(agent.key);
   const chatId = typeof flags.chat === "string" ? flags.chat : readGroupChatId();
-  const text = await resolveText(flags);
+  const body = await resolveText(flags);
+  // `--status` is the normal path for an end-of-run report: it stamps the
+  // shared "<Role> — <date>" header every agent in the group uses.
+  const text = flags.status ? formatStatusMessage({ label: agent.label, body }) : body;
 
-  const { remaining } = consumeSendAllowance(agent.key);
+  const { remaining, sentThisRun, maxPerRun } = consumeSendAllowance(agent.key);
 
   const sent = await client.sendMessage({
     chatId,
@@ -183,6 +190,8 @@ async function commandSend(flags) {
     chatId,
     format,
     messages: sent,
+    sentThisRun,
+    maxPerRun,
     sendsRemainingInWindow: remaining,
   };
 }

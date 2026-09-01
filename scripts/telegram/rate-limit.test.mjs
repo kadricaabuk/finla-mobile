@@ -5,6 +5,7 @@ import {
   checkRate,
   consumeSendAllowance,
   DEFAULT_MAX_IN_WINDOW,
+  DEFAULT_MAX_PER_RUN,
   DEFAULT_WINDOW_MS,
   pruneWindow,
   resolveLimits,
@@ -68,6 +69,7 @@ describe("resolveLimits", () => {
     assert.deepEqual(resolveLimits({}), {
       windowMs: DEFAULT_WINDOW_MS,
       maxInWindow: DEFAULT_MAX_IN_WINDOW,
+      maxPerRun: DEFAULT_MAX_PER_RUN,
     });
   });
 
@@ -75,24 +77,61 @@ describe("resolveLimits", () => {
     const limits = resolveLimits({
       TELEGRAM_SEND_WINDOW_MS: "5000",
       TELEGRAM_SEND_MAX_PER_WINDOW: "2",
+      TELEGRAM_SEND_MAX_PER_RUN: "4",
     });
-    assert.deepEqual(limits, { windowMs: 5000, maxInWindow: 2 });
+    assert.deepEqual(limits, { windowMs: 5000, maxInWindow: 2, maxPerRun: 4 });
   });
 
   it("ignores nonsense overrides rather than disabling the guard", () => {
     const limits = resolveLimits({
       TELEGRAM_SEND_WINDOW_MS: "0",
       TELEGRAM_SEND_MAX_PER_WINDOW: "-4",
+      TELEGRAM_SEND_MAX_PER_RUN: "abc",
     });
     assert.deepEqual(limits, {
       windowMs: DEFAULT_WINDOW_MS,
       maxInWindow: DEFAULT_MAX_IN_WINDOW,
+      maxPerRun: DEFAULT_MAX_PER_RUN,
     });
   });
 });
 
+describe("per-run cap", () => {
+  const scope = () => `runcap-${Math.random().toString(36).slice(2)}`;
+
+  it("defaults to one status message per run", () => {
+    assert.equal(resolveLimits({}).maxPerRun, 1);
+
+    const key = scope();
+    assert.equal(consumeSendAllowance(key, { now: 1000, env: {} }).sentThisRun, 1);
+    assert.throws(
+      () => consumeSendAllowance(key, { now: 2000, env: {} }),
+      /already sent 1 message\(s\) this run/,
+    );
+  });
+
+  it("holds even after the time window has passed, since it is per run", () => {
+    const key = scope();
+    consumeSendAllowance(key, { now: 1000, env: {} });
+    assert.throws(() => consumeSendAllowance(key, { now: 10 ** 9, env: {} }));
+  });
+
+  it("can be raised deliberately", () => {
+    const key = scope();
+    const env = { TELEGRAM_SEND_MAX_PER_RUN: "3" };
+    assert.equal(consumeSendAllowance(key, { now: 1000, env }).sentThisRun, 1);
+    assert.equal(consumeSendAllowance(key, { now: 1100, env }).sentThisRun, 2);
+    assert.equal(consumeSendAllowance(key, { now: 1200, env }).sentThisRun, 3);
+    assert.throws(() => consumeSendAllowance(key, { now: 1300, env }));
+  });
+});
+
 describe("consumeSendAllowance", () => {
-  const env = { TELEGRAM_SEND_WINDOW_MS: "60000", TELEGRAM_SEND_MAX_PER_WINDOW: "2" };
+  const env = {
+    TELEGRAM_SEND_WINDOW_MS: "60000",
+    TELEGRAM_SEND_MAX_PER_WINDOW: "2",
+    TELEGRAM_SEND_MAX_PER_RUN: "99",
+  };
   const scope = () => `test-${Math.random().toString(36).slice(2)}`;
 
   it("permits sends up to the ceiling then throws", () => {

@@ -21,6 +21,16 @@ import { join } from "node:path";
 export const DEFAULT_WINDOW_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_IN_WINDOW = 20;
 
+/**
+ * One status message per run, per the agent brief. The temp dir lives and dies
+ * with the VM, so "per run" and "per VM" are the same thing here.
+ *
+ * Long reports are unaffected: splitting past 4096 characters happens inside a
+ * single `send`, which spends one allowance regardless of how many chunks it
+ * takes.
+ */
+export const DEFAULT_MAX_PER_RUN = 1;
+
 /** Drops timestamps that have fallen outside the window. */
 export function pruneWindow(timestamps, now, windowMs) {
   const cutoff = now - windowMs;
@@ -51,22 +61,28 @@ function stateFile(scope) {
   return join(dir, `${String(scope).replace(/[^\w.-]/g, "_")}.json`);
 }
 
-function readTimestamps(path) {
+function readState(path) {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(parsed?.timestamps) ? parsed.timestamps : [];
+    return {
+      timestamps: Array.isArray(parsed?.timestamps) ? parsed.timestamps : [],
+      runCount: Number.isInteger(parsed?.runCount) ? parsed.runCount : 0,
+    };
   } catch {
-    return [];
+    return { timestamps: [], runCount: 0 };
   }
 }
 
+const positiveOr = (raw, fallback) => {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
 export function resolveLimits(env = process.env) {
-  const windowMs = Number(env.TELEGRAM_SEND_WINDOW_MS);
-  const maxInWindow = Number(env.TELEGRAM_SEND_MAX_PER_WINDOW);
   return {
-    windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : DEFAULT_WINDOW_MS,
-    maxInWindow:
-      Number.isFinite(maxInWindow) && maxInWindow > 0 ? maxInWindow : DEFAULT_MAX_IN_WINDOW,
+    windowMs: positiveOr(env.TELEGRAM_SEND_WINDOW_MS, DEFAULT_WINDOW_MS),
+    maxInWindow: positiveOr(env.TELEGRAM_SEND_MAX_PER_WINDOW, DEFAULT_MAX_IN_WINDOW),
+    maxPerRun: positiveOr(env.TELEGRAM_SEND_MAX_PER_RUN, DEFAULT_MAX_PER_RUN),
   };
 }
 
@@ -79,8 +95,15 @@ export function resolveLimits(env = process.env) {
 export function consumeSendAllowance(scope, { now = Date.now(), env = process.env } = {}) {
   const limits = resolveLimits(env);
   const path = stateFile(scope);
-  const result = checkRate(readTimestamps(path), now, limits);
+  const state = readState(path);
 
+  if (state.runCount >= limits.maxPerRun) {
+    throw new Error(
+      `"${scope}" has already sent ${state.runCount} message(s) this run and the cap is ${limits.maxPerRun}. Post one status message per run summarising everything, rather than a message per finding. Override with TELEGRAM_SEND_MAX_PER_RUN only when several messages are genuinely wanted.`,
+    );
+  }
+
+  const result = checkRate(state.timestamps, now, limits);
   if (!result.allowed) {
     const seconds = Math.ceil(result.retryAfterMs / 1000);
     throw new Error(
@@ -88,6 +111,7 @@ export function consumeSendAllowance(scope, { now = Date.now(), env = process.en
     );
   }
 
-  writeFileSync(path, JSON.stringify({ timestamps: result.timestamps }), "utf8");
-  return { remaining: result.remaining };
+  const runCount = state.runCount + 1;
+  writeFileSync(path, JSON.stringify({ timestamps: result.timestamps, runCount }), "utf8");
+  return { remaining: result.remaining, sentThisRun: runCount, maxPerRun: limits.maxPerRun };
 }

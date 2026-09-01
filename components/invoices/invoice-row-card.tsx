@@ -46,8 +46,7 @@ export function InvoiceRowCard({
   onOpenPreview,
   onOpenIncomingResponse,
 }: InvoiceRowCardProps) {
-  const total =
-    item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
+  const total = item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
   const statusLabel =
     listDirection === "incoming"
       ? normalizeIncomingDisplayStatus(item.onayDurumu ?? "")
@@ -176,10 +175,10 @@ export function InvoiceRowCard({
             {item.belgeNumarasi ? `  ·  ${item.belgeNumarasi}` : ""}
           </Text>
           <View style={styles.cardBottomRight}>
-            <View style={[styles.statusBadge, { backgroundColor: color + "20" }]}>
-              <Text style={[styles.statusText, { color }]}>
-                {statusLabel}
-              </Text>
+            <View
+              style={[styles.statusBadge, { backgroundColor: color + "20" }]}
+            >
+              <Text style={[styles.statusText, { color }]}>{statusLabel}</Text>
             </View>
             <Ionicons
               name={expanded ? "chevron-up" : "chevron-down"}
@@ -213,7 +212,9 @@ export function InvoiceRowCard({
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>Durum: </Text>
-                {prettyInvoiceStatus(detail.status, { direction: listDirection })}
+                {prettyInvoiceStatus(detail.status, {
+                  direction: listDirection,
+                })}
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>VKN/TCKN: </Text>
@@ -252,12 +253,16 @@ export function InvoiceRowCard({
               accessibilityRole="button"
               accessibilityLabel="Faturayı onayla veya reddet"
             >
-              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={20}
+                color="#fff"
+              />
               <Text style={styles.respondBtnText}>Yanıt Ver</Text>
             </TouchableOpacity>
           ) : null}
 
-          {showPreviewOnly ? (
+          {showPreviewOnly && !detailLoading ? (
             <TouchableOpacity
               style={styles.previewBtn}
               onPress={openPreview}
@@ -356,6 +361,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
+    padding: 16,
+    justifyContent: "center",
   },
   detailMuted: {
     fontSize: 13,

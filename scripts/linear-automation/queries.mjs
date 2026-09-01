@@ -77,6 +77,43 @@ export const CANDIDATE_ISSUES_QUERY = /* GraphQL */ `
   }
 `;
 
+/**
+ * Diagnostics for the case where `list` returns nothing without erroring.
+ *
+ * A valid query with zero matches means the scope is wrong somewhere: the
+ * project name, the label name, or every issue being closed. This shows all
+ * three at once instead of guessing one at a time.
+ */
+export const DIAGNOSTICS_QUERY = /* GraphQL */ `
+  query AutomationDiagnostics($projectName: String!) {
+    projects(first: 50) {
+      nodes {
+        name
+      }
+    }
+    issueLabels(first: 100) {
+      nodes {
+        name
+      }
+    }
+    issues(first: 50, filter: { project: { name: { eq: $projectName } } }) {
+      nodes {
+        identifier
+        title
+        state {
+          name
+          type
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const CREATE_COMMENT_MUTATION = /* GraphQL */ `
   mutation AutomationCreateComment($issueId: String!, $body: String!) {
     commentCreate(input: { issueId: $issueId, body: $body }) {

@@ -7,6 +7,7 @@
  * Usage:
  *   node scripts/linear-automation/cli.mjs whoami
  *   node scripts/linear-automation/cli.mjs list [--project <name>] [--label <name>] [--max <n>]
+ *   node scripts/linear-automation/cli.mjs doctor [--project <name>] [--label <name>]
  *   node scripts/linear-automation/cli.mjs react <issueId> <seen|working|done>
  *   node scripts/linear-automation/cli.mjs comment <issueId> <prUrl>
  */
@@ -16,6 +17,7 @@ import {
   CANDIDATE_ISSUES_QUERY,
   CREATE_COMMENT_MUTATION,
   CREATE_REACTION_MUTATION,
+  DIAGNOSTICS_QUERY,
   VIEWER_QUERY,
 } from "./queries.mjs";
 import {
@@ -103,6 +105,76 @@ async function commandList(request, flags) {
   };
 }
 
+/**
+ * Explains an empty `list`.
+ *
+ * A valid query returning nothing means the scope is wrong, not the code. This
+ * reports what actually exists so the mismatch is visible rather than guessed:
+ * the project name, the label name, or every issue being closed.
+ */
+async function commandDoctor(request, flags) {
+  const projectName = flags.project ?? DEFAULT_PROJECT;
+  const labelName = flags.label ?? DEFAULT_LABEL;
+
+  const data = await request(DIAGNOSTICS_QUERY, { projectName });
+  const projects = (data?.projects?.nodes ?? []).map((p) => p.name);
+  const labels = (data?.issueLabels?.nodes ?? []).map((l) => l.name);
+  const issues = (data?.issues?.nodes ?? []).map((issue) => ({
+    identifier: issue.identifier,
+    title: issue.title,
+    state: issue.state?.name ?? null,
+    stateType: issue.state?.type ?? null,
+    labels: (issue.labels?.nodes ?? []).map((l) => l.name),
+  }));
+
+  const projectExists = projects.some((p) => p.toLowerCase() === projectName.toLowerCase());
+  const labelExists = labels.some((l) => l.toLowerCase() === labelName.toLowerCase());
+  const withLabel = issues.filter((issue) =>
+    issue.labels.some((l) => l.toLowerCase() === labelName.toLowerCase()),
+  );
+  const openWithLabel = withLabel.filter(
+    (issue) => !["completed", "canceled"].includes(issue.stateType),
+  );
+
+  const findings = [];
+  if (!projectExists) {
+    findings.push(`No project named "${projectName}". Existing projects: ${projects.join(", ") || "(none)"}.`);
+  }
+  if (!labelExists) {
+    findings.push(`No label named "${labelName}". Existing labels: ${labels.join(", ") || "(none)"}.`);
+  }
+  if (projectExists && issues.length === 0) {
+    findings.push(`Project "${projectName}" has no issues at all.`);
+  }
+  if (issues.length > 0 && withLabel.length === 0) {
+    findings.push(
+      `Project "${projectName}" has ${issues.length} issue(s), but none carries the "${labelName}" label.`,
+    );
+  }
+  if (withLabel.length > 0 && openWithLabel.length === 0) {
+    findings.push(`Every "${labelName}" issue in "${projectName}" is already closed.`);
+  }
+  if (findings.length === 0) {
+    findings.push(`${openWithLabel.length} open "${labelName}" issue(s) found; list should return them.`);
+  }
+
+  return {
+    projectName,
+    labelName,
+    projectExists,
+    labelExists,
+    projects,
+    labels,
+    issuesInProject: issues,
+    counts: {
+      inProject: issues.length,
+      withLabel: withLabel.length,
+      openWithLabel: openWithLabel.length,
+    },
+    findings,
+  };
+}
+
 async function commandReact(request, issueId, stage) {
   const spec = REACTION_STAGES[stage];
   if (!spec) {
@@ -145,6 +217,16 @@ async function commandComment(request, issueId, prUrl) {
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const { flags, positional } = parseFlags(rest);
+
+  const COMMANDS = ["whoami", "list", "doctor", "react", "comment"];
+  if (!COMMANDS.includes(command)) {
+    // Validated before the client is built, so a typo reports the typo rather
+    // than a missing-credential error.
+    throw new Error(
+      `Unknown command "${command ?? ""}". Expected one of: ${COMMANDS.join(", ")}.`,
+    );
+  }
+
   const request = createLinearClient();
 
   switch (command) {
@@ -152,14 +234,12 @@ async function main() {
       return commandWhoami(request);
     case "list":
       return commandList(request, flags);
+    case "doctor":
+      return commandDoctor(request, flags);
     case "react":
       return commandReact(request, positional[0], positional[1]);
-    case "comment":
-      return commandComment(request, positional[0], positional[1]);
     default:
-      throw new Error(
-        `Unknown command "${command ?? ""}". Expected one of: whoami, list, react, comment.`,
-      );
+      return commandComment(request, positional[0], positional[1]);
   }
 }
 

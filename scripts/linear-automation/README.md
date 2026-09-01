@@ -81,9 +81,13 @@ Re-reacting is treated as success, so a retried run is safe.
 npm run test:linear
 ```
 
-Uses the Node built-in test runner rather than `scripts/deno-test.sh`, because Deno is not
-installed on Cursor Cloud Agent VMs while Node is. No network access is required; the
-transport tests drive a stub `fetch`.
+Uses the Node built-in test runner rather than `scripts/deno-test.sh`, which the repo's other
+suites use. This code is a plain Node CLI executed by `node`, not Deno edge-function code, so
+it is tested on the runtime it actually runs on. (Deno is reachable here — `deno-test.sh`
+falls back to `npx deno` when it is not installed globally — so this is a deliberate choice,
+not a workaround.)
+
+No network access is required; the transport tests drive a stub `fetch`.
 
 ## Notes
 

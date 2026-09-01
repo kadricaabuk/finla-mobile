@@ -1,7 +1,7 @@
 # Finla team bots — Telegram
 
-Outbound Telegram messaging for the four autonomous Finla agents. Each agent posts to the
-shared **FINLA** group under its own bot identity, so the group shows "Product Analyst" or
+Outbound Telegram messaging for the autonomous Finla agents. Each agent posts to the shared
+**FINLA** group under its own bot identity, so the group shows "Product Analyst" or
 "Muhasebeci" as the sender rather than one generic bot.
 
 This replaces the Zapier-mediated flow with direct Bot API calls: no third party in the data
@@ -12,6 +12,7 @@ path, no per-task billing, no logic living in a UI outside version control.
 | Agent key | Shown as | Token env var |
 | --- | --- | --- |
 | `cofounder` | Co-founder | `TELEGRAM_BOT_TOKEN_COFOUNDER` |
+| `developer` | Fullstack Developer | `TELEGRAM_BOT_TOKEN_DEVELOPER` |
 | `product-analyst` | Product Analyst | `TELEGRAM_BOT_TOKEN_PRODUCT_ANALYST` |
 | `muhasebeci` | Muhasebeci | `TELEGRAM_BOT_TOKEN_MUHASEBECI` |
 | `pr-manager` | PR Manager | `TELEGRAM_BOT_TOKEN_PR_MANAGER` |

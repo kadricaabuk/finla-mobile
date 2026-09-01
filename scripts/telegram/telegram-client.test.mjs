@@ -28,9 +28,10 @@ const clientWith = (fetchImpl, overrides = {}) =>
   createTelegramClient({ token: TOKEN, fetchImpl, baseRetryMs: 0, ...overrides });
 
 describe("agent registry", () => {
-  it("covers the four Finla identities, each with its own token env var", () => {
+  it("covers every Finla identity, each with its own token env var", () => {
     assert.deepEqual(listAgentKeys().sort(), [
       "cofounder",
+      "developer",
       "muhasebeci",
       "pr-manager",
       "product-analyst",

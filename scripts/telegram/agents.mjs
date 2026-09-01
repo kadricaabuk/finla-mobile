@@ -14,6 +14,10 @@ export const AGENTS = Object.freeze({
     label: "Co-founder",
     tokenEnv: "TELEGRAM_BOT_TOKEN_COFOUNDER",
   },
+  developer: {
+    label: "Fullstack Developer",
+    tokenEnv: "TELEGRAM_BOT_TOKEN_DEVELOPER",
+  },
   "product-analyst": {
     label: "Product Analyst",
     tokenEnv: "TELEGRAM_BOT_TOKEN_PRODUCT_ANALYST",

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import * as XLSX from "npm:xlsx@0.18.5";
 import { sha256Hex } from "./crypto.ts";
+import { extractExportTaxFields } from "./invoice-export-tax-fields.ts";
 import {
   applyFactFiltersToQuery,
   syncFactsForSession,
@@ -9,6 +10,10 @@ import {
   type InvoiceFactRow,
 } from "./invoice-facts.ts";
 import type { FinlaSession } from "./session-auth.ts";
+
+type InvoiceFactExportRow = InvoiceFactRow & {
+  raw_payload?: Record<string, unknown> | null;
+};
 
 /**
  * Yerelde `kong:8000` gibi dahili adresler dönebilir. İstemciler için dış adres (ör.
@@ -56,23 +61,44 @@ function statusLabel(status: string): string {
 }
 
 function rowsToSheetData(
-  rows: InvoiceFactRow[],
+  rows: InvoiceFactExportRow[],
 ): Record<string, string | number | null>[] {
-  return rows.map((r) => ({
-    Yön: directionLabel(r.direction ?? ""),
-    "ETTN / Belge No": r.invoice_uuid,
-    "Fatura tarihi": formatTrIssueDate(r.issue_date),
-    Durum: statusLabel(r.status),
-    Para: r.currency ?? "TRY",
-    Matrah: r.net_total,
-    KDV: r.vat_total,
-    Toplam: r.gross_total,
-    "Cari adı / ünvan": r.customer_name,
-    "Cari VKN/TCKN": r.customer_tax_id,
-  }));
+  return rows.map((r) => {
+    const tax = extractExportTaxFields(r.raw_payload ?? null);
+    // Liste `gross_total` = ödenecek (payable); vergiler dahil ayrı sütun.
+    const payable = tax.payableTotal ?? r.gross_total;
+    const taxInclusive =
+      tax.taxInclusiveTotal ??
+      (tax.withholdingTotal != null && payable != null
+        ? Math.round((payable + tax.withholdingTotal) * 100) / 100
+        : null);
+
+    return {
+      Yön: directionLabel(r.direction ?? ""),
+      "ETTN / Belge No": r.invoice_uuid,
+      "Fatura tarihi": formatTrIssueDate(r.issue_date),
+      Durum: statusLabel(r.status),
+      Para: r.currency ?? "TRY",
+      Matrah: r.net_total,
+      KDV: r.vat_total,
+      "Tevkifat tutarı": tax.withholdingTotal,
+      "İstisna kodu": tax.exemptionCode,
+      "Vergiler dahil toplam": taxInclusive,
+      "Ödenecek tutar": payable,
+      "Cari adı / ünvan": r.customer_name,
+      "Cari VKN/TCKN": r.customer_tax_id,
+    };
+  });
 }
 
-function buildXlsxBuffer(rows: InvoiceFactRow[]): Uint8Array {
+/** @internal test / Excel üretimi */
+export function buildExportSheetRowsForTest(
+  rows: InvoiceFactExportRow[],
+): Record<string, string | number | null>[] {
+  return rowsToSheetData(rows);
+}
+
+function buildXlsxBuffer(rows: InvoiceFactExportRow[]): Uint8Array {
   const sheetData = rowsToSheetData(rows);
   const ws = XLSX.utils.json_to_sheet(sheetData);
   const wb = XLSX.utils.book_new();
@@ -126,7 +152,7 @@ export async function createInvoicesExcelExport(opts: {
   let query = supabase
     .from("invoice_facts")
     .select(
-      "invoice_uuid, direction, issue_date, status, currency, gross_total, vat_total, net_total, customer_tax_id, customer_name",
+      "invoice_uuid, direction, issue_date, status, currency, gross_total, vat_total, net_total, customer_tax_id, customer_name, raw_payload",
     )
     .eq("gib_username", username)
     .eq("direction", direction)
@@ -140,7 +166,7 @@ export async function createInvoicesExcelExport(opts: {
   const { data, error } = await query;
   if (error) throw error;
 
-  const list = (data ?? []) as InvoiceFactRow[];
+  const list = (data ?? []) as InvoiceFactExportRow[];
   if (list.length === 0) {
     throw new Error(
       "Bu tarih aralığında ve filtrelere uyan fatura bulunamadı; Excel oluşturulamadı.",

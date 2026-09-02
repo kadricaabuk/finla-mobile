@@ -8,8 +8,11 @@ export interface ExchangeRateQuote {
   /** Kurun geçerli olduğu tarih (GG/AA/YYYY). */
   rateDate: string
   source: 'TCMB'
-  /** TCMB döviz satış kuru. */
-  rateType: 'forex_selling'
+  /**
+   * TCMB döviz alış kuru (KDV Kanunu m.26 / VUK m.280 — KDV matrahı için
+   * taraflar cari kur belirlememişse alış esas alınır).
+   */
+  rateType: 'forex_buying'
 }
 
 const TCMB_BASE = 'https://www.tcmb.gov.tr/kurlar'
@@ -69,10 +72,11 @@ function extractRateFromXml(
   const block = xml.match(blockRe)?.[1]
   if (!block) return null
 
-  const sellingRaw = block.match(/<ForexSelling>([\d.]+)<\/ForexSelling>/i)?.[1]
-  if (!sellingRaw) return null
-  const selling = Number(sellingRaw)
-  if (!Number.isFinite(selling) || selling <= 0) return null
+  // KDV Kanunu m.26: taraflar cari kur belirlememişse TCMB döviz ALIŞ kuru.
+  const buyingRaw = block.match(/<ForexBuying>([\d.]+)<\/ForexBuying>/i)?.[1]
+  if (!buyingRaw) return null
+  const buying = Number(buyingRaw)
+  if (!Number.isFinite(buying) || buying <= 0) return null
 
   const unitRaw = block.match(/<Unit>(\d+)<\/Unit>/i)?.[1]
   const unit = unitRaw ? Number(unitRaw) : 1
@@ -89,7 +93,15 @@ function extractRateFromXml(
     else if (parseTrDate(tarihAttr)) rateDate = tarihAttr
   }
 
-  return { rate: selling / unit, rateDate }
+  return { rate: buying / unit, rateDate }
+}
+
+/** @internal unit test — TCMB XML'den alış kurunu okur. */
+export function parseTcmbForexBuyingRateForTest(
+  xml: string,
+  currency: SupportedExchangeCurrency,
+): { rate: number; rateDate: string } | null {
+  return extractRateFromXml(xml, currency)
 }
 
 async function fetchTcmbXml(url: string): Promise<string | null> {
@@ -141,7 +153,7 @@ export async function fetchTcmbExchangeRate(
           rate: formatRate(parsed.rate),
           rateDate: parsed.rateDate,
           source: 'TCMB',
-          rateType: 'forex_selling',
+          rateType: 'forex_buying',
         }
         cache.set(cacheKey, { quote, fetchedAt: Date.now() })
         return quote

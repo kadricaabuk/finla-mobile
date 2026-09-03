@@ -1,0 +1,20 @@
+# Navigate to incoming invoices (Gelen Faturalar) via the side menu.
+
+appId: com.finla.app
+---
+- runFlow:
+    when:
+      notVisible:
+        id: "side-menu-incoming-invoices"
+    commands:
+      - tapOn:
+          id: "header-menu"
+- tapOn:
+    id: "side-menu-incoming-invoices"
+- extendedWaitUntil:
+    visible:
+      id: "incoming-invoices-title"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-filter-bu_ay"
+- assertVisible: "Bu Ay"

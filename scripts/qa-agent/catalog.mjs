@@ -61,6 +61,16 @@ export const TEST_CASES = Object.freeze([
     summary: "Log in, open the menu, navigate to Faturalarım (outgoing invoices).",
   },
   {
+    key: "core-incoming-invoices",
+    title: "[Core] Gelen faturalar listesi",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/incoming-invoices.yaml",
+    screens: "login, chat, side menu, incoming invoices",
+    summary:
+      "Log in, open the menu, navigate to Gelen Faturalar, confirm the list screen loaded.",
+  },
+  {
     key: "core-logout",
     title: "[Core] Çıkış",
     testType: "Core",

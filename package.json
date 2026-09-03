@@ -24,6 +24,7 @@
     "maestro:login": "bash scripts/maestro-test.sh .maestro/flows/login.yaml",
     "maestro:smoke": "bash scripts/maestro-test.sh .maestro/flows/smoke.yaml",
     "maestro:chat": "bash scripts/maestro-test.sh .maestro/flows/chat-send.yaml",
+    "maestro:invoice-create": "bash scripts/maestro-test.sh .maestro/flows/invoice-create.yaml",
     "maestro:menu": "bash scripts/maestro-test.sh .maestro/flows/menu.yaml",
     "maestro:invoices": "bash scripts/maestro-test.sh .maestro/flows/invoices.yaml",
     "maestro:logout": "bash scripts/maestro-test.sh .maestro/flows/logout.yaml",

@@ -1,0 +1,37 @@
+# Start an invoice draft via chat, prefer tapping a KDV quick-reply chip when
+# offered, then assert the draft preview/confirm controls appear.
+# Does NOT tap "Onayla ve Kes" (avoids issuing a real GİB invoice).
+
+appId: com.finla.app
+---
+- tapOn:
+    id: "chat-input"
+- inputText: "ABC Yazılım A.Ş. firmasına 1000 TL danışmanlık faturası kesmek istiyorum. KDV oranını varsayma; bana KDV seçeneklerini hızlı yanıt olarak göster ve seçimimi bekle."
+- tapOn:
+    id: "chat-send"
+- extendedWaitUntil:
+    visible:
+      id: "chat-assistant-message"
+    timeout: 180000
+# Model may offer KDV chips; tap a matching quick-reply when present.
+- runFlow:
+    when:
+      visible:
+        id: "chat-quick-reply"
+    commands:
+      - tapOn:
+          id: "chat-quick-reply"
+          text: ".*KDV.*"
+      - extendedWaitUntil:
+          visible:
+            id: "chat-assistant-message"
+          timeout: 180000
+# Draft success = preview + confirm controls (do not issue).
+- extendedWaitUntil:
+    visible:
+      id: "chat-confirm-invoice"
+    timeout: 180000
+- assertVisible:
+    id: "chat-invoice-preview"
+- assertVisible:
+    id: "chat-confirm-invoice"

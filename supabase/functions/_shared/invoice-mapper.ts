@@ -242,6 +242,14 @@ function recipientNameFields(
   return { title: trimmed }
 }
 
+/**
+ * Normalize create_invoice input into a GİB-shaped details object.
+ *
+ * Used only for logging / summarizeGibInvoicePayload — real GİB outbox bodies
+ * are built by buildMysoftInvoiceOutboxBody. Keep line math aligned with
+ * computeLineAmounts so discounted drafts do not mis-report matrah/KDV if this
+ * path is ever reconnected.
+ */
 export function buildInvoiceDetails(input: CreateInvoiceInput) {
   const currency = (input.currency?.trim().toUpperCase() || 'TRY')
   let currencyRate: string | undefined
@@ -255,18 +263,25 @@ export function buildInvoiceDetails(input: CreateInvoiceInput) {
     currencyRate = normalizeCurrencyRate(rawRate)
   }
 
+  validateInvoiceLinePricing(input.items)
+
   const items = input.items.map((item) => {
-    const totalAmount = item.quantity * item.unitPrice
-    const vatAmount = Math.round(totalAmount * item.vatRate) / 100
+    const { taxable, vat } = computeLineAmounts(item)
     return {
       name: item.name,
       quantity: item.quantity,
       unitType: normalizeGibUnit(item.unit),
       unitPrice: item.unitPrice,
-      price: totalAmount,
+      price: taxable,
       VATRate: item.vatRate,
-      VATAmount: vatAmount,
+      VATAmount: vat,
       VATAmountOfTax: 0,
+      ...(typeof item.discountRate === 'number' && item.discountRate > 0
+        ? { discountRate: item.discountRate }
+        : {}),
+      ...(typeof item.discountAmount === 'number' && item.discountAmount > 0
+        ? { discountAmount: item.discountAmount }
+        : {}),
     }
   })
   const grandTotal = items.reduce((s, i) => s + i.price, 0)

@@ -30,7 +30,7 @@ Deno.test("formatPendingInvoiceForPrompt — döviz kuru bekleyen", () => {
       rate: "34.50",
       rate_date: "28/06/2026",
       source: "TCMB",
-      rate_type: "forex_selling",
+      rate_type: "forex_buying",
     },
     request: { buyer_name: "Acme Ltd" },
   });

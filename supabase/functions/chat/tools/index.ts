@@ -610,7 +610,7 @@ export async function executeToolImpl(
               rate: resolvedRate,
               rate_date: invoiceDate ?? "",
               source: providedRate ? "user" : "TCMB",
-              rate_type: "forex_selling",
+              rate_type: "forex_buying",
             },
           }
           : {}),

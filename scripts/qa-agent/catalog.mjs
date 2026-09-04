@@ -43,6 +43,16 @@ export const TEST_CASES = Object.freeze([
     summary: "Log in, send a chat message, wait until the assistant replies.",
   },
   {
+    key: "core-invoice-create",
+    title: "[Core] Sohbet üzerinden fatura oluşturma (KDV oranı seçimi dahil)",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/invoice-create.yaml",
+    screens: "login, chat, invoice creation (KDV chip seçimi), confirmation",
+    summary:
+      "Log in, start invoice creation in chat, tap a KDV quick-reply chip when offered, assert the draft preview/confirm controls appear (does not issue).",
+  },
+  {
     key: "core-menu",
     title: "[Core] Yan menü ve sohbet listesi",
     testType: "Core",

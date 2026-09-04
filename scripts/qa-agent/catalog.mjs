@@ -69,6 +69,16 @@ export const TEST_CASES = Object.freeze([
     screens: "login, chat, logout",
     summary: "Log in, log out, land back on the login screen.",
   },
+  {
+    key: "core-unlock",
+    title: "[Core] Arka plandan dönüşte PIN ile kilit açma",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/unlock.yaml",
+    screens: "unlock, chat",
+    summary:
+      "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

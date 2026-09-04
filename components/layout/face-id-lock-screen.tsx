@@ -45,8 +45,10 @@ export function FaceIdLockScreen({
         ) : null}
         {showPinButton ? (
           <Pressable
+            testID="unlock-pin-login"
             onPress={onPinLogin}
             disabled={pinLoading}
+            accessibilityLabel="PIN ile giriş yap"
             style={({ pressed }) => [
               styles.pinButton,
               pressed && styles.pinButtonPressed,

@@ -16,6 +16,7 @@ import {
 } from "../_shared/mysoft-mapper.ts";
 import {
   assertReturnMatchesOriginal,
+  buildInvoiceDetails,
   computeLineAmounts,
   findIncomingInvoiceByDocNo,
   validateInvoiceLinePricing,
@@ -320,6 +321,48 @@ Deno.test("computeLineAmounts — KDV iskonto sonrası matrahtan", () => {
   });
   assertEquals(withAmount.taxable, 750);
   assertEquals(withAmount.vat, 150);
+});
+
+Deno.test("buildInvoiceDetails — iskonto sonrası matrah/KDV (FIN-38)", () => {
+  const details = buildInvoiceDetails(
+    baseInput({
+      items: [
+        {
+          name: "Danışmanlık hizmeti",
+          quantity: 1,
+          unit: "adet",
+          unitPrice: 1000,
+          vatRate: 20,
+          discountRate: 10,
+        },
+      ],
+    }),
+  );
+  assertEquals(details.grandTotal, 900);
+  assertEquals(details.totalVAT, 180);
+  assertEquals(details.grandTotalInclVAT, 1080);
+  assertEquals(details.paymentTotal, 1080);
+  assertEquals(details.items[0].price, 900);
+  assertEquals(details.items[0].VATAmount, 180);
+  assertEquals(details.items[0].discountRate, 10);
+
+  const withAmount = buildInvoiceDetails(
+    baseInput({
+      items: [
+        {
+          name: "Danışmanlık hizmeti",
+          quantity: 2,
+          unit: "adet",
+          unitPrice: 500,
+          vatRate: 20,
+          discountAmount: 250,
+        },
+      ],
+    }),
+  );
+  assertEquals(withAmount.grandTotal, 750);
+  assertEquals(withAmount.totalVAT, 150);
+  assertEquals(withAmount.items[0].discountAmount, 250);
 });
 
 Deno.test("validateInvoiceLinePricing — iskonto kuralları", () => {

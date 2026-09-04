@@ -49,7 +49,7 @@ describe("selectSuite", () => {
     const selected = selectSuite(TEST_CASES, { cadence: "smoke-core" });
     assert.deepEqual(
       selected.map((entry) => entry.suite).sort(),
-      ["core", "core", "core", "core", "core", "smoke"],
+      ["core", "core", "core", "core", "core", "core", "smoke"],
     );
   });
 

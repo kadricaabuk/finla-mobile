@@ -69,6 +69,16 @@ export const TEST_CASES = Object.freeze([
     screens: "login, chat, logout",
     summary: "Log in, log out, land back on the login screen.",
   },
+  {
+    key: "core-profile",
+    title: "[Core] Profil ekranını açma ve bilgileri görüntüleme",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/profile.yaml",
+    screens: "login, chat, side menu, profile",
+    summary:
+      "Log in, open the side menu, navigate to Profil, wait until profile fields (name/title) render.",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

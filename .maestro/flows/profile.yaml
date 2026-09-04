@@ -1,0 +1,15 @@
+# Profile screen — open from side menu and wait for profile fields.
+#
+# Run: npm run maestro:profile
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-profile.yaml

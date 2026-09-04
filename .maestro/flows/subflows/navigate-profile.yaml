@@ -1,0 +1,20 @@
+# Navigate to Profil via the side menu.
+
+appId: com.finla.app
+---
+- runFlow:
+    when:
+      notVisible:
+        id: "side-menu-profile"
+    commands:
+      - tapOn:
+          id: "header-menu"
+- tapOn:
+    id: "side-menu-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-title"
+    timeout: 60000
+- assertVisible:
+    id: "profile-hero-name"
+- assertVisible: "İletişim"

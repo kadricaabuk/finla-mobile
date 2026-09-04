@@ -1,0 +1,39 @@
+# Unlock via PIN after cold restart (session preserved).
+# Covers unlock.tsx → "PIN ile giriş yap" → phone+PIN → chat.
+#
+# Run: npm run maestro:unlock
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+# Cold restart with session/keychain preserved
+- pressKey: Home
+- stopApp
+- launchApp:
+    clearState: false
+# unlock.tsx (biometric enabled) — use PIN path
+- extendedWaitUntil:
+    visible:
+      id: "unlock-pin-login"
+    timeout: 20000
+    optional: true
+- tapOn:
+    id: "unlock-pin-login"
+    optional: true
+# PIN fallback / PIN button lands on login — re-auth with TEST_* creds
+- runFlow:
+    when:
+      visible:
+        id: "login-password-pin_login"
+    file: subflows/attempt-login.yaml
+    env:
+      TEST_PHONE: ${TEST_PHONE}
+      TEST_PIN: ${TEST_PIN}
+- assertVisible:
+    id: "chat-input"

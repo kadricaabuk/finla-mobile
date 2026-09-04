@@ -1,0 +1,15 @@
+# Incoming invoices list test
+#
+# Run: npm run maestro:incoming-invoices
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-incoming-invoices.yaml

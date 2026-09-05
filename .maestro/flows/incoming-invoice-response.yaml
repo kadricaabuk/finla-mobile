@@ -1,0 +1,61 @@
+# Core: incoming invoice response modal (accept/reject controls).
+#
+# Run: npm run maestro:incoming-invoice-response
+#
+# Opens the response modal and asserts Onayla/Reddet are available.
+# Does NOT submit accept/reject — mutating live inbox invoices on every
+# automated run would be destructive; submission stays a manual QA step.
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-incoming-invoices.yaml
+- tapOn:
+    id: "invoice-filter-bu_yil"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-list-ready"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-row-toggle"
+- tapOn:
+    id: "invoice-row-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-respond-btn"
+    timeout: 60000
+- tapOn:
+    id: "invoice-respond-btn"
+- extendedWaitUntil:
+    visible:
+      id: "incoming-accept-btn"
+    timeout: 60000
+- assertVisible:
+    id: "incoming-reject-btn"
+- assertVisible:
+    id: "incoming-accept-btn"
+- assertVisible: "Onayla"
+- assertVisible: "Reddet"
+# Enter reject mode then cancel — proves both paths without submitting
+- tapOn:
+    id: "incoming-reject-btn"
+- assertVisible: "Red sebebi"
+- assertVisible: "Vazgeç"
+- tapOn: "Vazgeç"
+- assertVisible:
+    id: "incoming-accept-btn"
+- tapOn:
+    id: "incoming-response-close"
+- extendedWaitUntil:
+    notVisible:
+      id: "incoming-accept-btn"
+    timeout: 30000
+- assertVisible:
+    id: "incoming-invoices-title"

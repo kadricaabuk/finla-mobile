@@ -28,6 +28,7 @@
     "maestro:menu": "bash scripts/maestro-test.sh .maestro/flows/menu.yaml",
     "maestro:invoices": "bash scripts/maestro-test.sh .maestro/flows/invoices.yaml",
     "maestro:incoming-invoices": "bash scripts/maestro-test.sh .maestro/flows/incoming-invoices.yaml",
+    "maestro:incoming-invoice-response": "bash scripts/maestro-test.sh .maestro/flows/incoming-invoice-response.yaml",
     "maestro:logout": "bash scripts/maestro-test.sh .maestro/flows/logout.yaml",
     "maestro:unlock": "bash scripts/maestro-test.sh .maestro/flows/unlock.yaml",
     "maestro:test": "bash scripts/maestro-test.sh .maestro/flows/",

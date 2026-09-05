@@ -154,6 +154,7 @@ export function InvoiceRowCard({
   return (
     <View style={styles.card}>
       <Pressable
+        testID="invoice-row-toggle"
         onPress={toggle}
         style={({ pressed }) => [
           styles.cardHeader,
@@ -167,7 +168,7 @@ export function InvoiceRowCard({
           <Text style={styles.buyerName} numberOfLines={1}>
             {counterpartyTitle(item, listDirection)}
           </Text>
-          <Text style={styles.amount}>{formatGibAmount(total)}</Text>
+          <Text testID="invoice-row-amount" style={styles.amount}>{formatGibAmount(total)}</Text>
         </View>
         <View style={styles.cardBottom}>
           <Text style={styles.meta}>
@@ -234,9 +235,11 @@ export function InvoiceRowCard({
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>Brüt: </Text>
-                {typeof detail.gross_total === "number"
-                  ? `${detail.gross_total.toLocaleString("tr-TR")} ${detail.currency}`
-                  : "—"}
+                <Text testID="invoice-detail-gross">
+                  {typeof detail.gross_total === "number"
+                    ? formatGibAmount(detail.gross_total)
+                    : "—"}
+                </Text>
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>ETTN: </Text>

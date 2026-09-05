@@ -47,9 +47,13 @@ describe("catalog", () => {
 describe("selectSuite", () => {
   it("always includes smoke and core for the default cadence", () => {
     const selected = selectSuite(TEST_CASES, { cadence: "smoke-core" });
+    const expected = [
+      ...TEST_CASES.filter((entry) => entry.suite === "smoke").map(() => "smoke"),
+      ...TEST_CASES.filter((entry) => entry.suite === "core").map(() => "core"),
+    ].sort();
     assert.deepEqual(
       selected.map((entry) => entry.suite).sort(),
-      ["core", "core", "core", "core", "core", "core", "smoke"],
+      expected,
     );
   });
 

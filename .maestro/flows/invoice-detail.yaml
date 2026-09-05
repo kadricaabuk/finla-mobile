@@ -1,0 +1,36 @@
+# Core: list row amount matches expanded detail Brüt (FIN-37 regression).
+#
+# Run: npm run maestro:invoice-detail
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-outgoing-invoices.yaml
+# Widen the date window so at least one invoice is likely present
+- tapOn:
+    id: "invoice-filter-bu_yil"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-list-ready"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-row-amount"
+- copyTextFrom:
+    id: "invoice-row-amount"
+- evalScript: ${output.listAmount = maestro.copiedText}
+- tapOn:
+    id: "invoice-row-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-detail-gross"
+    timeout: 60000
+- copyTextFrom:
+    id: "invoice-detail-gross"
+- assertTrue: ${maestro.copiedText == output.listAmount}

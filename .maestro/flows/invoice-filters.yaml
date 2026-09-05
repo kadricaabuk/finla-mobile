@@ -1,0 +1,42 @@
+# Feature: outgoing invoice date filter chips refresh the list.
+#
+# Run: npm run maestro:invoice-filters
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/open-menu.yaml
+- runFlow: subflows/navigate-outgoing-invoices.yaml
+# Default preset is Bu Ay — switch to Geçen Ay and wait for reload
+- tapOn:
+    id: "invoice-filter-gecen_ay"
+- extendedWaitUntil:
+    visible:
+      id: "outgoing-invoices-title"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-filter-gecen_ay"
+- assertVisible: "Geçen Ay"
+# List finished loading: either rows or the empty-period hint
+- extendedWaitUntil:
+    visible:
+      id: "invoice-list-ready"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-list-ready"
+# Switch again to Bu Yıl to confirm filters keep working
+- tapOn:
+    id: "invoice-filter-bu_yil"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-list-ready"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-filter-bu_yil"
+- assertVisible: "Bu Yıl"

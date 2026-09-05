@@ -99,6 +99,16 @@ export const TEST_CASES = Object.freeze([
     summary:
       "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
   },
+  {
+    key: "feature-invoice-filters",
+    title: "[Feature] Giden faturalar listesinde filtreleme",
+    testType: "Feature Test",
+    suite: "feature",
+    flow: ".maestro/flows/invoice-filters.yaml",
+    screens: "login, chat, side menu, outgoing invoices, filter bar",
+    summary:
+      "Log in, navigate to Faturalarım, open the filter bar, apply a filter, verify the list updates accordingly.",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

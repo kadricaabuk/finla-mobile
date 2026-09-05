@@ -177,6 +177,7 @@ export default function InvoicesScreen(props: InvoicesScreenProps = {}) {
         </View>
       ) : (
         <FlatList
+          testID="invoice-list-ready"
           data={invoices}
           keyExtractor={(item, i) => item.ettn ?? String(i)}
           renderItem={({ item }) => (

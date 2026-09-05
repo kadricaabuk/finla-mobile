@@ -99,6 +99,16 @@ export const TEST_CASES = Object.freeze([
     summary:
       "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
   },
+  {
+    key: "core-incoming-response",
+    title: "[Core] Gelen fatura kabul/red akışı",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/incoming-invoice-response.yaml",
+    screens: "login, chat, side menu, incoming invoices, incoming invoice response modal",
+    summary:
+      "Log in, open Gelen Faturalar, open a respondable invoice's response modal, assert Onayla/Reddet controls, cancel without submitting.",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

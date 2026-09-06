@@ -222,9 +222,17 @@ export function InvoicePreviewModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaProvider>
-        <SafeAreaView style={styles.previewScreen} edges={["top", "bottom"]}>
+        <SafeAreaView
+          testID="invoice-preview-modal"
+          style={styles.previewScreen}
+          edges={["top", "bottom"]}
+        >
           <View style={styles.previewHeader}>
-            <Text style={styles.previewHeaderTitle} numberOfLines={1}>
+            <Text
+              testID="invoice-preview-title"
+              style={styles.previewHeaderTitle}
+              numberOfLines={1}
+            >
               {title}
             </Text>
             <View style={styles.previewHeaderButtons}>
@@ -256,6 +264,7 @@ export function InvoicePreviewModal({
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity
+                testID="invoice-preview-close"
                 style={styles.previewHeaderBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 onPress={onClose}
@@ -266,12 +275,12 @@ export function InvoicePreviewModal({
           </View>
 
           {loadingHtml && !hasContent ? (
-            <View style={styles.centered}>
+            <View testID="invoice-preview-loading" style={styles.centered}>
               <ActivityIndicator size="large" color="#000" />
               <Text style={styles.hint}>Önizleme yükleniyor…</Text>
             </View>
           ) : error && !hasContent ? (
-            <View style={styles.centered}>
+            <View testID="invoice-preview-error" style={styles.centered}>
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity
                 style={styles.retryBtn}
@@ -283,6 +292,7 @@ export function InvoicePreviewModal({
             </View>
           ) : html ? (
             <WebView
+              testID="invoice-preview-content"
               source={{ html: injectHtmlViewport(html) }}
               style={styles.previewWebView}
               originWhitelist={["*"]}
@@ -291,6 +301,7 @@ export function InvoicePreviewModal({
             />
           ) : pdfUri ? (
             <WebView
+              testID="invoice-preview-content"
               source={{ uri: pdfUri }}
               style={styles.previewWebView}
               originWhitelist={["*"]}

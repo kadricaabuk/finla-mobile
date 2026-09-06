@@ -1,0 +1,42 @@
+# Face ID lock screen after cold restart, then PIN fallback.
+# Asserts the biometric lock UI (unlock-face-id), then uses
+# "PIN ile giriş yap" — does not require a successful biometric scan.
+#
+# Run: npm run maestro:face-id-unlock
+# Suite: feature (not in smoke-core cadence; needs biometric-capable simulator)
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+# Cold restart with session/keychain preserved → Face ID lock
+- pressKey: Home
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: "unlock-face-id"
+    timeout: 20000
+- assertVisible:
+    id: "unlock-face-id-subtitle"
+- assertVisible:
+    id: "unlock-pin-login"
+# Fall back to PIN (biometric success is not required / not mocked here)
+- tapOn:
+    id: "unlock-pin-login"
+- runFlow:
+    when:
+      visible:
+        id: "login-password-pin_login"
+    file: subflows/attempt-login.yaml
+    env:
+      TEST_PHONE: ${TEST_PHONE}
+      TEST_PIN: ${TEST_PIN}
+- assertVisible:
+    id: "chat-input"

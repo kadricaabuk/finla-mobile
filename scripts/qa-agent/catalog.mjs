@@ -53,6 +53,17 @@ export const TEST_CASES = Object.freeze([
       "Log in, start invoice creation in chat, tap a KDV quick-reply chip when offered, assert the draft preview/confirm controls appear (does not issue).",
   },
   {
+    key: "core-invoice-issue",
+    title: "[Core] Fatura oluşturma - önizleme ve gönderim onayı",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/invoice-preview.yaml",
+    screens:
+      "login, chat, invoice creation (KDV chip), confirm controls, invoice preview modal (PDF/HTML)",
+    summary:
+      "Log in, start invoice creation in chat, open the draft via Faturayı Gör, assert the invoice preview modal renders (HTML/PDF), then close — does not tap Onayla ve Kes / GİB issue.",
+  },
+  {
     key: "core-menu",
     title: "[Core] Yan menü ve sohbet listesi",
     testType: "Core",

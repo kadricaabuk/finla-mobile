@@ -1,0 +1,47 @@
+# Complete the onboarding carousel (no skip) → login.
+# Swipes/advances through all slides, taps Başla on the last slide,
+# asserts the login screen.
+#
+# Run: npm run maestro:onboarding-carousel
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-carousel"
+    timeout: 15000
+- assertVisible:
+    id: "onboarding-title-chat"
+- assertVisible: "Konuşarak fatura kes"
+- assertVisible:
+    id: "onboarding-next"
+# Slide 1 → 2
+- tapOn:
+    id: "onboarding-next"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-title-outgoing"
+    timeout: 10000
+- assertVisible: "Faturalarını yönet"
+# Slide 2 → 3
+- tapOn:
+    id: "onboarding-next"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-title-incoming"
+    timeout: 10000
+- assertVisible: "Gelen faturaları yanıtla"
+- assertVisible: "Başla"
+# Finish → login
+- tapOn:
+    id: "onboarding-next"
+- extendedWaitUntil:
+    visible:
+      id: "login-phone"
+    timeout: 15000
+- assertVisible:
+    id: "login-phone"

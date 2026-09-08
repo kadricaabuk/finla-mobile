@@ -12,7 +12,7 @@ import {
 import {
   applyFactFiltersToQuery,
   parseAmount,
-  syncFactsForSession,
+  ensureFactsSyncedForSession,
   toIsoDate,
   type InvoiceDirection,
 } from "../../_shared/invoice-facts.ts";
@@ -810,7 +810,7 @@ export async function executeToolImpl(
         };
       }
 
-      await syncFactsForSession(
+      await ensureFactsSyncedForSession(
         supabase,
         session,
         range.startDate,
@@ -879,7 +879,7 @@ export async function executeToolImpl(
       const direction = parseToolDirection(input);
       const explicitRange = resolveDateRange(input, userMessage, "none");
       const syncRange = explicitRange ?? resolveLatestInvoiceSyncRange();
-      await syncFactsForSession(
+      await ensureFactsSyncedForSession(
         supabase,
         session,
         syncRange.startDate,

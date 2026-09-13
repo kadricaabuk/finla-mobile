@@ -2,7 +2,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js";
 import type { FinlaSession } from "./session-auth.ts";
 import {
   applyFactFiltersToQuery,
-  syncFactsForSession,
+  ensureFactsSyncedForSession,
   toIsoDate,
   type InvoiceDirection,
   type InvoiceSearchFilters,
@@ -66,7 +66,7 @@ export async function queryInvoiceTotals(
   direction: InvoiceDirection,
   filters: InvoiceSearchFilters = {},
 ): Promise<InvoiceTotalsBucket> {
-  await syncFactsForSession(
+  await ensureFactsSyncedForSession(
     supabase,
     session,
     startDate,

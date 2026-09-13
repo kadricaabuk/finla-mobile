@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Render / bundle output (remotion render → out/, remotion bundle → build/)
+/out/
+/build/
+/dist/
+
+# Secrets — never commit any env file
+.env
+.env*
+!.env.example
+
+# Unredacted source documents (real invoice data). Only commit redacted derivatives.
+public/*.pdf
+# Redacted render still shows provider branding + real VKN/MERSİS/TCKN — keep local only
+public/inbox-invoice.png
+
+# Python helper (scripts/redact-inbox-invoice.py)
+__pycache__/
+*.pyc
+.venv/
+
+# Logs & OS/editor noise
+*.log
+npm-debug.log*
+.DS_Store
+.vscode/
+.idea/

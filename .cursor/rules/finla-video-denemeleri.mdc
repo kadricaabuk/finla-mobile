@@ -1,0 +1,27 @@
+---
+description: finla Remotion marketing videos (intro / PR / social). Apply when working under video/.
+globs: video/**
+alwaysApply: false
+---
+
+# finla video denemeleri
+
+Standing brief for `video/` (standalone Remotion; do not mix with Expo metro). Full spec: personal store `finla-video-denemeleri.md`.
+
+## Approved
+
+- Intro: 18s, 1920×1080 @30fps, 16:9 only. No hands. Slogan: **Muhasebenin yeni dili.**
+- Real app chat flow on the phone: örnek promptlar → typewriter → thinking → taslak fatura → `Onayla ve Kes` → başarı. Buttons: `Taslağı Gör` + `Onayla ve Kes` (no Reddet).
+- Copy and colors must match the app (`content.ts` / `tokens.ts`). Never show "Mysoft". Never hardcode scene text inside components — zod `defaultProps` + Studio.
+- All motion is a function of `useCurrentFrame()`. No `setInterval` / animation `useState`.
+- `timeline.ts` is the only frame source (scene beats + camera). Camera transforms the whole stage, not just the phone.
+- Do not render `finla-intro.mp4` unless the user asks.
+
+## Tooling
+
+- Remotion MCP is deprecated. Use `/remotion-docs` and official Remotion skills (`remotion-markup`, `remotion-studio`, `remotion-render`, `remotion-interactivity`).
+- Generic `remotion-motion-graphics` craft rules yield to this brief when they conflict (app tokens, CSS stage, accurate chat UI).
+
+## Verify
+
+`cd video && npx remotion still FinlaIntro out/f.png --frame=<n> --overwrite` at key beats; grep Turkish strings against `use-chat-stream-display.ts` / `invoice-mapper.ts` / `chat-input.tsx`.

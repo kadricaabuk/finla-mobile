@@ -102,6 +102,7 @@ finla/
 │   │   └── mysoft-smoke/          # Mysoft integration smoke test
 │   └── migrations/                # 001_initial → 012_… then timestamped (enable_rls, …)
 ├── ds-bundle/ + finla-web-ds/     # Web design system (monochrome-first tokens; see ds-bundle/README.md)
+├── video/                         # Remotion marketing videos (standalone project; see video/README.md)
 ├── patches/                       # patch-package diffs (expo-sharing)
 ├── plugins/                       # Expo config plugins (with-android-apk-name.js)
 ├── .maestro/                      # E2E flows + subflows

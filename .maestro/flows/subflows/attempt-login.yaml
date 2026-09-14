@@ -1,4 +1,4 @@
-# Single login attempt. Env: TEST_PHONE (5XXXXXXXXX), TEST_PIN (6 digits).
+# Single login attempt. Env: MAESTRO_TEST_PHONE (5XXXXXXXXX), MAESTRO_TEST_PIN (6 digits) from the root .env.
 # Staging user must exist with tenant linked and onboarding complete.
 
 appId: com.finla.app
@@ -18,11 +18,11 @@ appId: com.finla.app
 - tapOn:
     id: "login-phone"
 - eraseText
-- inputText: ${TEST_PHONE}
+- inputText: ${MAESTRO_TEST_PHONE}
 - tapOn:
     id: "login-password-pin_login"
 - eraseText
-- inputText: ${TEST_PIN}
+- inputText: ${MAESTRO_TEST_PIN}
 - tapOn:
     id: "login-submit"
 - tapOn:

@@ -11,8 +11,7 @@
 ## Maestro (local dry-run, optional)
 
 ```bash
-cp .maestro/.env.example .maestro/.env   # set TEST_PHONE / TEST_PIN for staging
-# .env.local → staging EXPO_PUBLIC_* (see .env.example)
+cp .env.example .env   # staging EXPO_PUBLIC_* + MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN
 npm run ios
 npm run maestro:smoke
 ```

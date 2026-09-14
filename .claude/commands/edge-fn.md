@@ -7,4 +7,4 @@ I'm working on a Supabase Edge Function: $ARGUMENTS
 - Deno runtime: `npm:` prefix for npm packages, `deno.land/x` for Deno packages
 - Auth: `getSubjectFromAuthHeader(req)` — returns the username, throws `SessionAuthError`
 - Logging: wrap any payload logging in `sanitizeForDevLog` (`shared/log-sanitize.ts`); never log Mysoft credentials or tokens
-- Test locally with `npm run supabase:functions` (serves with `supabase/.env`)
+- Test locally with `npm run supabase:functions` (secrets from the root `.env` via `[edge_runtime.secrets]`)

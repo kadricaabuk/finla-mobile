@@ -12,7 +12,7 @@
 | Test | `https://edocumentapi.mytest.tr` | `https://eportal.mytest.tr/?#!/login` |
 | Canlı | `https://edocumentapi.mysoft.com.tr` | (Mysoft tarafından bildirilir) |
 
-Finla yerel env: `supabase/.env` → `MYSOFT_API_URL`, `MYSOFT_USERNAME`, `MYSOFT_PASSWORD`, `MYSOFT_MOCK`
+Finla yerel env: kök `.env` → `MYSOFT_API_URL`, `MYSOFT_USERNAME`, `MYSOFT_PASSWORD`, `MYSOFT_MOCK`
 
 ---
 
@@ -39,7 +39,7 @@ Authorization: Bearer <access_token>
 
 | Katman | Kimlik | Nerede |
 |--------|--------|--------|
-| **A — İş ortağı API** | `MYSOFT_USERNAME` / `MYSOFT_PASSWORD` | `supabase/.env` (sunucu) |
+| **A — İş ortağı API** | `MYSOFT_USERNAME` / `MYSOFT_PASSWORD` | kök `.env` (sunucu) |
 | **B — Müşteri Finla** | Telefon + şifre (OTP sadece kayıtta) | `users` tablosu + JWT |
 | **C — Fatura kapsamı** | `tenantIdentifierNumber` = müşteri VKN/TCKN | JWT `tenant_vkn` claim |
 
@@ -311,7 +311,7 @@ Beklenen: `list_probe.row_count > 0` (portal ile aynı tenant VKN ise)
 2. **Tarih aralığı** — UI filtresi (Bu Ay / Bu Yıl) fatura tarihini kapsıyor mu?
 3. **Liste parse** — `extractMysoftListRows` iç içe `data` anahtarlarını çözer; smoke'ta `payload_keys` ve `sample_row` kontrol et
 4. **Mock mod** — `MYSOFT_MOCK=false` ve creds dolu olmalı
-5. **Functions env** — `npm run supabase:functions` çalışıyor olmalı (`--env-file supabase/.env`)
+5. **Functions env** — `npm run supabase:functions` çalışıyor olmalı (secret'lar kök `.env` → `supabase/config.toml` `[edge_runtime.secrets]`)
 
 Portalda hangi firmayı görüyorsan, Finla kayıt sonrası **aynı VKN'yi** `link-tenant` adımında bağla.
 
@@ -350,8 +350,8 @@ Yanlış VKN bağlandıysa: çıkış yap → tekrar giriş → profil veya `lin
 
 | Dosya | Rol |
 |-------|-----|
-| `supabase/.env` | `MYSOFT_*`, `AUTH_*` (commit edilmez) |
-| `.env.local` | `EXPO_PUBLIC_*` |
+| `.env` | `EXPO_PUBLIC_*`, `MYSOFT_*`, `AUTH_*`, `MAESTRO_*` (commit edilmez) |
+| `.env.local` | `.env` üzerine yerel override |
 | `supabase/functions/auth/` | Telefon OTP + şifre |
 | `supabase/functions/invoices/` | Liste API |
 | `supabase/functions/mysoft-smoke/` | Bağlantı + liste debug |

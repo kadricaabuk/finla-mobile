@@ -167,7 +167,7 @@ export default function ProfileScreen() {
           onPress={openMenu}
           accessibilityLabel="Menü"
         />
-        <Text style={styles.title} numberOfLines={1}>
+        <Text testID="profile-title" style={styles.title} numberOfLines={1}>
           Profil
         </Text>
         <View style={styles.headerRight} />
@@ -212,7 +212,9 @@ export default function ProfileScreen() {
                 {displayName(profile).charAt(0).toUpperCase()}
               </Text>
             </View>
-            <Text style={styles.heroName}>{displayName(profile)}</Text>
+            <Text testID="profile-hero-name" style={styles.heroName}>
+              {displayName(profile)}
+            </Text>
             {profile.taxIDOrTRID?.trim() ? (
               <Text style={styles.heroSub}>
                 VKN/TCKN: {profile.taxIDOrTRID.trim()}

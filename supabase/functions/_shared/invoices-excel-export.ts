@@ -4,7 +4,7 @@ import { sha256Hex } from "./crypto.ts";
 import { extractExportTaxFields } from "./invoice-export-tax-fields.ts";
 import {
   applyFactFiltersToQuery,
-  syncFactsForSession,
+  ensureFactsSyncedForSession,
   toIsoDate,
   type InvoiceExportFilters,
   type InvoiceFactRow,
@@ -141,7 +141,7 @@ export async function createInvoicesExcelExport(opts: {
     opts;
   const username = session.userId;
 
-  await syncFactsForSession(
+  await ensureFactsSyncedForSession(
     supabase,
     session,
     startDateTr,

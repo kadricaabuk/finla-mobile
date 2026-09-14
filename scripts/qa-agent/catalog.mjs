@@ -11,7 +11,12 @@ export const QA_TEAM = "Finla";
 export const FOUNDER_TASKS_PROJECT = "Founder Tasks";
 
 export const RESULT_LABELS = Object.freeze(["Pass", "Fail", "Flaky"]);
-export const TEST_TYPE_LABELS = Object.freeze(["Smoke", "Core", "Flow", "Feature Test"]);
+export const TEST_TYPE_LABELS = Object.freeze([
+  "Smoke",
+  "Core",
+  "Flow",
+  "Feature Test",
+]);
 
 export const TEST_CASES = Object.freeze([
   {
@@ -31,7 +36,8 @@ export const TEST_CASES = Object.freeze([
     suite: "core",
     flow: ".maestro/flows/login.yaml",
     screens: "onboarding skip, login, chat",
-    summary: "Launch, skip onboarding, log in with TEST_PHONE / TEST_PIN, reach the chat input.",
+    summary:
+      "Launch, skip onboarding, log in with MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN, reach the chat input.",
   },
   {
     key: "core-chat",
@@ -41,6 +47,16 @@ export const TEST_CASES = Object.freeze([
     flow: ".maestro/flows/chat-send.yaml",
     screens: "login, chat",
     summary: "Log in, send a chat message, wait until the assistant replies.",
+  },
+  {
+    key: "core-invoice-create",
+    title: "[Core] Sohbet üzerinden fatura oluşturma (KDV oranı seçimi dahil)",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/invoice-create.yaml",
+    screens: "login, chat, invoice creation (KDV chip seçimi), confirmation",
+    summary:
+      "Log in, start invoice creation in chat, tap a KDV quick-reply chip when offered, assert the draft preview/confirm controls appear (does not issue).",
   },
   {
     key: "core-menu",
@@ -58,7 +74,18 @@ export const TEST_CASES = Object.freeze([
     suite: "core",
     flow: ".maestro/flows/invoices.yaml",
     screens: "login, chat, side menu, outgoing invoices",
-    summary: "Log in, open the menu, navigate to Faturalarım (outgoing invoices).",
+    summary:
+      "Log in, open the menu, navigate to Faturalarım (outgoing invoices).",
+  },
+  {
+    key: "core-incoming-invoices",
+    title: "[Core] Gelen faturalar listesi",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/incoming-invoices.yaml",
+    screens: "login, chat, side menu, incoming invoices",
+    summary:
+      "Log in, open the menu, navigate to Gelen Faturalar, confirm the list screen loaded.",
   },
   {
     key: "core-logout",
@@ -70,14 +97,14 @@ export const TEST_CASES = Object.freeze([
     summary: "Log in, log out, land back on the login screen.",
   },
   {
-    key: "core-profile",
-    title: "[Core] Profil ekranını açma ve bilgileri görüntüleme",
+    key: "core-unlock",
+    title: "[Core] Arka plandan dönüşte PIN ile kilit açma",
     testType: "Core",
     suite: "core",
-    flow: ".maestro/flows/profile.yaml",
-    screens: "login, chat, side menu, profile",
+    flow: ".maestro/flows/unlock.yaml",
+    screens: "unlock, chat",
     summary:
-      "Log in, open the side menu, navigate to Profil, wait until profile fields (name/title) render.",
+      "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
   },
 ]);
 

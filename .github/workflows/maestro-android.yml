@@ -1,0 +1,93 @@
+# Maestro E2E on Android — release APK on the homelab emulator.
+#
+# Runner: self-hosted homelab (MacBookPro12,1 · macOS 12 · Intel · 8 GB RAM), registered
+# with labels: self-hosted, macOS, X64, finla, android (runs as a LaunchAgent via svc.sh).
+# Needs: Node 22, JDK 17, Android SDK (platform 36, build-tools 36, NDK 27.1), an x86_64
+# AVD (default `test_emulator`), Maestro CLI.
+#
+# macOS 12 cannot run Node 24, so every step here is plain shell — no JS actions
+# (actions/checkout, upload-artifact, … are moving to Node 24).
+#
+# Secrets (`develop` environment): EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY,
+#   EXPO_PUBLIC_API_BASE_URL, TEST_PHONE, TEST_PIN
+# Variables (optional): ANDROID_AVD
+
+name: Maestro Android
+
+on:
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      flows:
+        description: Flow file or directory to run
+        required: false
+        default: .maestro/flows/smoke.yaml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maestro-android-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  maestro-android:
+    name: maestro-android
+    runs-on: [self-hosted, macOS, X64, finla, android]
+    timeout-minutes: 150
+    environment: develop
+
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          git init -q .
+          git remote remove origin 2>/dev/null || true
+          git remote add origin "https://github.com/${REPO}.git"
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c http.extraheader="$AUTH" fetch --depth 1 --no-tags origin "$SHA"
+          git checkout -q --force FETCH_HEAD
+          git clean -ffdxq
+          git log -1 --format='Checked out %h %s'
+
+      - name: Write staging .env
+        env:
+          SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          API_BASE_URL: ${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
+        run: |
+          umask 077
+          {
+            printf 'EXPO_PUBLIC_SUPABASE_URL=%s\n' "$SUPABASE_URL"
+            printf 'EXPO_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$SUPABASE_ANON_KEY"
+            printf 'EXPO_PUBLIC_API_BASE_URL=%s\n' "$API_BASE_URL"
+          } > .env
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build release APK and run Maestro
+        env:
+          MAESTRO_TEST_PHONE: ${{ secrets.TEST_PHONE }}
+          MAESTRO_TEST_PIN: ${{ secrets.TEST_PIN }}
+          ANDROID_AVD: ${{ vars.ANDROID_AVD || 'test_emulator' }}
+          MAESTRO_FLOWS: ${{ inputs.flows || '.maestro/flows/smoke.yaml' }}
+        run: bash scripts/ci-maestro-android.sh
+
+      - name: Show Maestro debug output
+        if: failure()
+        run: |
+          latest="$(ls -td ~/.maestro/tests/*/ 2>/dev/null | head -n 1)"
+          echo "Maestro debug output on the runner: ${latest:-none}"
+          if [ -n "$latest" ]; then
+            find "$latest" -name maestro.log -exec tail -n 80 {} \;
+          fi
+
+      - name: Remove .env
+        if: always()
+        run: rm -f .env

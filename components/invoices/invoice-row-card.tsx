@@ -11,7 +11,7 @@ import type { InvoiceDetail } from "@/types/chat-actions";
 import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -60,6 +60,7 @@ export function InvoiceRowCard({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const loadedKeyRef = useRef<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     const uuid =
@@ -78,13 +79,15 @@ export function InvoiceRowCard({
         direction: listDirection === "incoming" ? "incoming" : "outgoing",
       });
       setDetail(res.invoice ?? null);
+      loadedKeyRef.current = `${uuid}:${item.onayDurumu ?? ""}`;
     } catch (err) {
       setDetail(null);
       setDetailError(userFacingApiError(err));
+      loadedKeyRef.current = null;
     } finally {
       setDetailLoading(false);
     }
-  }, [item.ettn, listDirection]);
+  }, [item.ettn, item.onayDurumu, listDirection]);
 
   const toggle = useCallback(() => {
     setExpanded((was) => !was);
@@ -92,6 +95,12 @@ export function InvoiceRowCard({
 
   useEffect(() => {
     if (!expanded) return;
+    const uuid =
+      typeof item.ettn === "string" && item.ettn.trim().length > 0
+        ? item.ettn.trim()
+        : null;
+    const key = uuid ? `${uuid}:${item.onayDurumu ?? ""}` : null;
+    if (key && key === loadedKeyRef.current) return;
     setDetail(null);
     setDetailError(null);
     void loadDetail();

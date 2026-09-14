@@ -1,7 +1,7 @@
 # P0 smoke test: login → chat → menu → invoices → logout
 #
 # Run: npm run maestro:smoke
-# Requires: TEST_PHONE / TEST_PIN in .maestro/.env (staging user, tenant linked)
+# Requires: MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN in the root .env (staging user, tenant linked)
 
 appId: com.finla.app
 ---

@@ -1,4 +1,4 @@
-# Login smoke test — phone + PIN (TEST_PHONE / TEST_PIN in .maestro/.env or -e flags).
+# Login smoke test — phone + PIN (MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN in the root .env).
 #
 # Run: npm run maestro:login
 

@@ -176,6 +176,7 @@ export function ChatMessageBubble({
             }
           >
             <TouchableOpacity
+              testID="chat-invoice-preview"
               style={styles.actionButton}
               activeOpacity={0.8}
               onPress={() => onOpenInvoicePreview(msg.action)}
@@ -186,6 +187,7 @@ export function ChatMessageBubble({
             </TouchableOpacity>
             {msg.action.preview?.issued === false ? (
               <TouchableOpacity
+                testID="chat-confirm-invoice"
                 style={[
                   styles.actionConfirmButton,
                   confirmingDraftUuid === msg.action.preview?.uuid &&

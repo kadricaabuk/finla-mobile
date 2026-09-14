@@ -11,7 +11,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.toLowerCase());
 }
 
-/** `.env.local` içindeki 127.0.0.1 / localhost yerel Supabase gateway'i mi? */
+/** Is the env URL a loopback address (the local Supabase gateway)? */
 export function isLocalLoopbackEnvUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;
@@ -51,18 +51,11 @@ function getMetroBundledHost(): string | null {
   return null;
 }
 
-function getEnvDevApiHost(): string | null {
-  const raw = process.env.EXPO_PUBLIC_DEV_API_HOST?.trim();
-  if (!raw || isLoopbackHostname(raw)) return null;
-  return raw;
-}
-
 /**
- * Yerel Supabase için cihaza ulaşılabilir host.
- * - Metro LAN IP verdiyse: onu kullan
- * - Android emülatör: 10.0.2.2 (host makine köprüsü)
- * - iOS fiziksel cihaz: EXPO_PUBLIC_DEV_API_HOST (scripts/resolve-local-expo-env.sh → en0)
- * - iOS simülatör: 127.0.0.1
+ * Device-reachable host for the local Supabase stack.
+ * - Metro reported a LAN IP (physical device): use it
+ * - Android emulator: 10.0.2.2 (host machine bridge)
+ * - iOS simulator: 127.0.0.1
  */
 export function resolveLocalDevHost(): string {
   const metroHost = getMetroBundledHost();
@@ -71,10 +64,6 @@ export function resolveLocalDevHost(): string {
   }
   if (Platform.OS === "android") {
     return "10.0.2.2";
-  }
-  const envHost = getEnvDevApiHost();
-  if (envHost) {
-    return envHost;
   }
   return "127.0.0.1";
 }

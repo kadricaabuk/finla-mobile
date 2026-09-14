@@ -32,11 +32,86 @@ export type InvoiceFactRow = {
   customer_name: string | null;
 };
 
+/** Align with client list cache (`lib/invoices-cache.ts`). */
+export const INVOICE_FACTS_FRESHNESS_TTL_MS = 5 * 60 * 1000;
+
+type EdgeRuntimeLike = { waitUntil: (promise: Promise<unknown>) => void };
+
+/** Run work after the response when EdgeRuntime.waitUntil exists; else fire-and-forget. */
+export function scheduleBackgroundWork(work: Promise<unknown>): void {
+  const runtime = (globalThis as { EdgeRuntime?: EdgeRuntimeLike }).EdgeRuntime;
+  const guarded = work.catch((err) => {
+    console.error("background work failed", err);
+  });
+  if (runtime && typeof runtime.waitUntil === "function") {
+    runtime.waitUntil(guarded);
+    return;
+  }
+  void guarded;
+}
+
+export function stampSyncedAt<T extends Record<string, unknown>>(
+  rows: T[],
+  syncedAt: string = new Date().toISOString(),
+): Array<T & { synced_at: string }> {
+  return rows.map((row) => ({ ...row, synced_at: syncedAt }));
+}
+
+/** Pure freshness decision — exported for unit tests. */
+export function isSyncedAtFresh(
+  syncedAt: string | null | undefined,
+  nowMs: number,
+  maxAgeMs: number = INVOICE_FACTS_FRESHNESS_TTL_MS,
+): boolean {
+  if (!syncedAt || typeof syncedAt !== "string") return false;
+  const age = nowMs - new Date(syncedAt).getTime();
+  return Number.isFinite(age) && age >= 0 && age < maxAgeMs;
+}
+
 /** GG/AA/YYYY → YYYY-MM-DD */
 export function toIsoDate(trDate: string): string {
   const m = trDate.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) throw new Error("Tarih formatı GG/AA/YYYY olmalıdır.");
   return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+export async function upsertInvoiceFacts(
+  supabase: SupabaseClient,
+  facts: Array<Record<string, unknown>>,
+): Promise<void> {
+  if (facts.length === 0) return;
+  const { error } = await supabase.from("invoice_facts").upsert(
+    stampSyncedAt(facts),
+    { onConflict: "gib_username,invoice_uuid,direction" },
+  );
+  if (error) throw error;
+}
+
+/** True when at least one fact in range has synced_at within the TTL window. */
+export async function areInvoiceFactsFresh(
+  supabase: SupabaseClient,
+  scopeKey: string,
+  direction: InvoiceDirection,
+  startDate: string,
+  endDate: string,
+  maxAgeMs: number = INVOICE_FACTS_FRESHNESS_TTL_MS,
+  nowMs: number = Date.now(),
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("invoice_facts")
+    .select("synced_at")
+    .eq("gib_username", scopeKey)
+    .eq("direction", direction)
+    .gte("issue_date", toIsoDate(startDate))
+    .lte("issue_date", toIsoDate(endDate))
+    .order("synced_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const syncedAt =
+    data && data.length > 0
+      ? (data[0] as { synced_at?: string | null }).synced_at
+      : null;
+  return isSyncedAtFresh(syncedAt, nowMs, maxAgeMs);
 }
 
 export async function syncFactsForSession(
@@ -62,11 +137,36 @@ export async function syncFactsForSession(
     user_id: session.userId,
     tenant_vkn: session.tenantVkn ?? null,
   }));
-  if (facts.length === 0) return;
-  const { error } = await supabase.from("invoice_facts").upsert(facts, {
-    onConflict: "gib_username,invoice_uuid,direction",
-  });
-  if (error) throw error;
+  await upsertInvoiceFacts(supabase, facts);
+}
+
+/**
+ * Skip Mysoft when invoice_facts for the range were synced recently (stale-while-revalidate).
+ * Empty ranges always re-sync — there is no watermark row without facts.
+ */
+export async function ensureFactsSyncedForSession(
+  supabase: SupabaseClient,
+  session: FinlaSession,
+  startDate: string,
+  endDate: string,
+  factDirection: InvoiceDirection,
+): Promise<"skipped" | "synced"> {
+  const fresh = await areInvoiceFactsFresh(
+    supabase,
+    session.userId,
+    factDirection,
+    startDate,
+    endDate,
+  );
+  if (fresh) return "skipped";
+  await syncFactsForSession(
+    supabase,
+    session,
+    startDate,
+    endDate,
+    factDirection,
+  );
+  return "synced";
 }
 
 /** Supabase query builder üzerinde ortak filtreler. */

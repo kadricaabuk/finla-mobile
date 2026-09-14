@@ -1,24 +1,24 @@
-# Maestro P0 smoke on a self-hosted macOS runner.
+# Maestro P0 smoke on iOS — needs a self-hosted macOS runner with Xcode 16.1+.
+#
+# Manual only for now: the homelab runner is macOS 12 (no Xcode 16) and runs Android
+# instead — see maestro-android.yml.
 #
 # One-time Mac setup:
 #   1. Install Xcode, Node 22, Maestro (`brew install mobile-dev-inc/tap/maestro`)
 #   2. GitHub repo → Settings → Actions → Runners → New self-hosted runner → macOS
-#      Use labels: self-hosted, macOS, finla
+#      Use labels: self-hosted, macOS, finla, ios
 #   3. Add secrets (repo or `develop` environment):
 #        EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_API_BASE_URL
 #        TEST_PHONE, TEST_PIN  (staging user with tenant + onboarding complete)
-#   4. Branch protection on `develop`: require checks lint, deno-tests, maestro-smoke
+#   4. Branch protection on `develop`: require checks lint, deno-tests, maestro-android
 #
 # Staging prerequisites:
 #   - feature_flags.outgoingInvoices enabled
 #   - Mysoft mock or sandbox credentials on the Supabase project
 
-name: Maestro smoke
+name: Maestro smoke (iOS)
 
 on:
-  pull_request:
-    branches:
-      - develop
   workflow_dispatch:
 
 concurrency:
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   maestro-smoke:
     name: maestro-smoke
-    runs-on: [self-hosted, macOS, finla]
+    runs-on: [self-hosted, macOS, finla, ios]
     timeout-minutes: 90
     environment: develop
 
@@ -40,9 +40,9 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Write staging Expo env
+      - name: Write staging .env
         run: |
-          cat > .env.local <<EOF
+          cat > .env <<EOF
           EXPO_PUBLIC_SUPABASE_URL=${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
@@ -53,8 +53,8 @@ jobs:
 
       - name: Build iOS app and run Maestro smoke
         env:
-          TEST_PHONE: ${{ secrets.TEST_PHONE }}
-          TEST_PIN: ${{ secrets.TEST_PIN }}
+          MAESTRO_TEST_PHONE: ${{ secrets.TEST_PHONE }}
+          MAESTRO_TEST_PIN: ${{ secrets.TEST_PIN }}
           MAESTRO_SIMULATOR: ${{ vars.MAESTRO_SIMULATOR }}
         run: bash scripts/ci-maestro-ios.sh
 

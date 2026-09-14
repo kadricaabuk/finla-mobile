@@ -296,7 +296,7 @@ if (( DO_RUN_TESTS )); then
   while IFS=$'\t' read -r flow title; do
     echo "Running $flow"
     set +e
-    bash "$ROOT/scripts/maestro-test.sh" "$flow"
+    npm --prefix "$ROOT" run --silent maestro -- test "$flow"
     status=$?
     set -e
     log_dir="$(latest_maestro_log)"

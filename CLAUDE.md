@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Last verified: 2026-07-09 @ 544bef1 — run `npm run docs:check` after moving/deleting files; bump this line when updating this doc.
+Last verified: 2026-09-13 @ 6d0ce6f — run `npm run docs:check` after moving/deleting files; bump this line when updating this doc.
 
 ## Stack
 - **Mobile:** React Native 0.81 + Expo 54 + expo-router (file-based routing)
@@ -14,15 +14,14 @@ Last verified: 2026-07-09 @ 544bef1 — run `npm run docs:check` after moving/de
 
 ## Commands
 ```bash
-npm start                  # Expo dev server (resolves local API host first)
+npm start                  # Expo dev server
 npm run ios                # iOS simulator
 npm run ios:clean          # iOS with cleared cache
 npm run android            # Android emulator
 npm run lint               # ESLint
 
-npm run supabase:bootstrap # First-time: init supabase/.env + start local stack
 npm run supabase:start     # Local Supabase (validates env first)
-npm run supabase:functions # Serve Edge Functions locally (with supabase/.env)
+npm run supabase:functions # Serve Edge Functions locally (secrets: root .env)
 npm run supabase:db:reset  # Re-apply all migrations from scratch
 npm run supabase:status:env  # Print local URLs/keys as env lines
 npx supabase migration new <name>   # New migration (timestamped)
@@ -34,9 +33,10 @@ npm run test:chat          # Deno unit tests: intents, date-range, invoice-workf
 npm run test:auth-lock     # Deno unit test: lib/app-lock-policy.test.ts
 npm run maestro:smoke      # E2E P0 path: login → chat → menu → invoices → logout
 npm run maestro:test       # All Maestro flows in .maestro/flows/
+npm run maestro:studio     # Maestro Studio with MAESTRO_* loaded from .env
 ```
 - Manual QA checklist lives in `QA.md` (update Pass/Fail columns as you test).
-- Maestro needs the app on a simulator (`npm run ios`) and `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` (copy from `.maestro/.env.example`; staging user with tenant linked and onboarding complete).
+- Maestro needs the app on a simulator (`npm run ios`) and `MAESTRO_TEST_PHONE` / `MAESTRO_TEST_PIN` in the root `.env` (staging user with tenant linked and onboarding complete).
 - CI E2E: `scripts/ci-maestro-ios.sh`.
 
 ## Architecture
@@ -136,7 +136,7 @@ finla/
 
 ## Security
 This is a fintech app. Treat everything below as hard rules.
-- **Secrets in `supabase/.env`** (never committed; template: `supabase/.env.example`):
+- **Secrets in the root `.env`** (never committed; template: `.env.example`; `.env.local` overrides it). Deno only sees keys listed under `[edge_runtime.secrets]` in `supabase/config.toml` — add new ones there. Never give a secret the `EXPO_PUBLIC_` prefix: those are inlined into the app bundle:
   - `AUTH_MASTER_KEY` — encrypts credentials at rest (credentials vault)
   - `AUTH_JWT_SECRET` — signs custom access tokens
   - `AUTH_REFRESH_PEPPER` — peppers refresh-token hashes
@@ -144,7 +144,7 @@ This is a fintech app. Treat everything below as hard rules.
   - `AUTH_OTP_DEBUG`, `MYSOFT_MOCK` — local development only
 - **Never log secrets:** any log of request/response payloads MUST go through `sanitizeForDevLog` from `shared/log-sanitize.ts`. It redacts keys matching `/password|sms_code|token|cred|secret|refresh/i`, plus `code`, and truncates `html`/`preview_html`. Never `console.log` Mysoft credentials/tokens or include them in error messages.
 - **"Mysoft" is never shown in the UI.** User-facing copy refers to the e-invoice provider generically.
-- **Never commit `.env*` files** (`.env.local`, `supabase/.env` hold real keys).
+- **Never commit `.env*` files** (`.env`, `.env.local` hold real keys).
 - Two-token model (see Gotchas): the anon key is public, but the `x-finla-access-token` value is a real credential — same logging rules apply.
 
 ## Native / Release
@@ -158,7 +158,8 @@ This is a fintech app. Treat everything below as hard rules.
 - **invoice_facts upsert:** raw Mysoft invoice data is mapped to the GİB-shaped form and written to `invoice_facts`; filtering happens there.
 - **API imports:** UI gets `callApi` via `@/lib/supabase` (re-export of `lib/api.ts`). `callEdgeFunction` is deprecated — use `callApi` directly.
 - **Local Supabase:** Edge Functions can't be tested without `npm run supabase:start`. `edge_runtime policy = "oneshot"` — every request boots a fresh worker.
-- **Dev API host:** `.env.local` uses `127.0.0.1`; `lib/dev-api-host.ts` rewrites it per device (iOS sim → 127.0.0.1, Android emu → 10.0.2.2, physical device → `EXPO_PUBLIC_DEV_API_HOST` set by `scripts/resolve-local-expo-env.sh`).
+- **Dev API host:** `.env.local` uses `127.0.0.1`; `lib/dev-api-host.ts` rewrites it per device (iOS sim → 127.0.0.1, Android emu → 10.0.2.2, physical device → Metro host LAN IP).
+- **Env layout:** one root env for app, Supabase CLI and Maestro. `.env` = remote defaults (TestFlight, Maestro on a Release build); optional `.env.local` overrides any key. Expo and the Supabase CLI load both automatically; `npm run maestro*` sources both. Expo loads `.env.local` in production builds too — rename it before a TestFlight build.
 - **enable_signup = false:** Supabase auth is disabled; auth is fully custom phone+OTP.
 - **Language convention:** all code comments/JSDoc/docs in English; UI strings stay Turkish.
 - **Duplicated action contract:** the chat-action payload types exist twice — `types/chat-actions.ts` (RN) and `supabase/functions/_shared/chat-types.ts` (Deno). Any payload change must update both.

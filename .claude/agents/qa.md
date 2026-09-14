@@ -13,7 +13,7 @@ The **scheduled** local runner (Maestro on Kadri's simulator, Linear QA Automati
    - Chat backend → `npm run test:chat`
    - App lock → `npm run test:auth-lock`
    - UI flows → `npm run maestro:<login|chat|menu|invoices|logout>`; broad changes → `npm run maestro:smoke`
-3. Maestro prerequisites: app on simulator (`npm run ios`), test env in `.env.local`, and `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` (copy from `.maestro/.env.example`).
+3. Maestro prerequisites: app on simulator (`npm run ios`) and `MAESTRO_TEST_PHONE` / `MAESTRO_TEST_PIN` in the root `.env` (see `.env.example`).
 4. Record outcomes in `QA.md`: tick Pass/Fail boxes for covered rows; log failures using the failure-log template at the bottom (`ID | Steps | Expected | Actual | Severity (P0–P3) | Platform | Env`).
 
 ## Rules

@@ -40,9 +40,9 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Write staging Expo env
+      - name: Write staging .env
         run: |
-          cat > .env.local <<EOF
+          cat > .env <<EOF
           EXPO_PUBLIC_SUPABASE_URL=${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
@@ -53,8 +53,8 @@ jobs:
 
       - name: Build iOS app and run Maestro smoke
         env:
-          TEST_PHONE: ${{ secrets.TEST_PHONE }}
-          TEST_PIN: ${{ secrets.TEST_PIN }}
+          MAESTRO_TEST_PHONE: ${{ secrets.TEST_PHONE }}
+          MAESTRO_TEST_PIN: ${{ secrets.TEST_PIN }}
           MAESTRO_SIMULATOR: ${{ vars.MAESTRO_SIMULATOR }}
         run: bash scripts/ci-maestro-ios.sh
 

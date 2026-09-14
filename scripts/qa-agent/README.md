@@ -64,8 +64,8 @@ later; do not move the existing six.
    node scripts/telegram/cli.mjs whoami --agent qa
    ```
 
-4. **Maestro**: CLI installed, iOS simulator available, `.maestro/.env` with
-   `TEST_PHONE` / `TEST_PIN`, app already installed on the simulator. This
+4. **Maestro**: CLI installed, iOS simulator available, `MAESTRO_TEST_PHONE` /
+   `MAESTRO_TEST_PIN` in the root `.env`, app already installed on the simulator. This
    runner does **not** `expo prebuild` / `expo run:ios` on every tick (CI does
    that in `scripts/ci-maestro-ios.sh`). `--boot-simulator` only boots
    `MAESTRO_SIMULATOR` (default `iPhone 16`).

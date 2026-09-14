@@ -16,7 +16,7 @@ Living QA document for manual and automated testing. Update **Pass / Fail / Note
 
 ## Automated tests (Maestro)
 
-Prerequisites: app on simulator (`npm run ios`), test env in `.env.local`, Maestro installed (`maestro --version`).
+Prerequisites: app on simulator (`npm run ios`), env in the root `.env` (`.env.local` overrides), Maestro installed (`maestro --version`).
 
 | Command | What it covers |
 |---------|----------------|
@@ -28,7 +28,7 @@ Prerequisites: app on simulator (`npm run ios`), test env in `.env.local`, Maest
 | `npm run maestro:logout` | Login + logout → login screen |
 | `npm run maestro:test` | All flows in `.maestro/flows/` (slower; runs each file) |
 
-**Test credentials:** `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` (copy from [`.maestro/.env.example`](.maestro/.env.example); CI passes them via `-e` flags). The staging user must exist with tenant linked and onboarding complete.
+**Test credentials:** `MAESTRO_TEST_PHONE` / `MAESTRO_TEST_PIN` in the root `.env` (see [`.env.example`](.env.example); CI sets them from GitHub secrets). The staging user must exist with tenant linked and onboarding complete.
 
 **Scheduled local runner (Linear + Telegram):** catalog, suite selection, and the Maestro/Linear/Telegram orchestrator live in [`scripts/qa-agent/README.md`](scripts/qa-agent/README.md). `npm run qa:run` prints the suite (dry-run). Linear project [QA Automation](https://linear.app/finla-mobile/project/qa-automation-d6e32112c762) holds one persistent issue per test case. Do not move existing YAML out of `.maestro/flows/` — CI smoke still points there.
 
@@ -61,11 +61,11 @@ Debug output on failure: `~/.maestro/tests/<timestamp>/` (screenshots + logs).
 
 | ID | Check | Pass | Fail | Auto | Notes |
 |----|-------|------|------|------|-------|
-| 0.1 | `.env.local` has `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_SUPABASE_URL` | ☐ | ☐ | — | See [`.env.example`](.env.example) |
+| 0.1 | `.env` (or `.env.local`) has `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_SUPABASE_URL` | ☐ | ☐ | — | See [`.env.example`](.env.example) |
 | 0.2 | Local Supabase running: `npm run supabase:start` | ☐ | ☐ | — | |
-| 0.3 | Edge Functions running: `npm run supabase:functions` | ☐ | ☐ | — | Needs `supabase/.env` |
+| 0.3 | Edge Functions running: `npm run supabase:functions` | ☐ | ☐ | — | Secrets from root `.env` |
 | 0.4 | App starts: `npm start` → iOS simulator or device | ☐ | ☐ | — | |
-| 0.5 | Test user available (phone + PIN, tenant linked, onboarding complete) | ☐ | ☐ | — | `TEST_PHONE` / `TEST_PIN` in `.maestro/.env` |
+| 0.5 | Test user available (phone + PIN, tenant linked, onboarding complete) | ☐ | ☐ | — | `MAESTRO_TEST_PHONE` / `MAESTRO_TEST_PIN` in `.env` |
 
 ### Test matrix
 

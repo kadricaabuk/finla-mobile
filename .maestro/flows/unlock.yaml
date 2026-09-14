@@ -26,14 +26,11 @@ appId: com.finla.app
 - tapOn:
     id: "unlock-pin-login"
     optional: true
-# PIN fallback / PIN button lands on login — re-auth with TEST_* creds
+# PIN fallback / PIN button lands on login — re-auth with MAESTRO_TEST_* creds
 - runFlow:
     when:
       visible:
         id: "login-password-pin_login"
     file: subflows/attempt-login.yaml
-    env:
-      TEST_PHONE: ${TEST_PHONE}
-      TEST_PIN: ${TEST_PIN}
 - assertVisible:
     id: "chat-input"

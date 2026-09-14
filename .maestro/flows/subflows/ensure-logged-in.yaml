@@ -1,4 +1,5 @@
-# Skip onboarding, then log in with TEST_PHONE / TEST_PIN from Maestro env (-e flags).
+# Skip onboarding, then log in with MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN.
+# The Maestro CLI injects MAESTRO_* shell vars into flows; `npm run maestro*` sources them from the root .env.
 
 appId: com.finla.app
 ---
@@ -8,8 +9,5 @@ appId: com.finla.app
       notVisible:
         id: "chat-input"
     file: attempt-login.yaml
-    env:
-      TEST_PHONE: ${TEST_PHONE}
-      TEST_PIN: ${TEST_PIN}
 - assertVisible:
     id: "chat-input"

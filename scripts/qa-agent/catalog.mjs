@@ -31,7 +31,7 @@ export const TEST_CASES = Object.freeze([
     suite: "core",
     flow: ".maestro/flows/login.yaml",
     screens: "onboarding skip, login, chat",
-    summary: "Launch, skip onboarding, log in with TEST_PHONE / TEST_PIN, reach the chat input.",
+    summary: "Launch, skip onboarding, log in with MAESTRO_TEST_PHONE / MAESTRO_TEST_PIN, reach the chat input.",
   },
   {
     key: "core-chat",

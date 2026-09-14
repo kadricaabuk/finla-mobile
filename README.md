@@ -15,15 +15,15 @@ AI-assisted e-invoicing app for Turkish freelancers and small businesses. Users 
 ```bash
 npm install                      # also applies patches/ via patch-package
 
-cp .env.example .env.local       # Expo env (see comments in the file)
-npm run supabase:bootstrap       # init supabase/.env + start local Supabase
+cp .env.example .env             # one env for app, Supabase, Maestro (see comments)
+npm run supabase:start           # start local Supabase
 npm run supabase:status:env      # copy local anon key/url into .env.local
 
 npm run supabase:functions       # serve Edge Functions (separate terminal)
 npm run ios                      # build & run on iOS simulator
 ```
 
-Backend secrets live in `supabase/.env` (template: `supabase/.env.example`). Never commit any `.env*` file.
+All env — app, Edge Function secrets, Maestro credentials — lives in the root `.env` (template: `.env.example`); an optional `.env.local` overrides it. Never commit any `.env*` file.
 
 ## Testing
 

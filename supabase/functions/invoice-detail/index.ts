@@ -6,6 +6,7 @@ import {
 } from '../_shared/invoice-provider/index.ts'
 import { isMockMode } from '../_shared/invoice-provider/mock-provider.ts'
 import { fetchMysoftIncomingInvoiceDetail } from '../_shared/mysoft-invoice-detail.ts'
+import { parseTotalsFromHtml } from '../_shared/parse-invoice-html-totals.ts'
 import { requireFinlaSession, SessionAuthError } from '../_shared/session-auth.ts'
 
 const supabase = createClient(
@@ -28,30 +29,6 @@ type InvoiceDetailRow = {
 function isBadDisplayName(name: string | null | undefined): boolean {
   if (!name?.trim()) return true
   return name.trim().startsWith('urn:mail:')
-}
-
-function parseMoney(input: string): number | null {
-  const cleaned = input.replace(/[^\d,.-]/g, '').trim()
-  if (!cleaned) return null
-  const normalized = cleaned.includes(',')
-    ? cleaned.replace(/\./g, '').replace(',', '.')
-    : cleaned
-  const n = Number(normalized)
-  return Number.isFinite(n) ? n : null
-}
-
-function parseTotalsFromHtml(html: string) {
-  const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
-  const pick = (label: string): number | null => {
-    const rx = new RegExp(`${label}[\\s\\S]{0,40}?([\\d\\.,]+)\\s*TL`, 'i')
-    const m = plain.match(rx)
-    return m ? parseMoney(m[1]) : null
-  }
-  return {
-    net: pick('Mal Hizmet Toplam Tutar'),
-    vat: pick('Hesaplanan KDV'),
-    gross: pick('Vergiler Dahil Toplam Tutar'),
-  }
 }
 
 async function loadFactFromDb(

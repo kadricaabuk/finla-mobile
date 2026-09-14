@@ -3,7 +3,8 @@ import { createClient } from 'npm:@supabase/supabase-js'
 import {
   filterGibInvoicesByFacts,
   filterInvoiceFacts,
-  syncFactsForSession,
+  scheduleBackgroundWork,
+  upsertInvoiceFacts,
   type InvoiceFactRow,
 } from '../_shared/invoice-facts.ts'
 import { mapInvoicesToFacts } from '../_shared/invoice-mapper.ts'
@@ -56,11 +57,14 @@ Deno.serve(async (req: Request) => {
       user_id: session.userId,
       tenant_vkn: session.tenantVkn ?? null,
     }))
+
+    // Do not block the client on Postgres upsert — filter from Mysoft rows in memory.
     if (facts.length > 0) {
-      const { error: upsertError } = await supabase
-        .from('invoice_facts')
-        .upsert(facts, { onConflict: 'gib_username,invoice_uuid,direction' })
-      if (upsertError) console.error('invoice_facts upsert failed', upsertError)
+      scheduleBackgroundWork(
+        upsertInvoiceFacts(supabase, facts).catch((upsertError) => {
+          console.error('invoice_facts upsert failed', upsertError)
+        }),
+      )
     }
 
     const filters = { customerName, amountGte, amountEq }

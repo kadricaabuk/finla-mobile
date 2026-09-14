@@ -1,16 +1,21 @@
-import { clearLegacyCredentials, saveTokens } from "@/lib/session";
 import {
-  offerBiometricSetupAfterAuth,
-  setBiometricEnabled,
-  getBiometricEnabled,
-} from "@/lib/biometric-auth";
+  consumePinFallbackReauth,
+  refreshAppLockSession,
+  unlockAppLockSession,
+} from "@/contexts/app-lock-context";
 import {
   resolvePostLoginRoute,
   shouldClearBiometricOnPinFallbackReauth,
   shouldClearBiometricOnSetupDecline,
 } from "@/lib/app-lock-policy";
-import { consumePinFallbackReauth, refreshAppLockSession, unlockAppLockSession } from "@/contexts/app-lock-context";
 import { logAuthLock } from "@/lib/auth-lock-dev-log";
+import {
+  getBiometricEnabled,
+  offerBiometricSetupAfterAuth,
+  setBiometricEnabled,
+} from "@/lib/biometric-auth";
+import { clearLegacyCredentials, saveTokens } from "@/lib/session";
+import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
 import {
   authLinkTenant,
   authRequestOtp,
@@ -19,7 +24,6 @@ import {
   loginRequest,
   userFacingApiError,
 } from "@/lib/supabase";
-import { claimSplashHandoff, releaseNativeSplash } from "@/lib/splash-handoff";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
@@ -102,7 +106,7 @@ function CodeField({
   secure?: boolean;
   testID?: string;
   autoFocus?: boolean;
-  textContentType?: "oneTimeCode" | "password" | "newPassword";
+  textContentType?: "none" | "oneTimeCode" | "password" | "newPassword";
   inputRef?: React.RefObject<TextInput | null>;
 }) {
   const internalInputRef = useRef<TextInput>(null);
@@ -111,7 +115,7 @@ function CodeField({
   const activeIndex = Math.min(value.length, 5);
 
   return (
-    <Pressable onPress={() => inputRef.current?.focus()}>
+    <Pressable accessible={false} onPress={() => inputRef.current?.focus()}>
       <View style={styles.codeRow}>
         {Array.from({ length: 6 }).map((_, i) => {
           const char = value[i];
@@ -146,7 +150,7 @@ function CodeField({
         maxLength={6}
         autoFocus={autoFocus}
         caretHidden
-        textContentType={textContentType}
+        textContentType={textContentType ?? "none"}
         autoComplete={textContentType === "oneTimeCode" ? "sms-otp" : "off"}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
@@ -660,11 +664,11 @@ export default function LoginScreen() {
               <View style={styles.field}>
                 <Text style={styles.label}>PIN</Text>
                 <CodeField
-                  testID="login-password"
+                  testID="login-password-pin_login"
                   value={password}
                   onChange={setPassword}
                   secure
-                  textContentType="password"
+                  textContentType="none"
                 />
               </View>
             )}
@@ -682,7 +686,7 @@ export default function LoginScreen() {
                     }}
                     secure
                     autoFocus
-                    textContentType="newPassword"
+                    textContentType="none"
                   />
                 </View>
                 <View style={styles.field}>
@@ -691,7 +695,7 @@ export default function LoginScreen() {
                     value={passwordConfirm}
                     onChange={setPasswordConfirm}
                     secure
-                    textContentType="newPassword"
+                    textContentType="none"
                     inputRef={confirmPinInputRef}
                   />
                 </View>
@@ -949,7 +953,8 @@ const styles = StyleSheet.create({
   },
   codeHiddenInput: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0,
+    // Maestro/XCUITest treat opacity:0 as not hittable; 0.01 stays invisible.
+    opacity: 0.01,
   },
   devHintChip: {
     alignSelf: "flex-start",

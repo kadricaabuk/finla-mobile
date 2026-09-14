@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.finla.qa-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kadri/Desktop/projects/finla/scripts/qa-agent/run.sh</string>
+    <string>--pull</string>
+    <string>--seed</string>
+    <string>--suite</string>
+    <string>smoke-core</string>
+    <string>--boot-simulator</string>
+    <string>--run-tests</string>
+    <string>--report</string>
+    <string>--telegram</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kadri/Desktop/projects/finla</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/kadri</string>
+    <key>QA_WORKTREE</key>
+    <string>/Users/kadri/Desktop/projects/finla-qa</string>
+    <key>QA_REMOTE</key>
+    <string>finla-mobile</string>
+    <key>QA_ENV_FILE</key>
+    <string>/Users/kadri/.finla/qa.env</string>
+    <key>MAESTRO_SIMULATOR</key>
+    <string>REPLACE_WITH_SIMULATOR_UDID</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>11</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>16</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/Users/kadri/.finla/qa/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kadri/.finla/qa/launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+</dict>
+</plist>

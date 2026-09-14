@@ -11,7 +11,7 @@ import type { InvoiceDetail } from "@/types/chat-actions";
 import type { GIBInvoice, InvoiceListDirection } from "@/types/gib-invoice";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -46,8 +46,7 @@ export function InvoiceRowCard({
   onOpenPreview,
   onOpenIncomingResponse,
 }: InvoiceRowCardProps) {
-  const total =
-    item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
+  const total = item.vergilerDahilToplamTutar ?? item.malhizmetToplamTutari;
   const statusLabel =
     listDirection === "incoming"
       ? normalizeIncomingDisplayStatus(item.onayDurumu ?? "")
@@ -61,6 +60,7 @@ export function InvoiceRowCard({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const loadedKeyRef = useRef<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     const uuid =
@@ -79,13 +79,15 @@ export function InvoiceRowCard({
         direction: listDirection === "incoming" ? "incoming" : "outgoing",
       });
       setDetail(res.invoice ?? null);
+      loadedKeyRef.current = `${uuid}:${item.onayDurumu ?? ""}`;
     } catch (err) {
       setDetail(null);
       setDetailError(userFacingApiError(err));
+      loadedKeyRef.current = null;
     } finally {
       setDetailLoading(false);
     }
-  }, [item.ettn, listDirection]);
+  }, [item.ettn, item.onayDurumu, listDirection]);
 
   const toggle = useCallback(() => {
     setExpanded((was) => !was);
@@ -93,6 +95,12 @@ export function InvoiceRowCard({
 
   useEffect(() => {
     if (!expanded) return;
+    const uuid =
+      typeof item.ettn === "string" && item.ettn.trim().length > 0
+        ? item.ettn.trim()
+        : null;
+    const key = uuid ? `${uuid}:${item.onayDurumu ?? ""}` : null;
+    if (key && key === loadedKeyRef.current) return;
     setDetail(null);
     setDetailError(null);
     void loadDetail();
@@ -176,10 +184,10 @@ export function InvoiceRowCard({
             {item.belgeNumarasi ? `  ·  ${item.belgeNumarasi}` : ""}
           </Text>
           <View style={styles.cardBottomRight}>
-            <View style={[styles.statusBadge, { backgroundColor: color + "20" }]}>
-              <Text style={[styles.statusText, { color }]}>
-                {statusLabel}
-              </Text>
+            <View
+              style={[styles.statusBadge, { backgroundColor: color + "20" }]}
+            >
+              <Text style={[styles.statusText, { color }]}>{statusLabel}</Text>
             </View>
             <Ionicons
               name={expanded ? "chevron-up" : "chevron-down"}
@@ -213,7 +221,9 @@ export function InvoiceRowCard({
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>Durum: </Text>
-                {prettyInvoiceStatus(detail.status, { direction: listDirection })}
+                {prettyInvoiceStatus(detail.status, {
+                  direction: listDirection,
+                })}
               </Text>
               <Text style={styles.detailLine}>
                 <Text style={styles.detailLabel}>VKN/TCKN: </Text>
@@ -252,12 +262,16 @@ export function InvoiceRowCard({
               accessibilityRole="button"
               accessibilityLabel="Faturayı onayla veya reddet"
             >
-              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={20}
+                color="#fff"
+              />
               <Text style={styles.respondBtnText}>Yanıt Ver</Text>
             </TouchableOpacity>
           ) : null}
 
-          {showPreviewOnly ? (
+          {showPreviewOnly && !detailLoading ? (
             <TouchableOpacity
               style={styles.previewBtn}
               onPress={openPreview}
@@ -356,6 +370,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
+    padding: 16,
+    justifyContent: "center",
   },
   detailMuted: {
     fontSize: 13,

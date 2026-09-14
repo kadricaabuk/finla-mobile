@@ -10,11 +10,13 @@ import {
 } from "../_shared/gib-tax-codes.ts";
 import {
   buildMysoftInvoiceOutboxBody,
+  classifyMysoftOutboxDocument,
   isForeignBuyerCountry,
   mapMysoftGibAccount,
 } from "../_shared/mysoft-mapper.ts";
 import {
   assertReturnMatchesOriginal,
+  buildInvoiceDetails,
   computeLineAmounts,
   findIncomingInvoiceByDocNo,
   validateInvoiceLinePricing,
@@ -47,6 +49,23 @@ Deno.test("validateInvoiceTaxFields — KDV %0 istisna kodu zorunlu", () => {
     Error,
     "istisna kodu zorunlu",
   );
+});
+
+Deno.test("validateInvoiceTaxFields — yürürlükteki KDV oranları kabul", () => {
+  for (const vatRate of [1, 10, 20] as const) {
+    validateInvoiceTaxFields([{ vatRate }]);
+  }
+  validateInvoiceTaxFields([{ vatRate: 0, vatExemptionCode: "302" }]);
+});
+
+Deno.test("validateInvoiceTaxFields — eski/geçersiz KDV oranları reddedilir", () => {
+  for (const vatRate of [8, 18, 5, 19, 21, -1, 100, 10.5, NaN]) {
+    assertThrows(
+      () => validateInvoiceTaxFields([{ vatRate }]),
+      Error,
+      "Geçersiz KDV oranı",
+    );
+  }
 });
 
 Deno.test("validateInvoiceTaxFields — bilinmeyen kodlar reddedilir", () => {
@@ -304,6 +323,48 @@ Deno.test("computeLineAmounts — KDV iskonto sonrası matrahtan", () => {
   assertEquals(withAmount.vat, 150);
 });
 
+Deno.test("buildInvoiceDetails — iskonto sonrası matrah/KDV (FIN-38)", () => {
+  const details = buildInvoiceDetails(
+    baseInput({
+      items: [
+        {
+          name: "Danışmanlık hizmeti",
+          quantity: 1,
+          unit: "adet",
+          unitPrice: 1000,
+          vatRate: 20,
+          discountRate: 10,
+        },
+      ],
+    }),
+  );
+  assertEquals(details.grandTotal, 900);
+  assertEquals(details.totalVAT, 180);
+  assertEquals(details.grandTotalInclVAT, 1080);
+  assertEquals(details.paymentTotal, 1080);
+  assertEquals(details.items[0].price, 900);
+  assertEquals(details.items[0].VATAmount, 180);
+  assertEquals(details.items[0].discountRate, 10);
+
+  const withAmount = buildInvoiceDetails(
+    baseInput({
+      items: [
+        {
+          name: "Danışmanlık hizmeti",
+          quantity: 2,
+          unit: "adet",
+          unitPrice: 500,
+          vatRate: 20,
+          discountAmount: 250,
+        },
+      ],
+    }),
+  );
+  assertEquals(withAmount.grandTotal, 750);
+  assertEquals(withAmount.totalVAT, 150);
+  assertEquals(withAmount.items[0].discountAmount, 250);
+});
+
 Deno.test("validateInvoiceLinePricing — iskonto kuralları", () => {
   const base = { name: "x", quantity: 1, unit: "adet", unitPrice: 100, vatRate: 20 };
   assertThrows(
@@ -558,4 +619,29 @@ Deno.test("assertReturnMatchesOriginal — VKN, tutar ve para birimi kontrolü",
     grossTotal: 2360,
     currency: "TRY",
   });
+});
+
+Deno.test("classifyMysoftOutboxDocument — e-Arşiv / e-Fatura / unknown", () => {
+  assertEquals(
+    classifyMysoftOutboxDocument({ eDocumentType: "EARSIVFATURA" }),
+    "earsiv",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ data: { profile: "EARSIVFATURA" } }),
+    "earsiv",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ eDocumentType: "EFATURA" }),
+    "efatura",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ profile: "TEMELFATURA" }),
+    "efatura",
+  );
+  assertEquals(
+    classifyMysoftOutboxDocument({ belgeTuru: "TICARIFATURA" }),
+    "efatura",
+  );
+  assertEquals(classifyMysoftOutboxDocument({ status: "Sent" }), "unknown");
+  assertEquals(classifyMysoftOutboxDocument(null), "unknown");
 });

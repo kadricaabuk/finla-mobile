@@ -18,6 +18,7 @@ import {
   mysoftListQueryDateRange,
   pickMysoftCompanyRow,
   trDateToMysoftDate,
+  classifyMysoftOutboxDocument,
 } from '../mysoft-mapper.ts'
 import {
   fetchTenantMysoftAliases,
@@ -401,13 +402,51 @@ export const mysoftInvoiceProvider: InvoiceProvider = {
 
   async cancelInvoice(ctx, ettn, reason) {
     const tenantVkn = requireTenantVkn(ctx)
+    const invoiceEttn = ettn.trim()
+    if (!invoiceEttn) {
+      throw new Error('İptal için fatura ETTN numarası gerekli.')
+    }
+
+    // Mysoft yalnızca e-Arşiv iptali sunar (`cancelEArchiveInvoice`).
+    // e-Fatura iptali ayrı süreç (GİB İptal/İtiraz Portalı); yanlış endpoint
+    // çağrısı geçerli belge bırakabilir → belge türünü doğrulamadan iptal etme.
+    let statusPayload: unknown
+    try {
+      statusPayload = await mysoftRequest<unknown>(
+        '/api/InvoiceOutbox/getInvoiceOutboxStatus',
+        {
+          method: 'GET',
+          query: {
+            invoiceETTN: invoiceEttn,
+            tenantIdentifierNumber: tenantVkn,
+          },
+        },
+      )
+    } catch {
+      throw new Error(
+        'Fatura türü doğrulanamadı; iptal yapılmadı. ETTN doğru mu kontrol et veya biraz sonra tekrar dene.',
+      )
+    }
+
+    const kind = classifyMysoftOutboxDocument(statusPayload)
+    if (kind === 'efatura') {
+      throw new Error(
+        'Bu belge e-Fatura. e-Fatura iptali e-Arşiv iptalinden farklıdır ve GİB e-Fatura İptal/İtiraz Portalı üzerinden (alıcının onayıyla) yapılır; uygulamadan iptal edilemez. Mali müşavirine danış.',
+      )
+    }
+    if (kind !== 'earsiv') {
+      throw new Error(
+        'Belge türü (e-Fatura / e-Arşiv) belirlenemediği için iptal yapılmadı. Yanlış endpoint ile e-Fatura iptali riski engellendi.',
+      )
+    }
+
     const cancelDate = new Date().toISOString().slice(0, 10)
     return mysoftRequest<unknown>(
       '/api/InvoiceOutbox/cancelEArchiveInvoice',
       {
         method: 'GET',
         query: {
-          invoiceETTN: ettn,
+          invoiceETTN: invoiceEttn,
           cancelDate,
           cancelType: 'PORTAL',
           cancelNote: reason,

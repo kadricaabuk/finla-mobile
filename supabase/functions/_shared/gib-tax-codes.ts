@@ -6,6 +6,19 @@
  * değişikliklerinde bu tablo güncellenmelidir.
  */
 
+/**
+ * Temmuz 2023'ten beri yürürlükteki KDV oranları (2023/7346 sayılı
+ * Cumhurbaşkanı Kararı): genel %20, indirimli %10 ve %1; %0 yalnızca
+ * istisna koduyla. Eski oranlar (%18, %8 vb.) reddedilmelidir.
+ */
+export const VALID_KDV_RATES = [0, 1, 10, 20] as const
+
+export type ValidKdvRate = (typeof VALID_KDV_RATES)[number]
+
+export function isValidKdvRate(rate: number): rate is ValidKdvRate {
+  return (VALID_KDV_RATES as readonly number[]).includes(rate)
+}
+
 export interface TevkifatCode {
   code: string
   name: string
@@ -339,6 +352,12 @@ export function validateInvoiceTaxFields(items: InvoiceTaxLineInput[]): {
   for (const item of items) {
     const exemptionCode = item.vatExemptionCode?.trim()
     const withholdingCode = item.withholdingCode?.trim()
+
+    if (!Number.isFinite(item.vatRate) || !isValidKdvRate(item.vatRate)) {
+      throw new Error(
+        `Geçersiz KDV oranı: ${item.vatRate}. Yürürlükteki oranlar %0, %1, %10 veya %20 olmalıdır (Temmuz 2023+).`,
+      )
+    }
 
     if (item.vatRate === 0) {
       if (!exemptionCode) {

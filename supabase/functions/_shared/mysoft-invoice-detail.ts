@@ -87,21 +87,28 @@ export function mapMysoftInboxModelToDetail(
       ? (model.legalMonetaryTotal as Record<string, unknown>)
       : {}
 
-  const gross =
-    typeof monetary.payableAmount === 'number'
-      ? monetary.payableAmount
-      : typeof monetary.taxInclusiveAmount === 'number'
-        ? monetary.taxInclusiveAmount
-        : null
+  const taxInclusive =
+    typeof monetary.taxInclusiveAmount === 'number'
+      ? monetary.taxInclusiveAmount
+      : null
+  const payable =
+    typeof monetary.payableAmount === 'number' ? monetary.payableAmount : null
+  // Liste ile aynı: gross = ödenecek (tevkifat sonrası); yoksa vergiler dahil.
+  const gross = payable ?? taxInclusive
   const net =
     typeof monetary.taxExclusiveAmount === 'number'
       ? monetary.taxExclusiveAmount
       : typeof monetary.lineExtensionAmount === 'number'
         ? monetary.lineExtensionAmount
         : null
+  // KDV = hesaplanan vergi; payable−net tevkifatlı faturalarda yanlıştır.
   const vat =
     taxAmountFromModel(model) ??
-    (gross !== null && net !== null ? gross - net : null)
+    (taxInclusive !== null && net !== null
+      ? taxInclusive - net
+      : payable === null && gross !== null && net !== null
+      ? gross - net
+      : null)
 
   return {
     invoice_uuid: invoiceUuid,

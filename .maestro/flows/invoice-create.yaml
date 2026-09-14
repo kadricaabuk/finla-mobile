@@ -1,0 +1,14 @@
+# Chat invoice creation (incl. KDV chip when offered)
+#
+# Run: npm run maestro:invoice-create
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/create-invoice-via-chat.yaml

@@ -39,6 +39,21 @@ enabled = true
 policy = "oneshot"
 inspector_port = 8083
 
+# Edge Function env for the local runtime (`supabase start` and `supabase functions serve`).
+# env(...) resolves from the root .env, with .env.local overriding it — the Supabase CLI
+# loads both. Add every new Deno.env key here. The hosted project uses dashboard secrets.
+[edge_runtime.secrets]
+AUTH_MASTER_KEY = "env(AUTH_MASTER_KEY)"
+AUTH_JWT_SECRET = "env(AUTH_JWT_SECRET)"
+AUTH_REFRESH_PEPPER = "env(AUTH_REFRESH_PEPPER)"
+AUTH_OTP_DEBUG = "env(AUTH_OTP_DEBUG)"
+MYSOFT_MOCK = "env(MYSOFT_MOCK)"
+MYSOFT_API_URL = "env(MYSOFT_API_URL)"
+MYSOFT_USERNAME = "env(MYSOFT_USERNAME)"
+MYSOFT_PASSWORD = "env(MYSOFT_PASSWORD)"
+ANTHROPIC_API_KEY = "env(ANTHROPIC_API_KEY)"
+FINLA_STREAM_TOOL_LOGS = "env(FINLA_STREAM_TOOL_LOGS)"
+
 # Auth / refresh — Expo yanlış anon key ile gelse bile gateway'de patlamasın (yerel + hosted karışımı).
 [functions.auth]
 verify_jwt = false

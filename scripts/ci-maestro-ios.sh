@@ -18,13 +18,13 @@ if ! command -v xcrun >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -f .env.local ]]; then
-  echo ".env.local missing — CI must write staging EXPO_PUBLIC_* values before this script runs." >&2
+if [[ ! -f .env ]]; then
+  echo ".env missing — CI must write staging EXPO_PUBLIC_* values before this script runs." >&2
   exit 1
 fi
 
-if [[ -z "${TEST_PHONE:-}" || -z "${TEST_PIN:-}" ]]; then
-  echo "TEST_PHONE and TEST_PIN must be set (Maestro login credentials for staging)." >&2
+if [[ -z "${MAESTRO_TEST_PHONE:-}" || -z "${MAESTRO_TEST_PIN:-}" ]]; then
+  echo "MAESTRO_TEST_PHONE and MAESTRO_TEST_PIN must be set (Maestro login credentials for staging)." >&2
   exit 1
 fi
 
@@ -42,6 +42,5 @@ npx expo run:ios \
   --non-interactive
 
 echo "Running Maestro smoke…"
-maestro test .maestro/flows/smoke.yaml \
-  -e "TEST_PHONE=${TEST_PHONE}" \
-  -e "TEST_PIN=${TEST_PIN}"
+# MAESTRO_* env vars are injected into the flows by the Maestro CLI.
+maestro test .maestro/flows/smoke.yaml

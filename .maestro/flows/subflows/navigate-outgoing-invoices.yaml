@@ -1,4 +1,4 @@
-# Navigate to outgoing invoices (Faturalarım). Requires outgoingInvoices feature flag.
+# Navigate to outgoing invoices (Faturalarım) via the side menu.
 
 appId: com.finla.app
 ---
@@ -13,7 +13,7 @@ appId: com.finla.app
     id: "side-menu-outgoing-invoices"
 - extendedWaitUntil:
     visible:
-      id: "invoices-title"
+      id: "outgoing-invoices-title"
     timeout: 60000
 - assertVisible:
     id: "invoice-filter-bu_ay"

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Last verified: 2026-09-13 @ 6d0ce6f — run `npm run docs:check` after moving/deleting files; bump this line when updating this doc.
+Last verified: 2026-09-14 @ 4799fc3 — run `npm run docs:check` after moving/deleting files; bump this line when updating this doc.
 
 ## Stack
 - **Mobile:** React Native 0.81 + Expo 54 + expo-router (file-based routing)
@@ -37,7 +37,7 @@ npm run maestro:studio     # Maestro Studio with MAESTRO_* loaded from .env
 ```
 - Manual QA checklist lives in `QA.md` (update Pass/Fail columns as you test).
 - Maestro needs the app on a simulator (`npm run ios`) and `MAESTRO_TEST_PHONE` / `MAESTRO_TEST_PIN` in the root `.env` (staging user with tenant linked and onboarding complete).
-- CI E2E: `scripts/ci-maestro-ios.sh`.
+- CI E2E: Android runs on PRs to `develop` on the homelab runner (`.github/workflows/maestro-android.yml` → `scripts/ci-maestro-android.sh`, release APK on an x86_64 emulator). iOS (`scripts/ci-maestro-ios.sh`) is manual-only until a runner with Xcode 16.1+ exists.
 
 ## Architecture
 ```

@@ -34,6 +34,16 @@ export const TEST_CASES = Object.freeze([
     summary: "Launch, skip onboarding, log in with TEST_PHONE / TEST_PIN, reach the chat input.",
   },
   {
+    key: "core-onboarding-carousel",
+    title: "[Core] Onboarding carousel'ini tamamlama",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/onboarding-carousel.yaml",
+    screens: "onboarding (slides), login",
+    summary:
+      "Launch with a clean state (no skip), advance through all onboarding slides, tap Başla on the last slide, assert the login screen renders.",
+  },
+  {
     key: "core-chat",
     title: "[Core] Sohbete mesaj gönderimi ve asistan yanıtı",
     testType: "Core",

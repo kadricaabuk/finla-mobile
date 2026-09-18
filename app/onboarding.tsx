@@ -127,9 +127,14 @@ export default function OnboardingScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+    <SafeAreaView
+      testID="onboarding-carousel"
+      style={styles.container}
+      edges={["top", "bottom"]}
+    >
       <FlatList
         ref={listRef}
+        testID="onboarding-slides"
         style={styles.list}
         data={SLIDES}
         keyExtractor={(item) => item.id}
@@ -148,7 +153,9 @@ export default function OnboardingScreen() {
               <PhoneMockup source={item.image} focus={item.focus} />
             </View>
             <View style={styles.textArea}>
-              <Text style={styles.title}>{item.title}</Text>
+              <Text testID={`onboarding-title-${item.id}`} style={styles.title}>
+                {item.title}
+              </Text>
               <Text style={styles.subtitle}>{item.subtitle}</Text>
             </View>
           </View>

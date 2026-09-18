@@ -99,6 +99,16 @@ export const TEST_CASES = Object.freeze([
     summary:
       "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
   },
+  {
+    key: "core-invoice-detail",
+    title: "[Core] Fatura detay ekranının liste ile tutarlı toplam göstermesi",
+    testType: "Core",
+    suite: "core",
+    flow: ".maestro/flows/invoice-detail.yaml",
+    screens: "login, chat, side menu, outgoing invoices, invoice detail",
+    summary:
+      "Log in, open Faturalarım, tap an invoice, verify the Brüt amount in the detail matches the list row amount.",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

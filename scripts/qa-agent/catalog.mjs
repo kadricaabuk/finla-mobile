@@ -99,6 +99,16 @@ export const TEST_CASES = Object.freeze([
     summary:
       "Login sonrası uygulamayı arka plana al/yeniden başlat, PIN-only kilit açma ekranının geldiğini ve doğru PIN ile chat'e döndüğünü doğrula.",
   },
+  {
+    key: "feature-face-id-unlock",
+    title: "[Feature] Face ID ile kilit açma ve PIN'e geri dönüş",
+    testType: "Feature Test",
+    suite: "feature",
+    flow: ".maestro/flows/face-id-unlock.yaml",
+    screens: "unlock (Face ID lock screen), PIN fallback, chat",
+    summary:
+      "After login, cold-restart to the Face ID lock screen, assert the biometric UI, tap PIN ile giriş yap, complete PIN login, and return to chat (does not require a successful biometric scan).",
+  },
 ]);
 
 export function maestroFlowMarker(flow) {

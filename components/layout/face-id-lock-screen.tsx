@@ -27,7 +27,7 @@ export function FaceIdLockScreen({
   pinLoading = false,
 }: Props) {
   return (
-    <View style={styles.canvas}>
+    <View testID="unlock-face-id" style={styles.canvas}>
       <StatusBar style="light" />
       <SafeAreaView style={styles.content}>
         <Image
@@ -35,7 +35,9 @@ export function FaceIdLockScreen({
           style={styles.logo}
           contentFit="contain"
         />
-        <Text style={styles.subtitle}>{subtitle}</Text>
+        <Text testID="unlock-face-id-subtitle" style={styles.subtitle}>
+          {subtitle}
+        </Text>
         {scanning ? (
           <ActivityIndicator
             size="small"

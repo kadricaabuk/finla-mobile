@@ -1,6 +1,10 @@
 import { PrivacyCover } from "@/components/layout/privacy-cover";
 import { injectHtmlViewport } from "@/lib/inject-html-viewport";
-import { callApi, userFacingApiError } from "@/lib/supabase";
+import {
+  callApi,
+  createInvoiceShareLink,
+  userFacingApiError,
+} from "@/lib/supabase";
 import type { ChatMessageAction } from "@/types/chat-actions";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -13,8 +17,10 @@ import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -90,6 +96,7 @@ export function InvoicePreviewModal({
   const [fetchedPdfUri, setFetchedPdfUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingHtml, setLoadingHtml] = useState(false);
+  const [sharingLink, setSharingLink] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   const effective = useMemo(
@@ -228,10 +235,52 @@ export function InvoicePreviewModal({
               {title}
             </Text>
             <View style={styles.previewHeaderButtons}>
+              {uuid ? (
+                <TouchableOpacity
+                  style={styles.previewHeaderBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  disabled={sharingLink}
+                  accessibilityLabel="Finla ile paylaş"
+                  onPress={async () => {
+                    if (!uuid || sharingLink) return;
+                    setSharingLink(true);
+                    try {
+                      const res = await createInvoiceShareLink({
+                        invoiceUuid: uuid,
+                        direction: direction === "incoming" ? "incoming" : "outgoing",
+                        conversationId: conversationId ?? null,
+                      });
+                      if (!res.share_url) {
+                        throw new Error(res.error || "Paylaşım linki alınamadı.");
+                      }
+                      await Share.share({
+                        message: `Finla fatura paylaşımı (2 saat geçerli):\n${res.share_url}`,
+                        url: res.share_url,
+                        title: "Finla fatura paylaşımı",
+                      });
+                    } catch (err) {
+                      Alert.alert(
+                        "Paylaşım",
+                        userFacingApiError(err) ||
+                          "Finla paylaşım linki oluşturulamadı.",
+                      );
+                    } finally {
+                      setSharingLink(false);
+                    }
+                  }}
+                >
+                  {sharingLink ? (
+                    <ActivityIndicator size="small" color="#000" />
+                  ) : (
+                    <Ionicons name="link-outline" size={22} color="#000" />
+                  )}
+                </TouchableOpacity>
+              ) : null}
               {hasContent ? (
                 <TouchableOpacity
                   style={styles.previewHeaderBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="PDF olarak paylaş"
                   onPress={async () => {
                     let shareUri = pdfUri;
                     if (!shareUri && html) {

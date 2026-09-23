@@ -15,6 +15,7 @@ export {
   getUserProfile,
   updateUserProfile,
   exportInvoicesExcel,
+  createInvoiceShareLink,
   streamChat,
   userFacingApiError,
   type LoginResponse,
@@ -22,5 +23,6 @@ export {
   type UserProfile,
   type UserProfileResponse,
   type ExcelExportResponse,
+  type InvoiceShareCreateResponse,
   type StreamChatHandlers,
 } from './api'

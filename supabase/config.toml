@@ -49,5 +49,9 @@ verify_jwt = false
 [functions.refresh]
 verify_jwt = false
 
+# Public recipient viewer + comment (create still requires Finla session).
+[functions.invoice-share]
+verify_jwt = false
+
 [analytics]
 enabled = false

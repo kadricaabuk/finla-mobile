@@ -443,6 +443,32 @@ export async function exportInvoicesExcel(body: {
   return callApi<ExcelExportResponse>("excel-export", body);
 }
 
+/** FIN-62: 2 saatlik Finla fatura paylaşım linki — Edge Function `invoice-share` */
+export interface InvoiceShareCreateResponse {
+  success: boolean;
+  share_url: string;
+  expires_at: string;
+  expires_in_seconds: number;
+  error?: string;
+}
+
+export async function createInvoiceShareLink(body: {
+  invoiceUuid: string;
+  direction?: "outgoing" | "incoming";
+  conversationId?: string | null;
+}): Promise<InvoiceShareCreateResponse> {
+  const res = await callApi<InvoiceShareCreateResponse>("invoice-share", {
+    action: "create",
+    invoiceUuid: body.invoiceUuid,
+    direction: body.direction ?? "outgoing",
+    conversationId: body.conversationId ?? undefined,
+  });
+  if (!res?.share_url) {
+    throw new Error(res?.error || "Paylaşım linki oluşturulamadı.");
+  }
+  return res;
+}
+
 /** GİB portal profil kaydını günceller; yalnızca gönderilen alanlar değişir. */
 export async function updateUserProfile(
   updates: Partial<UserProfile>,

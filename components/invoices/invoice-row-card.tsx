@@ -163,6 +163,7 @@ export function InvoiceRowCard({
   return (
     <View style={styles.card}>
       <Pressable
+        testID="invoice-row-toggle"
         onPress={toggle}
         style={({ pressed }) => [
           styles.cardHeader,
@@ -256,6 +257,7 @@ export function InvoiceRowCard({
 
           {incomingRespondable && onOpenIncomingResponse ? (
             <TouchableOpacity
+              testID="invoice-respond-btn"
               style={styles.respondBtn}
               onPress={openIncomingResponse}
               activeOpacity={0.85}

@@ -200,6 +200,7 @@ export function IncomingInvoiceResponseModal({
               style={styles.headerBtn}
               onPress={onClose}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              testID="incoming-response-close"
               accessibilityLabel="Kapat"
             >
               <Ionicons name="close" size={24} color="#000" />
@@ -295,6 +296,7 @@ export function IncomingInvoiceResponseModal({
               ) : (
                 <View style={styles.actionRow}>
                   <TouchableOpacity
+                    testID="incoming-reject-btn"
                     style={[styles.rejectBtn, actionLoading && styles.btnDisabled]}
                     onPress={() => {
                       setRejectMode(true);
@@ -305,6 +307,7 @@ export function IncomingInvoiceResponseModal({
                     <Text style={styles.rejectBtnText}>Reddet</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    testID="incoming-accept-btn"
                     style={[styles.acceptBtn, actionLoading && styles.btnDisabled]}
                     onPress={() => void submitAccept()}
                     disabled={actionLoading}

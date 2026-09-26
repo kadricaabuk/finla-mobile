@@ -1,0 +1,37 @@
+# Invoice draft preview modal (no GİB issue).
+# Opens the preview via "Faturayı Gör" — does NOT tap "Onayla ve Kes".
+#
+# Run: npm run maestro:invoice-preview
+
+appId: com.finla.app
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible: "finla"
+- runFlow: subflows/ensure-logged-in.yaml
+- assertVisible:
+    id: "chat-input"
+- runFlow: subflows/create-invoice-via-chat.yaml
+# Open draft preview only — never confirm/issue.
+- tapOn:
+    id: "chat-invoice-preview"
+- extendedWaitUntil:
+    visible:
+      id: "invoice-preview-modal"
+    timeout: 60000
+- assertVisible:
+    id: "invoice-preview-title"
+# Draft HTML/PDF should render without issuing to GİB.
+- extendedWaitUntil:
+    visible:
+      id: "invoice-preview-content"
+    timeout: 180000
+- assertVisible:
+    id: "invoice-preview-close"
+- tapOn:
+    id: "invoice-preview-close"
+- assertVisible:
+    id: "chat-input"
+- assertVisible:
+    id: "chat-confirm-invoice"

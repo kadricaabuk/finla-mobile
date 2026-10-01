@@ -27,6 +27,7 @@
     "maestro:invoice-create": "bash scripts/maestro-test.sh .maestro/flows/invoice-create.yaml",
     "maestro:menu": "bash scripts/maestro-test.sh .maestro/flows/menu.yaml",
     "maestro:invoices": "bash scripts/maestro-test.sh .maestro/flows/invoices.yaml",
+    "maestro:invoice-filters": "bash scripts/maestro-test.sh .maestro/flows/invoice-filters.yaml",
     "maestro:incoming-invoices": "bash scripts/maestro-test.sh .maestro/flows/incoming-invoices.yaml",
     "maestro:logout": "bash scripts/maestro-test.sh .maestro/flows/logout.yaml",
     "maestro:unlock": "bash scripts/maestro-test.sh .maestro/flows/unlock.yaml",

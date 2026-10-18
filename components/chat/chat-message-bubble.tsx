@@ -1,10 +1,10 @@
+import { PulsingStatusText } from "@/components/chat/pulsing-status-text";
 import { chatMarkdownStyles } from "@/constants/chat-markdown-styles";
 import { stripQuickRepliesForDisplay } from "@/lib/chat-quick-replies";
 import { hasMarkdownTable } from "@/lib/markdown-table";
 import type { ChatMessage } from "@/types/chat-actions";
 import { router } from "expo-router";
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -57,10 +57,7 @@ export function ChatMessageBubble({
     return (
       <View style={[styles.bubble, styles.aiBubblePending]}>
         <View style={styles.streamStatusRow}>
-          <ActivityIndicator size="small" color="#888" />
-          <Text style={styles.streamStatusText} numberOfLines={3}>
-            {label}
-          </Text>
+          <PulsingStatusText numberOfLines={3}>{label}</PulsingStatusText>
         </View>
       </View>
     );
@@ -240,13 +237,6 @@ const styles = StyleSheet.create({
   streamStatusRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-  },
-  streamStatusText: {
-    flexShrink: 1,
-    fontSize: 15,
-    lineHeight: 22,
-    color: "#555",
   },
   bubbleText: {
     fontSize: 15,
